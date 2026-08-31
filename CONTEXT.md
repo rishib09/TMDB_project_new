@@ -43,3 +43,11 @@ _Avoid_: App settings, parameters, flags.
 **Trace**:
 A complete user transaction log containing end-to-end latency, total token usage, estimated cost, intent classification, and child execution spans, mirrored to Langfuse and inspectable in the in-app DAG tree.
 _Avoid_: Log entry, telemetry record.
+
+**FTS5 (Full-Text Search 5)**:
+The native SQLite sparse lexical search engine executing BM25 keyword matching with Porter stemming over titles, overviews, directors, genres, and cast names to complement dense vector retrieval.
+_Avoid_: Keyword searcher, regex search, text filter.
+
+**FTS5 Shadow Tables**:
+The internal SQLite storage tables (`movies_fts_data`, `movies_fts_idx`, `movies_fts_docsize`, `movies_fts_config`, `movies_fts_content`) automatically managed by SQLite to maintain inverted index postings, B-Tree lookups, and exact document length statistics for BM25 normalization.
+_Avoid_: Extra tables, helper tables, secondary DBs.
