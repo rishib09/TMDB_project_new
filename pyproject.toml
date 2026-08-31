@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tmdb-rag-harness"
+version = "0.1.0"
+description = "Observable RAG & Evaluation Harness for US Cinema (1970-2026) with Maya Agent"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [{ name = "Rishi B", email = "rishi@example.com" }]
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+pythonpath = ["."]
+asyncio_mode = "auto"
+markers = [
+    "unit: Fast offline unit tests (< 2s)",
+    "adversarial: Guardrail and security edge-case tests",
+    "integration: Live OpenRouter / external network tests (optional)",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W", "UP"]
+ignore = ["E501"] # Handled by formatter
+
+[tool.mypy]
+python_version = "3.11"
+strict = false
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
+ignore_missing_imports = true
