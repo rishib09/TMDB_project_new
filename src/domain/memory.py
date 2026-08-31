@@ -1,6 +1,6 @@
 """5-Layer Conversational Memory and Session State Models."""
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional
 from pydantic import BaseModel, Field
 
@@ -14,7 +14,7 @@ class ChatMessage(BaseModel):
     content: str
     intent: Optional[str] = None
     retrieved_movie_ids: List[int] = Field(default_factory=list)
-    timestamp: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
+    timestamp: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 
 class FocusedMovieEntity(BaseModel):
