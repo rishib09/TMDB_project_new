@@ -12,7 +12,10 @@ from src.domain.memory import (
     ChatMessage,
     ConversationState,
     FocusedMovieEntity,
+    MayaGraphState,
     UserSessionPreferences,
+    merge_preferences,
+    merge_unique_ids,
 )
 from src.domain.config import ExperimentConfig, PresetType
 
@@ -28,6 +31,9 @@ __all__ = [
     "FocusedMovieEntity",
     "UserSessionPreferences",
     "ConversationState",
+    "MayaGraphState",
+    "merge_unique_ids",
+    "merge_preferences",
     "ExperimentConfig",
     "PresetType",
 ]

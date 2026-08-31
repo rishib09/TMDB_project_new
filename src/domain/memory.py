@@ -1,8 +1,11 @@
-"""5-Layer Conversational Memory and Session State Models."""
+"""5-Layer Conversational Memory State and LangGraph State Reducers."""
 
+import operator
 from datetime import datetime, timezone
-from typing import List, Optional
+from typing import Annotated, List, Optional, Sequence
 from pydantic import BaseModel, Field
+from langchain_core.messages import BaseMessage
+from langgraph.graph.message import add_messages
 
 from src.domain.movie import MovieRecord
 from src.domain.routing import QueryRoutingDecision
@@ -32,8 +35,59 @@ class UserSessionPreferences(BaseModel):
     preferred_genres: List[str] = Field(default_factory=list)
 
 
+# --- LangGraph Functional Reducers ---
+
+def merge_unique_ids(left: List[int], right: List[int]) -> List[int]:
+    """Reducer that appends newly shown movie IDs while preserving uniqueness."""
+    return list(dict.fromkeys(left + right))
+
+
+def merge_preferences(
+    current: UserSessionPreferences,
+    incoming: Optional[UserSessionPreferences]
+) -> UserSessionPreferences:
+    """Reducer that merges session-level preferences and persistent exclusions."""
+    if not incoming:
+        return current
+    return UserSessionPreferences(
+        excluded_genres=list(dict.fromkeys(current.excluded_genres + incoming.excluded_genres)),
+        excluded_actors=list(dict.fromkeys(current.excluded_actors + incoming.excluded_actors)),
+        preferred_genres=list(dict.fromkeys(current.preferred_genres + incoming.preferred_genres)),
+    )
+
+
+class MayaGraphState(BaseModel):
+    """LangGraph 5-Layer Agent State with functional reducers.
+
+    Nodes return simple dict updates (e.g. {'messages': [AIMessage(...)], 'shown_movie_ids': [27205]}),
+    and LangGraph reducers handle deduplication, merging, and thread persistence automatically.
+    """
+    # 1. Message History (Sliding window managed via LangGraph add_messages)
+    messages: Annotated[Sequence[BaseMessage], add_messages] = Field(default_factory=list)
+
+    # 2. Entity Focus Layer
+    focused_entity: Optional[FocusedMovieEntity] = None
+    focused_person: Optional[str] = None
+
+    # 3. Seen Recommendations Tracker (Unique Reducer)
+    shown_movie_ids: Annotated[List[int], merge_unique_ids] = Field(default_factory=list)
+
+    # 4. Persistent User Preferences & Exclusions (Merge Reducer)
+    session_preferences: Annotated[UserSessionPreferences, merge_preferences] = Field(
+        default_factory=UserSessionPreferences
+    )
+
+    # 5. Session Metrics & Summary
+    rolling_summary: str = ""
+    session_tokens: Annotated[int, operator.add] = 0
+
+    # Transient per-turn pipeline artifacts
+    routing_decision: Optional[QueryRoutingDecision] = None
+    retrieved_movies: List[MovieRecord] = Field(default_factory=list)
+
+
 class ConversationState(BaseModel):
-    """5-Layer Conversational Memory State for Maya Agent."""
+    """5-Layer Conversational Memory State for UI session state."""
     messages: List[ChatMessage] = Field(default_factory=list)
     focused_entity: Optional[FocusedMovieEntity] = None
     focused_person: Optional[str] = None
@@ -42,7 +96,6 @@ class ConversationState(BaseModel):
     rolling_summary: str = ""
     session_tokens: int = 0
 
-    #TODO: Check if add_turn can be Leaned out with Lang chain or LanGraph 
     def add_turn(
         self,
         user_query: str,
@@ -52,7 +105,6 @@ class ConversationState(BaseModel):
         tokens_used: int = 0,
     ) -> None:
         """Updates conversational state with new turn, entity focus, and shown IDs."""
-        # 1. Append user and assistant messages
         user_intent_str = decision.intent.value if decision else None
         retrieved_ids = [m.id for m in retrieved_movies]
 
@@ -67,12 +119,9 @@ class ConversationState(BaseModel):
             retrieved_movie_ids=retrieved_ids
         ))
 
-        # 2. Update shown movie IDs (preventing repeat recommendations)
-        for m in retrieved_movies:
-            if m.id not in self.shown_movie_ids:
-                self.shown_movie_ids.append(m.id)
+        # Use functional reducers for state updates
+        self.shown_movie_ids = merge_unique_ids(self.shown_movie_ids, retrieved_ids)
 
-        # 3. Update active focused entity (top recommended movie)
         if retrieved_movies:
             top_movie = retrieved_movies[0]
             self.focused_entity = FocusedMovieEntity(
@@ -82,19 +131,15 @@ class ConversationState(BaseModel):
                 director=top_movie.director,
             )
 
-        # 4. Update session exclusions if negation criteria present
         if decision and decision.filters:
-            for genre in decision.filters.excluded_genres:
-                if genre not in self.session_preferences.excluded_genres:
-                    self.session_preferences.excluded_genres.append(genre)
-            for actor in decision.filters.excluded_actors:
-                if actor not in self.session_preferences.excluded_actors:
-                    self.session_preferences.excluded_actors.append(actor)
+            incoming = UserSessionPreferences(
+                excluded_genres=decision.filters.excluded_genres,
+                excluded_actors=decision.filters.excluded_actors,
+            )
+            self.session_preferences = merge_preferences(self.session_preferences, incoming)
 
-        # 5. Track tokens
         self.session_tokens += tokens_used
 
-        # 6. Trim sliding message window to last 10 messages
         if len(self.messages) > 10:
             self.messages = self.messages[-10:]
 

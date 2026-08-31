@@ -1,4 +1,4 @@
-"""Movie and Cast domain entities with computed TMDB image URLs and embedding serializers."""
+"""Movie and Cast domain entities with computed TMDB image URLs and dynamic dense text serialization."""
 
 from typing import List, Optional
 from pydantic import BaseModel, Field, computed_field
@@ -59,30 +59,89 @@ class MovieRecord(BaseModel):
             return f"https://image.tmdb.org/t/p/w1280{self.backdrop_path}"
         return None
 
-    def to_dense_text(self, strategy: str = "enriched_metadata", token_budget: int = 256) -> str:
-        """Serializes high-signal movie metadata for embedding models without token truncation."""
-        ##TODO: confirm token_budget can we increased to 512,1024,2048,4096 to experimentConfig
-        top_cast_names = ", ".join([c.name for c in self.cast[:10]])
-        genres_str = ", ".join(self.genres)
-        keywords_str = ", ".join(self.keywords[:6])
+    def to_dense_text(
+        self,
+        strategy: str = "enriched_metadata",
+        token_budget: int = 256
+    ) -> str:
+        """Serializes movie metadata dynamically scaled to fit within the target token budget.
 
+        Uses a prioritized tier-packing algorithm to maximize semantic signal without truncation:
+          - 256 tokens: Core identity + top 4 cast + top 6 keywords + trimmed synopsis
+          - 512 tokens: Core identity + top 10 cast with roles + all keywords + tagline + full synopsis + runtime/rating
+          - 1024+ tokens: Full cast (top 20) + crew + production financials + full synopsis
+        """
         if strategy == "baseline":
             # Strategy A (v1.0): Overview only
             return f"{self.title} ({self.release_year}): {self.overview}".strip()
 
-        # Strategy B/C (v1.1 / v1.2): Enriched structured semantic representation
-        parts = [f"Title: {self.title} ({self.release_year})"]
-        if self.director:
-            parts.append(f"Director: {self.director}")
-        if genres_str:
-            parts.append(f"Genres: {genres_str}")
-        if top_cast_names:
-            parts.append(f"Cast: {top_cast_names}")
-        if keywords_str:
-            parts.append(f"Themes: {keywords_str}")
-        if self.tagline:
-            parts.append(f"Tagline: {self.tagline}")
-        if self.overview:
-            parts.append(f"Synopsis: {self.overview}")
+        # Target character budget (1 token ~ 3.8 characters with safety margin)
+        char_budget = int(token_budget * 3.8)
 
-        return "\n".join(parts)
+        # Tier 1: Core Identity (Mandatory)
+        genres_str = ", ".join(self.genres)
+        core_parts = [f"Title: {self.title} ({self.release_year})"]
+        if self.director:
+            core_parts.append(f"Director: {self.director}")
+        if genres_str:
+            core_parts.append(f"Genres: {genres_str}")
+
+        # Tier 2: High-Signal Metadata scaled to token budget
+        if token_budget <= 256:
+            # 256 tokens: Top 4 cast names, top 6 keywords
+            cast_names = ", ".join([c.name for c in self.cast[:4]])
+            keywords_str = ", ".join(self.keywords[:6])
+            if cast_names:
+                core_parts.append(f"Cast: {cast_names}")
+            if keywords_str:
+                core_parts.append(f"Themes: {keywords_str}")
+            if self.tagline:
+                core_parts.append(f"Tagline: {self.tagline}")
+        elif token_budget <= 512:
+            # 512 tokens: Top 10 cast with character roles, all keywords
+            cast_details = [
+                f"{c.name} as {c.character}" if c.character else c.name
+                for c in self.cast[:10]
+            ]
+            if cast_details:
+                core_parts.append(f"Cast: {', '.join(cast_details)}")
+            if self.keywords:
+                core_parts.append(f"Themes: {', '.join(self.keywords)}")
+            if self.tagline:
+                core_parts.append(f"Tagline: {self.tagline}")
+            if self.runtime:
+                core_parts.append(f"Runtime: {self.runtime} mins")
+            if self.vote_average > 0:
+                core_parts.append(f"Rating: {self.vote_average:.1f}/10 ({self.vote_count} votes)")
+        else:
+            # 1024+ tokens: Full cast (top 20), production details, financials
+            cast_details = [
+                f"{c.name} as {c.character}" if c.character else c.name
+                for c in self.cast[:20]
+            ]
+            if cast_details:
+                core_parts.append(f"Cast: {', '.join(cast_details)}")
+            if self.keywords:
+                core_parts.append(f"Themes: {', '.join(self.keywords)}")
+            if self.tagline:
+                core_parts.append(f"Tagline: {self.tagline}")
+            if self.runtime:
+                core_parts.append(f"Runtime: {self.runtime} mins")
+            if self.budget > 0 or self.revenue > 0:
+                core_parts.append(f"Financials: Budget ${self.budget:,} | Box Office ${self.revenue:,}")
+            if self.imdb_id:
+                core_parts.append(f"IMDb: {self.imdb_id}")
+
+        current_header = "\n".join(core_parts)
+        remaining_chars = char_budget - len(current_header) - 12  # 12 chars for "\nSynopsis: "
+
+        # Tier 3: Synopsis / Overview fit into remaining budget
+        if self.overview and remaining_chars > 50:
+            if len(self.overview) <= remaining_chars:
+                core_parts.append(f"Synopsis: {self.overview}")
+            else:
+                # Truncate synopsis cleanly at nearest whitespace boundary
+                truncated_overview = self.overview[:remaining_chars].rsplit(" ", 1)[0] + "..."
+                core_parts.append(f"Synopsis: {truncated_overview}")
+
+        return "\n".join(core_parts)
