@@ -1,10 +1,10 @@
 ## Destination
 
-An observable, modular RAG & Evaluation Harness for 1970–2026 US TMDB movies with the "Maya" conversational agent (deterministic query intent routing, structured output, poster rendering, zero-hallucination constraints, multi-turn memory, security/budget guardrails, user feedback, transparent meta-prompt), versioned evaluation comparisons across embedders/chunkers, dynamic architecture experimentation control plane, and Langfuse-compatible trace inspector UI, ready to host on Hugging Face Spaces (Streamlit).
+An observable, modular RAG & Evaluation Harness for 1970–2026 US TMDB movies with the "Maya" conversational agent (deterministic query intent routing, structured output, poster rendering, zero-hallucination constraints, multi-turn memory, security/budget guardrails, user feedback, transparent meta-prompt, embedding column optimization), versioned evaluation comparisons across embedders/chunkers, dynamic architecture experimentation control plane, and Langfuse-compatible trace inspector UI, ready to host on Hugging Face Spaces (Streamlit).
 
 ## Notes
 
-- **Domain**: RAG, Information Retrieval Evaluation, Deterministic Agent Routing, LLM Observability, Multi-turn Conversational Memory, Security Guardrails, User Feedback Telemetry, Transparent System Prompts, Movie Knowledge Systems.
+- **Domain**: RAG, Information Retrieval Evaluation, Deterministic Agent Routing, LLM Observability, Multi-turn Conversational Memory, Security Guardrails, User Feedback Telemetry, Embedding Column Optimization, Movie Knowledge Systems.
 - **Skills to consult**: `codebase-design`, `domain-modeling`, `grilling`, `tdd`, `code-review`, `setup-pre-commit`, `managing-python-dependencies`, `building-data-apps`.
 - **Standing preferences**:
   - LLM Provider: OpenRouter (cost-effective structured models like `meta-llama/llama-3.2-3b-instruct` for routing/reformulation, `meta-llama/llama-3.3-70b-instruct` / `google/gemini-2.0-flash` for synthesis).
@@ -24,6 +24,10 @@ An observable, modular RAG & Evaluation Harness for 1970–2026 US TMDB movies w
 - [[09] Security Guardrails, Token Caps & Weekly Budget Limits](issues/09-security-guardrails-token-limits-and-budget.md): Defined prompt injection sanitizer regex, off-topic deflection with film-curator persona pivots, 15,000 session token cap, and persistent $5.00/week SQLite budget ceiling.
 - [[10] Streamlit In-App User Feedback & Langfuse Scoring](issues/10-streamlit-user-feedback-and-langfuse-scoring.md): Integrated native `st.feedback("thumbs")`, linking feedback to `trace_id` and RAG version, pushing scores to Langfuse Cloud, and recording satisfaction in SQLite.
 - [[11] Maya Transparent System Prompt & Architectural Self-Awareness](issues/11-maya-transparent-system-prompt-and-architectural-persona.md): Constructed 8-pillar meta-system prompt explicitly detailing intent classification, query reformulation, dual retrievers, RRF ranking, memory state, and strict CWA grounding.
+
+## Open on Frontier
+
+- [[12] Embedding Column Selection & Token Budget Optimization](issues/12-embedding-column-selection-and-token-budget.md): Prioritizing high-signal columns (Title, Year, Genres, Director, Top 5 Cast, Tagline, Overview, Keywords) tailored to model sequence limits (256 vs 512 tokens) to eliminate truncation and semantic dilution.
 
 ## Not yet specified
 
