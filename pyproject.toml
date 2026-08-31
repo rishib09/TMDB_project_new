@@ -18,7 +18,8 @@ asyncio_mode = "auto"
 markers = [
     "unit: Fast offline unit tests (< 2s)",
     "adversarial: Guardrail and security edge-case tests",
-    "integration: Live OpenRouter / external network tests (optional)",
+    "integration: Real local-resource tests (SQLite, ChromaDB)",
+    "live: Real OpenRouter network tests (opt-in, requires OPENROUTER_API_KEY)",
 ]
 
 [tool.ruff]

@@ -1,0 +1,18 @@
+# 5. Router Hardening: "Model Proposes, Code Disposes" with Iterative Live-Test Prompting
+
+We are enforcing that the router LLM (`meta-llama/llama-3.2-3b-instruct` via OpenRouter structured output) is a **proposing classifier only** — all architectural invariants (retrieval gating, temporal boundaries, filter hygiene) are re-derived deterministically in code by `_normalize_decision()` — while prompt engineering (few-shot intent-boundary examples, explicit role scoping, metric maps) is used to improve proposal quality, never to enforce correctness. Additionally, the router sets an explicit `max_tokens=1024` to prevent truncated structured JSON.
+
+### Why this decision was made:
+
+- **The LLM's self-reported state cannot be trusted.** Live testing (2026-08-31) measured `requires_rag=false` on 5 of 6 clearly-retrieval queries — including at self-reported confidence 0.8–1.0 — which silently skipped persistent exclusion merging. The fix derives `requires_rag` from `intent ∈ RETRIEVAL_INTENTS` in code and ignores the model's value. A model-claimed flag is a *diagnostic signal* (see issue #13); the intent is the authority.
+- **Hard rules are enforced, never suggested.** Pre-1970 references (any year in `filters`/`superlative` < `DATASET_START_YEAR=1970`) force `OUT_OF_SCOPE` and clear criteria regardless of what the model classified. Spurious filters on non-filter intents are stripped; a `cast_member` duplicating an excluded actor is dropped. Prompt instructions for these rules *reduce* how often normalization fires — they are not the mechanism itself.
+- **Role scoping prevents capability bleed.** The 3B router spontaneously role-played as the recommender ("I have searched through various films... the top recommendation is 'Seven'") — hallucinating search results inside routing decisions. The prompt now states "You are a classifier. You never search, never recommend, never name movies," and code-level normalization remains the backstop.
+- **Structured output needs explicit token headroom.** The first live run lost an `ATTRIBUTE_FILTER` extraction to `Invalid JSON: EOF while parsing` — the model hit the implicit token ceiling mid-schema, triggering fallback. Setting `max_tokens=1024` removed the entire failure class and cut suite runtime from ~5.5 minutes to ~25 seconds.
+- **Effective prompting resolves taxonomy blur, not invariant violations.** The intent triad (ATTRIBUTE_FILTER vs SUPERLATIVE_RANKING vs NEGATION_EXCLUSION) blurred stochastically across runs. Six terse few-shot boundary examples in the system prompt took the live suite from 7/10 to 10/10 — the appropriate use of prompting: quality-of-proposal, with no correctness burden.
+- **Iteration loop: live evidence → root cause → layer selection.** Each live failure was diagnosed with captured JSON decisions (not guessed), then fixed at the correct layer: infrastructure (token ceiling), deterministic code (normalization), or prompt (few-shot examples). Live progression: 4/10 → 7/10 → 10/10. This loop — live integration → adversarial → mock with recorded fixtures — is the standing practice for every LLM-facing component in this codebase.
+
+### Consequences:
+
+- Every future LLM-facing component (synthesis, reformulation, evaluation judge) follows the same pattern: structured output proposal → deterministic normalization of safety/boundary invariants → few-shot prompting for classification quality only.
+- The `RETRIEVAL_INTENTS`, `FILTER_INTENTS`, and `DATASET_START_YEAR` constants are the single source of truth, reused by the LangGraph conditional edges (issue #5).
+- Model confidence values from the 3B router are known to be miscalibrated; threshold-based fallback (issue #12) must be tuned against measured distributions, not assumed.
