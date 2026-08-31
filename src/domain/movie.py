@@ -61,7 +61,8 @@ class MovieRecord(BaseModel):
 
     def to_dense_text(self, strategy: str = "enriched_metadata", token_budget: int = 256) -> str:
         """Serializes high-signal movie metadata for embedding models without token truncation."""
-        top_cast_names = ", ".join([c.name for c in self.cast[:4]])
+        ##TODO: confirm token_budget can we increased to 512,1024,2048,4096 to experimentConfig
+        top_cast_names = ", ".join([c.name for c in self.cast[:10]])
         genres_str = ", ".join(self.genres)
         keywords_str = ", ".join(self.keywords[:6])
 
