@@ -42,6 +42,7 @@ class ConversationState(BaseModel):
     rolling_summary: str = ""
     session_tokens: int = 0
 
+    #TODO: Check if add_turn can be Leaned out with Lang chain or LanGraph 
     def add_turn(
         self,
         user_query: str,
