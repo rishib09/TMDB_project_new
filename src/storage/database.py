@@ -3,9 +3,10 @@
 import json
 import sqlite3
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from src.domain.movie import MovieRecord
+from src.domain.routing import MetadataFilterCriteria
 
 
 class MovieDatabase:
@@ -101,7 +102,7 @@ class MovieDatabase:
             """)
             conn.commit()
 
-    def upsert_movie(self, movie_data: Dict[str, Any]) -> None:
+    def upsert_movie(self, movie_data: dict[str, Any]) -> None:
         """Insert or replace a movie and synchronize the FTS5 index."""
         with self._get_connection() as conn:
             genres_list = movie_data.get("genres", [])
@@ -159,7 +160,7 @@ class MovieDatabase:
             ))
             conn.commit()
 
-    def upsert_movies_bulk(self, movies: List[Dict[str, Any]]) -> int:
+    def upsert_movies_bulk(self, movies: list[dict[str, Any]]) -> int:
         """Bulk insert or replace movies for fast ingestion."""
         with self._get_connection() as conn:
             for movie_data in movies:
@@ -218,7 +219,7 @@ class MovieDatabase:
             conn.commit()
         return len(movies)
 
-    def get_by_id(self, movie_id: int) -> Optional[MovieRecord]:
+    def get_by_id(self, movie_id: int) -> MovieRecord | None:
         """Fetch a single movie record by TMDB ID as a typed MovieRecord."""
         with self._get_connection() as conn:
             cursor = conn.execute("SELECT * FROM movies WHERE id = ?", (movie_id,))
@@ -229,10 +230,10 @@ class MovieDatabase:
         self,
         metric: str,
         direction: str = "DESC",
-        year: Optional[int] = None,
-        genre: Optional[str] = None,
+        year: int | None = None,
+        genre: str | None = None,
         limit: int = 5
-    ) -> List[MovieRecord]:
+    ) -> list[MovieRecord]:
         """Deterministic SQL superlative ranking query returning typed MovieRecords."""
         metric_map = {
             "REVENUE": "revenue",
@@ -246,7 +247,7 @@ class MovieDatabase:
         order_dir = "ASC" if direction.upper() == "ASC" else "DESC"
 
         query = "SELECT * FROM movies WHERE 1=1"
-        params: List[Any] = []
+        params: list[Any] = []
 
         if year:
             query += " AND release_year = ?"
@@ -268,7 +269,7 @@ class MovieDatabase:
             cursor = conn.execute(query, params)
             return [MovieRecord.model_validate(self._row_to_dict(r)) for r in cursor.fetchall()]
 
-    def search_bm25(self, query_str: str, limit: int = 20) -> List[MovieRecord]:
+    def search_bm25(self, query_str: str, limit: int = 20) -> list[MovieRecord]:
         """Execute BM25 lexical full-text search against movies_fts returning typed MovieRecords."""
         clean_query = "".join([c if c.isalnum() or c.isspace() else " " for c in query_str]).strip()
         if not clean_query:
@@ -292,7 +293,53 @@ class MovieDatabase:
             except sqlite3.OperationalError:
                 return []
 
-    def get_all_movies(self) -> List[MovieRecord]:
+    def search_metadata_filters(
+        self,
+        filters: "MetadataFilterCriteria",
+        limit: int = 20
+    ) -> list[MovieRecord]:
+        """Deterministic SQL query for structured metadata filters (issue #4).
+
+        Translates MetadataFilterCriteria into parameterized WHERE clauses.
+        Exclusions (excluded_genres / excluded_actors) are enforced here too.
+        """
+        query = "SELECT * FROM movies WHERE 1=1"
+        params: list[Any] = []
+
+        if filters.exact_year is not None:
+            query += " AND release_year = ?"
+            params.append(filters.exact_year)
+        if filters.year_min is not None:
+            query += " AND release_year >= ?"
+            params.append(filters.year_min)
+        if filters.year_max is not None:
+            query += " AND release_year <= ?"
+            params.append(filters.year_max)
+        for genre in filters.genres:
+            query += " AND genres_json LIKE ?"
+            params.append(f'%"{genre}"%')
+        if filters.director:
+            query += " AND director LIKE ?"
+            params.append(f"%{filters.director}%")
+        if filters.cast_member:
+            query += " AND cast_json LIKE ?"
+            params.append(f'%"{filters.cast_member}%')
+        for excluded_genre in filters.excluded_genres:
+            query += " AND genres_json NOT LIKE ?"
+            params.append(f'%"{excluded_genre}"%')
+        for excluded_actor in filters.excluded_actors:
+            query += " AND cast_json NOT LIKE ?"
+            params.append(f'%"{excluded_actor}"%')
+
+        # Deterministic ordering for filter-only queries (no relevance signal)
+        query += " ORDER BY vote_count DESC, release_year DESC LIMIT ?"
+        params.append(limit)
+
+        with self._get_connection() as conn:
+            cursor = conn.execute(query, params)
+            return [MovieRecord.model_validate(self._row_to_dict(r)) for r in cursor.fetchall()]
+
+    def get_all_movies(self) -> list[MovieRecord]:
         """Fetch all movies as typed MovieRecord models."""
         with self._get_connection() as conn:
             cursor = conn.execute("SELECT * FROM movies ORDER BY release_year ASC, popularity DESC")
@@ -304,7 +351,7 @@ class MovieDatabase:
             cursor = conn.execute("SELECT COUNT(*) FROM movies")
             return cursor.fetchone()[0]
 
-    def _row_to_dict(self, row: sqlite3.Row) -> Dict[str, Any]:
+    def _row_to_dict(self, row: sqlite3.Row) -> dict[str, Any]:
         """Convert a SQLite row to a Python dict with deserialized JSON lists."""
         d = dict(row)
         d["genres"] = json.loads(d.get("genres_json") or "[]")
