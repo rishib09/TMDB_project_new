@@ -1,8 +1,8 @@
 """Adversarial and edge-case data integrity tests on real TMDB dataset."""
 
 import pytest
+
 from src.storage.database import MovieDatabase
-from src.domain.movie import MovieRecord
 
 
 @pytest.fixture(scope="module")
@@ -51,7 +51,7 @@ def test_dense_text_token_budget_compliance(db: MovieDatabase):
     """Verifies that high-signal dense text representation complies with model sequence limits."""
     sample_movies = db.query_superlative(metric="POPULARITY", limit=50)
     for movie in sample_movies:
-        dense_text = movie.to_dense_text(strategy="enriched_metadata")
+        dense_text = movie.to_dense_text(tier="t2_enriched")
         # Approximate word count check (256 tokens is roughly ~180-220 words)
         words = dense_text.split()
         assert len(words) < 500, f"Dense text too long ({len(words)} words) for movie {movie.title}"

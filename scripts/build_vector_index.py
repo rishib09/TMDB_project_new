@@ -71,6 +71,7 @@ def rebuild_index(
                 existing.count() == expected
                 and meta.get("embedding_model") == profile["embedding_model"]
                 and meta.get("tier") == profile["tier"]
+                and meta.get("token_budget") == profile["token_budget"]
             ):
                 print(f"\n[SKIP] {version_name} already complete "
                       f"({expected} vectors, metadata matches).", flush=True)

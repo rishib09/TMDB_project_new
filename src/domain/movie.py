@@ -1,7 +1,24 @@
-"""Movie and Cast domain entities with computed TMDB image URLs and dynamic dense text serialization."""
+"""Movie and Cast domain entities with computed TMDB image URLs and tiered dense text serialization."""
 
-from typing import List, Optional
+from typing import ClassVar, Protocol
+
 from pydantic import BaseModel, Field, computed_field
+
+
+class TokenCounter(Protocol):
+    """Tokenization interface injected from the indexing layer (keeps domain pure).
+
+    Implemented by wrapping the target embedding model's real tokenizer, so
+    packing decisions are exact rather than character-estimated (issue #14).
+    """
+
+    def count(self, text: str) -> int:
+        """Number of model tokens in ``text``."""
+        ...
+
+    def truncate(self, text: str, max_tokens: int) -> str:
+        """Longest prefix of ``text`` using at most ``max_tokens`` tokens."""
+        ...
 
 
 class CastMember(BaseModel):
@@ -9,11 +26,11 @@ class CastMember(BaseModel):
     name: str
     character: str = ""
     order: int = 0
-    profile_path: Optional[str] = None
+    profile_path: str | None = None
 
     @computed_field
     @property
-    def profile_url(self) -> Optional[str]:
+    def profile_url(self) -> str | None:
         """Constructs secure TMDB headshot image URL."""
         if self.profile_path:
             return f"https://image.tmdb.org/t/p/w185{self.profile_path}"
@@ -39,9 +56,9 @@ class MovieRecord(BaseModel):
     imdb_id: str = ""
     poster_path: str = ""
     backdrop_path: str = ""
-    genres: List[str] = Field(default_factory=list)
-    cast: List[CastMember] = Field(default_factory=list)
-    keywords: List[str] = Field(default_factory=list)
+    genres: list[str] = Field(default_factory=list)
+    cast: list[CastMember] = Field(default_factory=list)
+    keywords: list[str] = Field(default_factory=list)
 
     @computed_field
     @property
@@ -53,95 +70,164 @@ class MovieRecord(BaseModel):
 
     @computed_field
     @property
-    def backdrop_url(self) -> Optional[str]:
-        """Constructs wide backdrop image URL."""
+    def backdrop_url(self) -> str | None:
+        """Constructs wide backdrop image URL with fallback."""
         if self.backdrop_path:
             return f"https://image.tmdb.org/t/p/w1280{self.backdrop_path}"
         return None
 
+    # --- tiered dense-text serialization (issue #14) -------------------------
+
+    #: Default per-tier token budgets; each tier also carries its own input
+    #: set. Budgets chosen against the 1970-2026 corpus: content tops out
+    #: below 1024 tokens, so larger budgets would pad, not enrich.
+    DEFAULT_TIER_BUDGETS: ClassVar[dict] = {
+        "t1_identity": 128,   # MiniLM's REAL fastembed window is 128 tokens,
+                              # not the model-card 256 (measured 2026-08-31)
+        "t2_enriched": 512,
+        "t3_exhaustive": 1024,
+    }
+
+    #: Synopsis never gets fewer tokens than this, else it is omitted whole.
+    _MIN_SYNOPSIS_TOKENS: ClassVar[int] = 24
+
+    @staticmethod
+    def _money_words(amount: int) -> str:
+        """Spells an amount as coarse words — raw digits are weak embedding signal."""
+        if amount >= 1_000_000_000:
+            billions = amount / 1_000_000_000
+            return f"${billions:.1f} billion".replace(".0 ", " ")
+        if amount >= 1_000_000:
+            return f"${round(amount / 1_000_000)} million"
+        if amount > 0:
+            return f"${round(amount / 1_000)} thousand"
+        return ""
+
+    def _tier_parts(self, tier: str) -> tuple[list[str], str]:
+        """Ordered (priority, highest first) document parts plus the synopsis.
+
+        Input sets per issue #14:
+        - t1_identity:   title, year, genres, overview
+        - t2_enriched:   + director, top-10 cast with characters, top-12
+                         keywords, tagline, runtime, rating
+        - t3_exhaustive: + original_title, ALL keywords, financials as words
+        popularity / vote_count / imdb_id are deliberately excluded everywhere
+        (SQL-tool / filter material, not semantic signal).
+        """
+        genres_str = ", ".join(self.genres)
+        parts = [f"Title: {self.title} ({self.release_year})"]
+
+        if tier == "t1_identity":
+            if genres_str:
+                parts.append(f"Genres: {genres_str}")
+            return parts, self.overview
+
+        if self.director:
+            parts.append(f"Director: {self.director}")
+        if genres_str:
+            parts.append(f"Genres: {genres_str}")
+
+        cast_details = [
+            f"{c.name} as {c.character}" if c.character else c.name
+            for c in self.cast[:10]
+        ]
+        if cast_details:
+            parts.append(f"Cast: {', '.join(cast_details)}")
+
+        if tier == "t3_exhaustive":
+            if self.keywords:
+                parts.append(f"Themes: {', '.join(self.keywords)}")
+        elif self.keywords:
+            parts.append(f"Themes: {', '.join(self.keywords[:12])}")
+
+        if self.tagline:
+            parts.append(f"Tagline: {self.tagline}")
+        if self.runtime:
+            parts.append(f"Runtime: {self.runtime} mins")
+        if self.vote_average > 0:
+            parts.append(f"Rating: {self.vote_average:.1f}/10")
+
+        if tier == "t3_exhaustive":
+            if self.original_title and self.original_title != self.title:
+                parts.append(f"Original title: {self.original_title}")
+            if self.budget > 0:
+                parts.append(f"Budget: {self._money_words(self.budget)}")
+            if self.revenue > 0:
+                parts.append(f"Box office: {self._money_words(self.revenue)}")
+
+        return parts, self.overview
+
     def to_dense_text(
         self,
-        strategy: str = "enriched_metadata",
-        token_budget: int = 256
+        tier: str = "t2_enriched",
+        token_budget: int | None = None,
+        token_counter: TokenCounter | None = None,
     ) -> str:
-        """Serializes movie metadata dynamically scaled to fit within the target token budget.
+        """Serializes movie metadata into a tier-shaped document within a token budget.
 
-        Uses a prioritized tier-packing algorithm to maximize semantic signal without truncation:
-          - 256 tokens: Core identity + top 4 cast + top 6 keywords + trimmed synopsis
-          - 512 tokens: Core identity + top 10 cast with roles + all keywords + tagline + full synopsis + runtime/rating
-          - 1024+ tokens: Full cast (top 20) + crew + production financials + full synopsis
+        With ``token_counter`` (the target model's real tokenizer) packing is
+        exact: the stored text never exceeds ``token_budget`` model tokens and
+        the synopsis is cut on token boundaries via offsets — no silent
+        truncation, no character estimates. Without one, a chars/3.8 estimate
+        is used (offline convenience only; never for index builds).
         """
-        if strategy == "baseline":
-            # Strategy A (v1.0): Overview only
-            return f"{self.title} ({self.release_year}): {self.overview}".strip()
+        budget = token_budget or self.DEFAULT_TIER_BUDGETS[tier]
+        parts, overview = self._tier_parts(tier)
 
-        # Target character budget (1 token ~ 3.8 characters with safety margin)
-        char_budget = int(token_budget * 3.8)
+        if token_counter is None:
+            return self._pack_by_char_estimate(parts, overview, budget)
+        return self._pack_exact(parts, overview, budget, token_counter)
 
-        # Tier 1: Core Identity (Mandatory)
-        genres_str = ", ".join(self.genres)
-        core_parts = [f"Title: {self.title} ({self.release_year})"]
-        if self.director:
-            core_parts.append(f"Director: {self.director}")
-        if genres_str:
-            core_parts.append(f"Genres: {genres_str}")
+    def _pack_exact(
+        self,
+        parts: list[str],
+        overview: str,
+        budget: int,
+        counter: TokenCounter,
+    ) -> str:
+        """Greedily includes highest-priority parts that fit; synopsis fills the rest."""
+        included: list[str] = []
+        used = 0
+        for part in parts:
+            cost = counter.count(part) + 1  # +1 for the joining newline
+            if used + cost <= budget:
+                included.append(part)
+                used += cost
 
-        # Tier 2: High-Signal Metadata scaled to token budget
-        if token_budget <= 256:
-            # 256 tokens: Top 4 cast names, top 6 keywords
-            cast_names = ", ".join([c.name for c in self.cast[:4]])
-            keywords_str = ", ".join(self.keywords[:6])
-            if cast_names:
-                core_parts.append(f"Cast: {cast_names}")
-            if keywords_str:
-                core_parts.append(f"Themes: {keywords_str}")
-            if self.tagline:
-                core_parts.append(f"Tagline: {self.tagline}")
-        elif token_budget <= 512:
-            # 512 tokens: Top 10 cast with character roles, all keywords
-            cast_details = [
-                f"{c.name} as {c.character}" if c.character else c.name
-                for c in self.cast[:10]
-            ]
-            if cast_details:
-                core_parts.append(f"Cast: {', '.join(cast_details)}")
-            if self.keywords:
-                core_parts.append(f"Themes: {', '.join(self.keywords)}")
-            if self.tagline:
-                core_parts.append(f"Tagline: {self.tagline}")
-            if self.runtime:
-                core_parts.append(f"Runtime: {self.runtime} mins")
-            if self.vote_average > 0:
-                core_parts.append(f"Rating: {self.vote_average:.1f}/10 ({self.vote_count} votes)")
-        else:
-            # 1024+ tokens: Full cast (top 20), production details, financials
-            cast_details = [
-                f"{c.name} as {c.character}" if c.character else c.name
-                for c in self.cast[:20]
-            ]
-            if cast_details:
-                core_parts.append(f"Cast: {', '.join(cast_details)}")
-            if self.keywords:
-                core_parts.append(f"Themes: {', '.join(self.keywords)}")
-            if self.tagline:
-                core_parts.append(f"Tagline: {self.tagline}")
-            if self.runtime:
-                core_parts.append(f"Runtime: {self.runtime} mins")
-            if self.budget > 0 or self.revenue > 0:
-                core_parts.append(f"Financials: Budget ${self.budget:,} | Box Office ${self.revenue:,}")
-            if self.imdb_id:
-                core_parts.append(f"IMDb: {self.imdb_id}")
+        remaining = budget - used
+        synopsis_label = "Synopsis: "
+        if (
+            overview
+            and remaining >= self._MIN_SYNOPSIS_TOKENS + counter.count(synopsis_label)
+        ):
+            synopsis_budget = remaining - counter.count(synopsis_label) - 1
+            included.append(synopsis_label + counter.truncate(overview, synopsis_budget))
 
-        current_header = "\n".join(core_parts)
-        remaining_chars = char_budget - len(current_header) - 12  # 12 chars for "\nSynopsis: "
+        return "\n".join(included)
 
-        # Tier 3: Synopsis / Overview fit into remaining budget
-        if self.overview and remaining_chars > 50:
-            if len(self.overview) <= remaining_chars:
-                core_parts.append(f"Synopsis: {self.overview}")
-            else:
-                # Truncate synopsis cleanly at nearest whitespace boundary
-                truncated_overview = self.overview[:remaining_chars].rsplit(" ", 1)[0] + "..."
-                core_parts.append(f"Synopsis: {truncated_overview}")
+    def _pack_by_char_estimate(
+        self,
+        parts: list[str],
+        overview: str,
+        budget: int,
+    ) -> str:
+        """Fallback packing at ~3.8 chars/token (offline only, never for builds)."""
+        char_budget = int(budget * 3.8)
+        included: list[str] = []
+        used = 0
+        for part in parts:
+            cost = len(part) + 1
+            if used + cost <= char_budget:
+                included.append(part)
+                used += cost
 
-        return "\n".join(core_parts)
+        remaining = char_budget - used
+        synopsis_label = "Synopsis: "
+        if overview and remaining >= len(synopsis_label) + 50:
+            synopsis_budget = remaining - len(synopsis_label) - 1
+            trimmed = overview[:synopsis_budget]
+            if len(overview) > synopsis_budget:
+                trimmed = trimmed.rsplit(" ", 1)[0] + "..."
+            included.append(synopsis_label + trimmed)
+
+        return "\n".join(included)

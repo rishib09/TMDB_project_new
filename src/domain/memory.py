@@ -1,11 +1,13 @@
 """5-Layer Conversational Memory State and LangGraph State Reducers."""
 
 import operator
-from datetime import datetime, timezone
-from typing import Annotated, List, Optional, Sequence
-from pydantic import BaseModel, Field
+from collections.abc import Sequence
+from datetime import UTC, datetime
+from typing import Annotated
+
 from langchain_core.messages import BaseMessage
 from langgraph.graph.message import add_messages
+from pydantic import BaseModel, Field
 
 from src.domain.movie import MovieRecord
 from src.domain.routing import QueryRoutingDecision
@@ -15,9 +17,9 @@ class ChatMessage(BaseModel):
     """Represents a single message turn in the conversation history."""
     role: str  # "user" | "assistant" | "system"
     content: str
-    intent: Optional[str] = None
-    retrieved_movie_ids: List[int] = Field(default_factory=list)
-    timestamp: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    intent: str | None = None
+    retrieved_movie_ids: list[int] = Field(default_factory=list)
+    timestamp: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
 
 
 class FocusedMovieEntity(BaseModel):
@@ -30,21 +32,21 @@ class FocusedMovieEntity(BaseModel):
 
 class UserSessionPreferences(BaseModel):
     """Persistent session-level constraints and preferences across turns."""
-    excluded_genres: List[str] = Field(default_factory=list)
-    excluded_actors: List[str] = Field(default_factory=list)
-    preferred_genres: List[str] = Field(default_factory=list)
+    excluded_genres: list[str] = Field(default_factory=list)
+    excluded_actors: list[str] = Field(default_factory=list)
+    preferred_genres: list[str] = Field(default_factory=list)
 
 
 # --- LangGraph Functional Reducers ---
 
-def merge_unique_ids(left: List[int], right: List[int]) -> List[int]:
+def merge_unique_ids(left: list[int], right: list[int]) -> list[int]:
     """Reducer that appends newly shown movie IDs while preserving uniqueness."""
     return list(dict.fromkeys(left + right))
 
 
 def merge_preferences(
     current: UserSessionPreferences,
-    incoming: Optional[UserSessionPreferences]
+    incoming: UserSessionPreferences | None
 ) -> UserSessionPreferences:
     """Reducer that merges session-level preferences and persistent exclusions."""
     if not incoming:
@@ -66,11 +68,11 @@ class MayaGraphState(BaseModel):
     messages: Annotated[Sequence[BaseMessage], add_messages] = Field(default_factory=list)
 
     # 2. Entity Focus Layer
-    focused_entity: Optional[FocusedMovieEntity] = None
-    focused_person: Optional[str] = None
+    focused_entity: FocusedMovieEntity | None = None
+    focused_person: str | None = None
 
     # 3. Seen Recommendations Tracker (Unique Reducer)
-    shown_movie_ids: Annotated[List[int], merge_unique_ids] = Field(default_factory=list)
+    shown_movie_ids: Annotated[list[int], merge_unique_ids] = Field(default_factory=list)
 
     # 4. Persistent User Preferences & Exclusions (Merge Reducer)
     session_preferences: Annotated[UserSessionPreferences, merge_preferences] = Field(
@@ -82,16 +84,16 @@ class MayaGraphState(BaseModel):
     session_tokens: Annotated[int, operator.add] = 0
 
     # Transient per-turn pipeline artifacts
-    routing_decision: Optional[QueryRoutingDecision] = None
-    retrieved_movies: List[MovieRecord] = Field(default_factory=list)
+    routing_decision: QueryRoutingDecision | None = None
+    retrieved_movies: list[MovieRecord] = Field(default_factory=list)
 
 
 class ConversationState(BaseModel):
     """5-Layer Conversational Memory State for UI session state."""
-    messages: List[ChatMessage] = Field(default_factory=list)
-    focused_entity: Optional[FocusedMovieEntity] = None
-    focused_person: Optional[str] = None
-    shown_movie_ids: List[int] = Field(default_factory=list)
+    messages: list[ChatMessage] = Field(default_factory=list)
+    focused_entity: FocusedMovieEntity | None = None
+    focused_person: str | None = None
+    shown_movie_ids: list[int] = Field(default_factory=list)
     session_preferences: UserSessionPreferences = Field(default_factory=UserSessionPreferences)
     rolling_summary: str = ""
     session_tokens: int = 0
@@ -100,8 +102,8 @@ class ConversationState(BaseModel):
         self,
         user_query: str,
         assistant_response: str,
-        retrieved_movies: List[MovieRecord],
-        decision: Optional[QueryRoutingDecision] = None,
+        retrieved_movies: list[MovieRecord],
+        decision: QueryRoutingDecision | None = None,
         tokens_used: int = 0,
     ) -> None:
         """Updates conversational state with new turn, entity focus, and shown IDs."""

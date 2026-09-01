@@ -1,8 +1,9 @@
 """Live integration tests running directly against the real TMDB SQLite database."""
 
 import pytest
-from src.storage.database import MovieDatabase
+
 from src.domain.movie import MovieRecord
+from src.storage.database import MovieDatabase
 
 
 @pytest.fixture(scope="module")

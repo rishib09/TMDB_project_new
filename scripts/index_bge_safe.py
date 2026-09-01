@@ -31,12 +31,10 @@ def index_bge_fast():
     print(f"[INDEXING] Starting parallel indexing for v1_2_bge_hybrid with {workers} workers...", flush=True)
     t0 = time.time()
     count = vector_store.index_movies(
-        version_name="v1_2_bge_hybrid",
-        embedding_model="BAAI/bge-small-en-v1.5",
-        chunking_strategy="enriched_metadata",
+        version_name="v1_1_enriched",
         movies=movies,
         batch_size=128
-    )
+    )  # defaults from TIER_PROFILES: bge-small + t2_enriched + 512 tokens
     elapsed = time.time() - t0
     print(f"[DONE] Successfully indexed {count} vectors in {elapsed:.2f}s ({count / elapsed:.1f} docs/sec)!", flush=True)
     print(f"Total in v1_2_bge_hybrid: {vector_store.count('v1_2_bge_hybrid')}", flush=True)
