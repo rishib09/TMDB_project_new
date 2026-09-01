@@ -34,3 +34,7 @@ data/chroma_db/
 Thumbs.db
 .vscode/
 .idea/
+
+# Local scratch + agent runtime
+.scratch/
+.pi/
