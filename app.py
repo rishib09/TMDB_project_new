@@ -25,18 +25,13 @@ st.set_page_config(
 session = get_session()
 
 with st.sidebar:
-    st.markdown("## Maya")
-    st.caption(
-        "Conversational film curator for US theatrical releases, 1970–2026. "
-        "Deterministic routing, closed-world grounding, full trace observability."
-    )
     views = ["Chat", "Evals", "Traces"]
-    session.view = st.radio(
-        "Navigation",
-        views,
-        index=views.index(session.view),
-        label_visibility="collapsed",
+    view_icons = {"Chat": ":material/chat:", "Evals": ":material/monitoring:", "Traces": ":material/timeline:"}
+    selection = st.segmented_control(
+        "Navigation", views, default=session.view, label_visibility="collapsed"
     )
+    if selection:
+        session.view = selection
     st.divider()
     render_lab(session)
 

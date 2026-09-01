@@ -50,9 +50,10 @@ def render_poster_grid(movies, cols: int = 4) -> None:
 
 
 def render_chat(session: MayaSession) -> None:
-    st.header("Chat")
+    st.title("Maya")
     st.caption(
-        "Ask about movies from 1970 to 2026 — plots, moods, exclusions, or rankings. "
+        "Conversational film curator for US theatrical releases, 1970–2026. "
+        "Deterministic routing, closed-world grounding, full trace observability. "
         f"Type {ADMIN_COMMAND} for the Experimentation Lab."
     )
 
@@ -81,8 +82,17 @@ def render_chat(session: MayaSession) -> None:
     with st.chat_message("user"):
         st.markdown(query)
     assistant = st.chat_message("assistant")
-    with assistant, st.status("Working through the pipeline", expanded=False):
-        session.turn(query)
+    try:
+        with assistant, st.status("Working through the pipeline", expanded=False):
+            session.turn(query)
+    except Exception as exc:  # noqa: BLE001 — surface a readable failure, never a traceback
+        st.error(
+            "Maya could not complete this turn. Check that the app was started with "
+            "the encrypted environment loaded:  \n"
+            "`npx @dotenvx/dotenvx run -- streamlit run app.py`  \n"
+            f"Details: {type(exc).__name__}: {exc}"
+        )
+        return
     idx = len(session.turn_log) - 1
     with assistant:
         last = session.turn_log[idx]

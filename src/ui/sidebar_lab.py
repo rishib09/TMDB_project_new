@@ -96,16 +96,13 @@ def render_budget_meter(session) -> None:
 
 def render_lab(session) -> None:
     st.markdown("**Experimentation Lab**")
-    st.caption(
-        "Live architecture knobs (ADR 0004): changes rebuild the pipeline and "
-        "apply from the next message."
-    )
+    st.caption("Live architecture knobs — applied from the next message.")
 
     preset_cols = st.columns(3)
     preset_map = [
-        (preset_cols[0], PresetType.FAST_BUDGET, "Fast / Budget"),
+        (preset_cols[0], PresetType.FAST_BUDGET, "Fast Budget"),
         (preset_cols[1], PresetType.PRODUCTION_HYBRID, "Production"),
-        (preset_cols[2], PresetType.NAIVE_BASELINE, "Naive baseline"),
+        (preset_cols[2], PresetType.NAIVE_BASELINE, "Naive Baseline"),
     ]
     for col, preset, label in preset_map:
         if col.button(label, use_container_width=True):
