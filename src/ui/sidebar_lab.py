@@ -117,7 +117,7 @@ def render_lab(session) -> None:
 
     st.divider()
     st.markdown("**Evaluation entry points**")
-    st.page_link("app.py", label="📊 Evals tab (see results deltas)", icon="📊")
+    st.markdown("📊 Metrics live in the **Evals** tab; traces in the **Traces** tab.")
     st.markdown(
         "CLI sweeps: `python -m src.evals.runner --mode retrieval --versions v1_1_enriched`"
     )
