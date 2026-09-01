@@ -1,93 +1,92 @@
-"""Chat tab (issue #7): conversation, intent badges, poster grid."""
+"""Chat view (issue #7): conversation, routing chip, poster gallery, feedback.
+
+Professional chrome: no emojis, plain-text separators. Feedback thumbs are
+captured per assistant turn and linked to that turn's trace row (Langfuse
+scoring + SQLite persistence land with issue #9).
+"""
 
 import streamlit as st
 
-from src.domain.routing import IntentType
 from src.ui.session import ADMIN_COMMAND, MayaSession
-
-#: Intent → badge color (Streamlit native st.badge palette).
-_INTENT_COLORS = {
-    IntentType.GREETING: "blue",
-    IntentType.CAPABILITIES: "blue",
-    IntentType.SEMANTIC_SEARCH: "green",
-    IntentType.ATTRIBUTE_FILTER: "green",
-    IntentType.SUPERLATIVE_RANKING: "orange",
-    IntentType.NEGATION_EXCLUSION: "red",
-    IntentType.OUT_OF_SCOPE: "gray",
-}
 
 
 def intent_badge_text(log_row: dict) -> str:
-    """Pure helper (unit-tested): one-line transparency chip for a turn."""
+    """Pure helper (unit-tested): one-line routing chip for a turn."""
     path = log_row.get("path", "?")
     attempts = log_row.get("attempts", 1)
-    path_label = f"{path} ×{attempts}" if attempts > 1 else path
+    path_label = f"{path} (x{attempts})" if attempts > 1 else path
     return (
-        f"{log_row.get('intent', '?')} · conf {log_row.get('confidence', 0):.2f} "
-        f"· {path_label} · {log_row.get('n_movies', 0)} movies · {log_row.get('tokens', 0)} tok"
+        f"INTENT: {log_row.get('intent', '?')} — confidence {log_row.get('confidence', 0):.2f} "
+        f"— route: {path_label} — {log_row.get('n_movies', 0)} movies "
+        f"— {log_row.get('tokens', 0)} tokens"
     )
 
 
 def render_intent_badge(log_row: dict) -> None:
-    st.caption("🔎 " + intent_badge_text(log_row))
+    st.caption(intent_badge_text(log_row))
 
 
-def render_poster_grid(movies, cols: int = 3) -> None:
-    """Top-k poster gallery below a RAG reply (native columns + images)."""
+def render_feedback(session: MayaSession, turn_index: int) -> None:
+    """Thumbs up/down per assistant turn; value persists in the session log."""
+    value = st.feedback("thumbs", key=f"feedback_{turn_index}")
+    if value is not None:
+        session.feedback_log[turn_index] = value
+
+
+def render_poster_grid(movies, cols: int = 4) -> None:
+    """Retrieved-context gallery: bordered cards, uniform poster width."""
     if not movies:
         return
-    st.caption(f"🎬 Retrieved context ({len(movies)} movies — Maya's closed world this turn)")
+    st.markdown(
+        f"**Retrieved context** — Maya's closed world this turn ({len(movies)} movies)"
+    )
     for start in range(0, len(movies), cols):
         chunk = movies[start : start + cols]
-        columns = st.columns(cols)
-        for col, movie in zip(columns, chunk):
-            with col:
-                st.image(movie.poster_url, use_container_width=True)
-                st.markdown(
-                    f"**{movie.title}** ({movie.release_year})\n\n"
-                    f"⭐ {movie.vote_average:.1f} · {', '.join(movie.genres[:3])}"
-                )
+        for col, movie in zip(st.columns(cols), chunk):
+            with col, st.container(border=True):
+                st.image(movie.poster_url)
+                st.markdown(f"**{movie.title}** ({movie.release_year})")
+                st.caption(f"{movie.vote_average:.1f} / 10 — " + ", ".join(movie.genres[:3]))
 
 
 def render_chat(session: MayaSession) -> None:
-    st.subheader("💬 Chat with Maya")
+    st.header("Chat")
     st.caption(
-        "Ask about movies 1970–2026 — plots, moods, superlatives, exclusions. "
-        f"Type `{ADMIN_COMMAND}` to open the Experimentation Lab."
+        "Ask about movies from 1970 to 2026 — plots, moods, exclusions, or rankings. "
+        f"Type {ADMIN_COMMAND} for the Experimentation Lab."
     )
 
-    # history
-    for msg, log_row in zip(session.conversation.messages, _pair_log(session)):
+    # history: routing chip + thumbs inside each assistant bubble
+    turn_index = -1
+    for msg in session.conversation.messages:
         role = "user" if msg.role == "user" else "assistant"
         with st.chat_message(role):
             st.markdown(msg.content)
-            if role == "assistant" and log_row is not None:
-                render_intent_badge(log_row)
+            if msg.role != "assistant":
+                continue
+            turn_index += 1
+            if turn_index < len(session.turn_log):
+                render_intent_badge(session.turn_log[turn_index])
+            render_feedback(session, turn_index)
 
-    # last turn's retrieved posters
     render_poster_grid(session.last_movies)
 
-    query = st.chat_input("Ask Maya about movies…")
+    query = st.chat_input("Ask Maya about movies")
     if not query:
         return
     if session.is_admin_command(query):
-        session.admin_mode = True
-        st.rerun()
+        st.toast("The Experimentation Lab lives in the collapsible sidebar.")
+        return
 
     with st.chat_message("user"):
         st.markdown(query)
-    with st.chat_message("assistant"), st.spinner("Maya is thinking…"):
+    assistant = st.chat_message("assistant")
+    with assistant, st.status("Working through the pipeline", expanded=False):
         session.turn(query)
-        last = session.turn_log[-1]
+    idx = len(session.turn_log) - 1
+    with assistant:
+        last = session.turn_log[idx]
         st.markdown(last["response"])
         render_intent_badge(last)
-        render_poster_grid(session.last_movies)
-
-
-def _pair_log(session: MayaSession):
-    """Aligns history messages with turn-log rows for badge rendering."""
-    pairs = []
-    log_iter = iter(session.turn_log)
-    for msg in session.conversation.messages:
-        pairs.append(next(log_iter) if msg.role == "assistant" else None)
-    return pairs
+        render_feedback(session, idx)
+    render_poster_grid(session.last_movies)

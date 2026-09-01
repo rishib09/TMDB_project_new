@@ -44,6 +44,8 @@ class MayaSession:
         self.conversation = ConversationState()
         self.tracer = DualModeObservabilityManager(session_id=f"ui-{datetime.now(UTC):%H%M%S}")
         self.limiter = SessionTokenLimiter()
+        self.view = "Chat"  # sidebar navigation: Chat | Evals | Traces
+        self.feedback_log: dict[int, int] = {}  # assistant-turn index → ±1 (thumbs)
         self.admin_mode = False
         self.turn_log: list[dict] = []  # one row per turn for badges/trace
         self.last_movies = []  # MovieRecords from the most recent retrieval

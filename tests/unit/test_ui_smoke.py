@@ -37,13 +37,14 @@ def test_intent_badge_text_formatting():
     row = {"intent": "SEMANTIC_SEARCH", "confidence": 0.92, "path": "single-route",
            "attempts": 1, "n_movies": 5, "tokens": 210}
     text = intent_badge_text(row)
-    assert text == "SEMANTIC_SEARCH · conf 0.92 · single-route · 5 movies · 210 tok"
+    assert text == ("INTENT: SEMANTIC_SEARCH — confidence 0.92 — route: single-route "
+                    "— 5 movies — 210 tokens")
 
 
 def test_intent_badge_shows_reroute_attempts():
     row = {"intent": "SEMANTIC_SEARCH", "confidence": 0.4, "path": "reroute",
            "attempts": 2, "n_movies": 0, "tokens": 0}
-    assert "reroute ×2" in intent_badge_text(row)
+    assert "route: reroute (x2)" in intent_badge_text(row)
 
 
 def test_waterfall_frame_handles_empty_and_single():

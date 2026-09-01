@@ -63,7 +63,7 @@ def render_trace_table(traces: list[dict]) -> None:
 
 
 def render_traces(session) -> None:
-    st.subheader("🔍 Trace Inspector")
+    st.header("Traces")
     cloud_keys = os.getenv("LANGFUSE_PUBLIC_KEY") and os.getenv("LANGFUSE_SECRET_KEY")
     st.caption(
         "Node-level execution waterfall from the local tracer ring (always on). "

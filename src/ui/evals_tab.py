@@ -57,7 +57,7 @@ def render_history_chart(runs: list[dict]) -> None:
 
 
 def render_evals(results_dir: Path = RESULTS_DIR) -> None:
-    st.subheader("📊 Evals Dashboard")
+    st.header("Evals")
     st.caption(
         "Benchmark runs from `src/evals/runner.py` — deltas compare against the "
         "previous run of the same label. Sweep via the CLI, view here."
