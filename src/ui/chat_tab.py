@@ -7,7 +7,28 @@ scoring + SQLite persistence land with issue #9).
 
 import streamlit as st
 
-from src.ui.session import ADMIN_COMMAND, MayaSession
+from src.ui.session import MayaSession
+
+MAYA_AVATAR = ":material/movie:"
+USER_AVATAR = ":material/person:"
+
+_CHAT_CSS = """
+<style>
+[data-testid="stHeader"] { display: none; }
+[data-testid="stChatMessage"] { padding-top: 0.3rem; padding-bottom: 0.3rem; }
+[data-testid="stChatMessage"] p { margin-bottom: 0.25rem; }
+[data-testid="stVerticalBlock"] { gap: 0.35rem; }
+.maya-sticky-header {
+  position: sticky; top: 0; z-index: 1000;
+  background: #ffffff; padding: 0.5rem 0 0.6rem;
+  border-bottom: 1px solid #ececec; margin-bottom: 0.5rem;
+}
+.maya-sticky-header .maya-title {
+  font-size: 1.7rem; font-weight: 700; line-height: 1.25; color: #1b1b24;
+}
+.maya-sticky-header .maya-subtitle { font-size: 0.85rem; color: #5a5a66; }
+</style>
+"""
 
 
 def intent_badge_text(log_row: dict) -> str:
@@ -50,18 +71,23 @@ def render_poster_grid(movies, cols: int = 4) -> None:
 
 
 def render_chat(session: MayaSession) -> None:
-    st.title("Maya")
-    st.caption(
-        "Conversational film curator for US theatrical releases, 1970–2026. "
-        "Deterministic routing, closed-world grounding, full trace observability. "
-        f"Type {ADMIN_COMMAND} for the Experimentation Lab."
+    st.markdown(_CHAT_CSS, unsafe_allow_html=True)
+    st.markdown(
+        '<div class="maya-sticky-header">'
+        '<div class="maya-title">Maya</div>'
+        '<div class="maya-subtitle">Conversational film curator for US theatrical '
+        "releases, 1970\u20132026 — deterministic routing, closed-world grounding, "
+        "full trace observability. Type /admin for the Experimentation Lab."
+        "</div></div>",
+        unsafe_allow_html=True,
     )
 
     # history: routing chip + thumbs inside each assistant bubble
     turn_index = -1
     for msg in session.conversation.messages:
         role = "user" if msg.role == "user" else "assistant"
-        with st.chat_message(role):
+        avatar = USER_AVATAR if msg.role == "user" else MAYA_AVATAR
+        with st.chat_message(role, avatar=avatar):
             st.markdown(msg.content)
             if msg.role != "assistant":
                 continue
@@ -79,9 +105,9 @@ def render_chat(session: MayaSession) -> None:
         st.toast("The Experimentation Lab lives in the collapsible sidebar.")
         return
 
-    with st.chat_message("user"):
+    with st.chat_message("user", avatar=USER_AVATAR):
         st.markdown(query)
-    assistant = st.chat_message("assistant")
+    assistant = st.chat_message("assistant", avatar=MAYA_AVATAR)
     try:
         with assistant, st.status("Working through the pipeline", expanded=False):
             session.turn(query)

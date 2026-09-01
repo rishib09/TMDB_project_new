@@ -23,8 +23,14 @@ _SYNTH_MODELS = [
 _RERANKERS = ["ms-marco-MiniLM-L-12-v2", "ms-marco-TinyBERT-L-2-v2", "ce-esci-MiniLM-L12-v2"]
 
 
-def knob_editor(config: ExperimentConfig) -> ExperimentConfig | None:
-    """Renders grouped knobs; returns an edited config copy or None if unchanged."""
+def knob_editor(config: ExperimentConfig, version: int) -> ExperimentConfig | None:
+    """Renders grouped knobs; returns an edited config copy or None if unchanged.
+
+    Widget keys embed ``version`` (bumped when a preset is applied) so the
+    widgets remount with the new config instead of forcing their stale
+    Streamlit-held values back — that was the preset-button bug.
+    """
+    v = version
     edited = config.model_copy(deep=True)
     changed = False
 
@@ -34,16 +40,19 @@ def knob_editor(config: ExperimentConfig) -> ExperimentConfig | None:
             _ROUTER_MODELS,
             index=_ROUTER_MODELS.index(config.router_model)
             if config.router_model in _ROUTER_MODELS else 0,
+            key=f"router_model_{v}",
         )
         synth = st.selectbox(
             "Synthesis model",
             _SYNTH_MODELS,
             index=_SYNTH_MODELS.index(config.synthesis_model)
             if config.synthesis_model in _SYNTH_MODELS else 0,
+            key=f"synth_model_{v}",
         )
-        temp = st.slider("Temperature", 0.0, 1.0, config.temperature, 0.1)
+        temp = st.slider("Temperature", 0.0, 1.0, config.temperature, 0.1, key=f"temp_{v}")
         effort = st.select_slider(
-            "Reasoning effort", ["none", "low", "medium", "high"], config.reasoning_effort
+            "Reasoning effort", ["none", "low", "medium", "high"], config.reasoning_effort,
+            key=f"effort_{v}",
         )
         for old, new in [
             (config.router_model, router), (config.synthesis_model, synth),
@@ -55,12 +64,18 @@ def knob_editor(config: ExperimentConfig) -> ExperimentConfig | None:
         edited.temperature, edited.reasoning_effort = temp, effort
 
     with st.expander("Retrieval", expanded=True):
-        top_k = st.slider("Retrieval top-K", 1, 20, config.retrieval_top_k)
-        alpha = st.slider("hybrid_alpha (0 = lexical, 1 = dense)", 0.0, 1.0, config.hybrid_alpha, 0.05)
-        reranker = st.checkbox(
-            "Reranker (measured slower and weaker than RRF fusion)", config.reranker_enabled
+        top_k = st.slider("Retrieval top-K", 1, 20, config.retrieval_top_k, key=f"topk_{v}")
+        alpha = st.slider(
+            "hybrid_alpha (0 = lexical, 1 = dense)", 0.0, 1.0, config.hybrid_alpha, 0.05,
+            key=f"alpha_{v}",
         )
-        reranker_model = st.selectbox("Reranker model", _RERANKERS, disabled=not reranker)
+        reranker = st.checkbox(
+            "Reranker (measured slower and weaker than RRF fusion)", config.reranker_enabled,
+            key=f"reranker_{v}",
+        )
+        reranker_model = st.selectbox(
+            "Reranker model", _RERANKERS, disabled=not reranker, key=f"reranker_model_{v}"
+        )
         for old, new in [
             (config.retrieval_top_k, top_k), (config.hybrid_alpha, alpha),
             (config.reranker_enabled, reranker), (config.reranker_model, reranker_model),
@@ -72,9 +87,13 @@ def knob_editor(config: ExperimentConfig) -> ExperimentConfig | None:
 
     with st.expander("Routing and Guardrails", expanded=True):
         attempts = st.slider(
-            "Route max attempts (bounded re-route cycle)", 1, 5, config.route_max_attempts
+            "Route max attempts (bounded re-route cycle)", 1, 5, config.route_max_attempts,
+            key=f"attempts_{v}",
         )
-        cwa = st.checkbox("Closed-world-assumption grounding enforcement", config.cwa_guardrail_enabled)
+        cwa = st.checkbox(
+            "Closed-world-assumption grounding enforcement", config.cwa_guardrail_enabled,
+            key=f"cwa_{v}",
+        )
         for old, new in [
             (config.route_max_attempts, attempts), (config.cwa_guardrail_enabled, cwa)
         ]:
@@ -109,7 +128,13 @@ def render_lab(session) -> None:
             session.apply_preset(preset)
             st.toast(f"Preset applied: {label}")
 
-    edited = knob_editor(session.config)
+    st.caption(
+        "Fast Budget: 3B router + Flash-Lite synthesis, dense-only, small context. "
+        "Production: 3B router + 70B synthesis, 50/50 dense-lexical RRF. "
+        "Naive Baseline: 3B end-to-end, dense-only."
+    )
+
+    edited = knob_editor(session.config, session.config_version)
     if edited is not None:
         session.replace_config(edited)
         st.toast("Configuration updated — pipeline rebuilt")

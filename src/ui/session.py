@@ -47,6 +47,7 @@ class MayaSession:
         self.view = "Chat"  # sidebar navigation: Chat | Evals | Traces
         self.feedback_log: dict[int, int] = {}  # assistant-turn index → ±1 (thumbs)
         self.admin_mode = False
+        self.config_version = 0  # bumped on preset apply → knob widgets remount
         self.turn_log: list[dict] = []  # one row per turn for badges/trace
         self.last_movies = []  # MovieRecords from the most recent retrieval
         self._graph_sig = ""
@@ -98,6 +99,7 @@ class MayaSession:
 
     def apply_preset(self, preset: PresetType) -> None:
         self.config.apply_preset(preset)
+        self.config_version += 1  # remount knob widgets with the preset values
         self.ensure_graph()
 
     # --- conversation turn ---
