@@ -36,6 +36,15 @@ def _to_lc_messages(history) -> list[BaseMessage]:
     return out
 
 
+def slice_new_traces(ring_before: int, traces: list[dict]) -> list[dict]:
+    """Pure helper (issue #18): only the traces produced during this turn.
+
+    The tracer ring accumulates across turns; counting route traces from the
+    whole ring made the transparency chip show stale cross-turn counts.
+    """
+    return traces[ring_before:]
+
+
 class MayaSession:
     """Per-browser-session bundle: graph, memory, tracer, config."""
 
@@ -107,6 +116,7 @@ class MayaSession:
     def turn(self, query: str) -> None:
         """One full Maya turn: guard → route → retrieve → synthesize."""
         graph = self.ensure_graph()
+        ring_before = len(self.tracer.traces())
         history = _to_lc_messages(self.conversation.messages)
         out = graph.invoke({
             "messages": [*history, HumanMessage(content=query)],
@@ -121,7 +131,11 @@ class MayaSession:
         self.conversation.add_turn(
             query, response, movies, decision, tokens_used=max(tokens, 0)
         )
-        route_traces = [t for t in self.tracer.traces() if t["node"] == "route"]
+        route_traces = [
+            t
+            for t in slice_new_traces(ring_before, self.tracer.traces())
+            if t["node"] == "route"
+        ]
         self.turn_log.append({
             "timestamp": datetime.now(UTC).isoformat(),
             "query": query,

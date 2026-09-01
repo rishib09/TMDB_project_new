@@ -277,3 +277,26 @@ def test_session_preferences_projected_to_router(tracer):
     projected_state = router.calls[0]["state"]
     assert isinstance(projected_state, ConversationState)
     assert projected_state.session_preferences.excluded_genres == ["Horror"]
+
+
+# --- issue #18 regression: re-route cycle must not duplicate retrieval ---
+
+def test_reroute_cycle_does_not_accumulate_retrieved_movies(tracer):
+    """With every attempt a fallback, retrieve runs ONCE and movies replace."""
+    config = ExperimentConfig()
+    config.route_max_attempts = 3
+    router = FakeRouter([
+        _decision(confidence=0.2, is_fallback=True),
+        _decision(confidence=0.3, is_fallback=True),
+        _decision(confidence=0.4, is_fallback=True),
+    ])
+    movies = [_movie(mid=1), _movie(mid=2), _movie(mid=3), _movie(mid=4), _movie(mid=5)]
+    engine = FakeEngine(movies=movies)
+    graph = build_maya_graph(config, router, engine, FakeSynthesizer(), tracer)
+
+    out = _invoke(graph, "best movie of 2026")
+
+    assert len(engine.calls) == 1  # single retrieval despite 3 routing attempts
+    assert [m.id for m in out["retrieved_movies"]] == [1, 2, 3, 4, 5]  # no duplication
+    nodes = [t["node"] for t in tracer.traces()]
+    assert nodes == ["guard_input", "route", "route", "route", "retrieve", "synthesize"]

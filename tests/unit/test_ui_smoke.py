@@ -54,3 +54,16 @@ def test_waterfall_frame_handles_empty_and_single():
     frame = _waterfall_frame([{"node": "guard_input", "timestamp": "2026-09-01T10:00:00",
                                "payload": {"verdict": "clean"}}])
     assert len(frame) == 1 and frame.iloc[0]["node"] == "guard_input"
+
+
+def test_slice_new_traces_only_current_turn():
+    """Issue #18: route counts come from this turn's ring slice, not the whole ring."""
+    from src.ui.session import slice_new_traces
+
+    ring = [
+        {"node": "route", "payload": {}},
+        {"node": "retrieve", "payload": {}},
+    ]
+    assert slice_new_traces(2, ring) == []  # nothing new this turn
+    new_ring = ring + [{"node": "route", "payload": {}}, {"node": "route", "payload": {}}]
+    assert len(slice_new_traces(2, new_ring)) == 2

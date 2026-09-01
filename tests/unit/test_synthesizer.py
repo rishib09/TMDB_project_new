@@ -11,8 +11,12 @@ from langchain_core.messages import AIMessage, BaseMessage
 
 from src.domain.config import ExperimentConfig
 from src.domain.movie import CastMember, MovieRecord
-from src.domain.routing import IntentType, QueryRoutingDecision
-from src.maya.agent import TMDB_POSTER_BASE, MayaSynthesizer
+from src.domain.routing import (
+    IntentType,
+    QueryRoutingDecision,
+    SuperlativeCriteria,
+)
+from src.maya.agent import MayaSynthesizer
 
 pytestmark = pytest.mark.unit
 
@@ -91,7 +95,30 @@ def test_system_prompt_enforces_cwa_with_retrieval(synthesizer):
     assert "CLOSED-WORLD ASSUMPTION" in prompt
     assert "<retrieved_movies>" in prompt
     assert "NEVER invent" in prompt
-    assert TMDB_POSTER_BASE in prompt  # poster markdown contract
+    # Poster images live ONLY in the UI grid (issue #18) — never inline markdown
+    assert "![Poster]" not in prompt
+    assert "Do NOT insert images" in prompt
+
+
+def test_system_prompt_superlative_answers_directly(synthesizer):
+    prompt = synthesizer._build_system_prompt(has_retrieval=True, is_superlative=True)
+    assert "SUPERLATIVE" in prompt
+    assert "<ranking_criteria>" in prompt
+    assert "Never hedge" in prompt
+
+
+def test_user_message_includes_ranking_criteria_for_superlative(synthesizer):
+    decision = QueryRoutingDecision(
+        intent=IntentType.SUPERLATIVE_RANKING,
+        confidence=1.0,
+        standalone_query="best movie of 2026",
+        requires_rag=True,
+        is_superlative=True,
+        superlative=SuperlativeCriteria(metric="RATING", direction="DESC", year=2026, limit=5),
+    )
+    message = synthesizer._build_user_message("best movie of 2026", decision, [])
+    assert "<ranking_criteria>" in message
+    assert "metric=RATING; direction=DESC; year=2026; max_results=5" in message
 
 
 def test_system_prompt_no_retrieval_forbids_recommendations(synthesizer):
