@@ -51,6 +51,10 @@ class ExperimentConfig(BaseModel):
     )
     memory_strategy: str = Field(default="sliding_window_with_entity", description="Memory retention strategy")
     cwa_guardrail_enabled: bool = Field(default=True, description="Enforce Closed-World Assumption XML grounding")
+    judge_model: str = Field(
+        default="meta-llama/llama-3.3-70b-instruct",
+        description="LLM-as-a-judge model for eval faithfulness/relevancy (#6)",
+    )
 
     @model_validator(mode="after")
     def validate_token_budget_against_model(self) -> "ExperimentConfig":

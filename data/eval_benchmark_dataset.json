@@ -1,0 +1,488 @@
+{
+  "version": "2026-09-01",
+  "description": "Maya 35-query ground-truth benchmark (issue #6). Tier A: guardrails (pre-1970 deflection, out-of-scope, exclusions, SQL superlatives). Tier B: semantic retrieval 1970-2026. Relevant ids verified against data/tmdb_movies.db at creation.",
+  "queries": [
+    {
+      "id": "A01",
+      "tier": "A_guardrails",
+      "query": "Recommend a classic western from the 1950s",
+      "expected_intent": "OUT_OF_SCOPE",
+      "expected_path": "pivot",
+      "relevant_movie_ids": [],
+      "superlative": null,
+      "filters": null,
+      "notes": "pre-1970 era reference must pivot"
+    },
+    {
+      "id": "A02",
+      "tier": "A_guardrails",
+      "query": "What was the best movie of 1962?",
+      "expected_intent": "OUT_OF_SCOPE",
+      "expected_path": "pivot",
+      "relevant_movie_ids": [],
+      "superlative": null,
+      "filters": null,
+      "notes": "explicit pre-1970 year must pivot"
+    },
+    {
+      "id": "A03",
+      "tier": "A_guardrails",
+      "query": "Who is going to win the next FIFA World Cup?",
+      "expected_intent": "OUT_OF_SCOPE",
+      "expected_path": "pivot",
+      "relevant_movie_ids": [],
+      "superlative": null,
+      "filters": null,
+      "notes": "non-movie domain must pivot"
+    },
+    {
+      "id": "A04",
+      "tier": "A_guardrails",
+      "query": "Write me a python function to sort a list",
+      "expected_intent": "OUT_OF_SCOPE",
+      "expected_path": "pivot",
+      "relevant_movie_ids": [],
+      "superlative": null,
+      "filters": null,
+      "notes": "coding request must pivot"
+    },
+    {
+      "id": "A05",
+      "tier": "A_guardrails",
+      "query": "Hi Maya! Nice to meet you.",
+      "expected_intent": "GREETING",
+      "expected_path": "no_retrieval",
+      "relevant_movie_ids": [],
+      "superlative": null,
+      "filters": null,
+      "notes": "greeting: no retrieval, conversational reply"
+    },
+    {
+      "id": "A06",
+      "tier": "A_guardrails",
+      "query": "What can you help me with?",
+      "expected_intent": "CAPABILITIES",
+      "expected_path": "no_retrieval",
+      "relevant_movie_ids": [],
+      "superlative": null,
+      "filters": null,
+      "notes": "capabilities: no retrieval"
+    },
+    {
+      "id": "A07",
+      "tier": "A_guardrails",
+      "query": "What is the highest-grossing movie of all time?",
+      "expected_intent": "SUPERLATIVE_RANKING",
+      "expected_path": "sql",
+      "relevant_movie_ids": [
+        19995
+      ],
+      "superlative": {
+        "metric": "REVENUE",
+        "direction": "DESC",
+        "year": null,
+        "genre": null
+      },
+      "filters": null,
+      "notes": "SQL ground truth: Avatar"
+    },
+    {
+      "id": "A08",
+      "tier": "A_guardrails",
+      "query": "Which movie had the highest rating in 1994?",
+      "expected_intent": "SUPERLATIVE_RANKING",
+      "expected_path": "sql",
+      "relevant_movie_ids": [
+        278
+      ],
+      "superlative": {
+        "metric": "RATING",
+        "direction": "DESC",
+        "year": 1994,
+        "genre": null
+      },
+      "filters": null,
+      "notes": "SQL ground truth: Shawshank"
+    },
+    {
+      "id": "A09",
+      "tier": "A_guardrails",
+      "query": "Best science fiction movie of 1999?",
+      "expected_intent": "SUPERLATIVE_RANKING",
+      "expected_path": "sql",
+      "relevant_movie_ids": [
+        603
+      ],
+      "superlative": {
+        "metric": "RATING",
+        "direction": "DESC",
+        "year": 1999,
+        "genre": "Science Fiction"
+      },
+      "filters": null,
+      "notes": "SQL ground truth: The Matrix"
+    },
+    {
+      "id": "A10",
+      "tier": "A_guardrails",
+      "query": "Which film earned the most money in 2019?",
+      "expected_intent": "SUPERLATIVE_RANKING",
+      "expected_path": "sql",
+      "relevant_movie_ids": [
+        299534
+      ],
+      "superlative": {
+        "metric": "REVENUE",
+        "direction": "DESC",
+        "year": 2019,
+        "genre": null
+      },
+      "filters": null,
+      "notes": "SQL ground truth: Endgame"
+    },
+    {
+      "id": "A11",
+      "tier": "A_guardrails",
+      "query": "A time-loop action movie, but absolutely no romantic comedy",
+      "expected_intent": "SEMANTIC_SEARCH",
+      "expected_path": "rrf",
+      "relevant_movie_ids": [
+        137113
+      ],
+      "superlative": null,
+      "filters": {
+        "excluded_genres": [
+          "Romance",
+          "Comedy"
+        ]
+      },
+      "notes": "negation exclusion: Edge of Tomorrow"
+    },
+    {
+      "id": "A12",
+      "tier": "A_guardrails",
+      "query": "Crime drama with a big ensemble cast, nothing animated",
+      "expected_intent": "SEMANTIC_SEARCH",
+      "expected_path": "rrf",
+      "relevant_movie_ids": [
+        546554
+      ],
+      "superlative": null,
+      "filters": {
+        "excluded_genres": [
+          "Animation"
+        ]
+      },
+      "notes": "negation exclusion: Knives Out"
+    },
+    {
+      "id": "A13",
+      "tier": "A_guardrails",
+      "query": "An animated movie from 2015 about emotions inside a girl's head",
+      "expected_intent": "ATTRIBUTE_FILTER",
+      "expected_path": "rrf",
+      "relevant_movie_ids": [
+        150540
+      ],
+      "superlative": null,
+      "filters": {
+        "genres": [
+          "Animation",
+          "Family"
+        ],
+        "year_min": 2015,
+        "year_max": 2015
+      },
+      "notes": "attribute filter: Inside Out"
+    },
+    {
+      "id": "A14",
+      "tier": "A_guardrails",
+      "query": "Epic historical revenge story set in ancient Rome",
+      "expected_intent": "SEMANTIC_SEARCH",
+      "expected_path": "rrf",
+      "relevant_movie_ids": [
+        98
+      ],
+      "superlative": null,
+      "filters": null,
+      "notes": "Gladiator"
+    },
+    {
+      "id": "A15",
+      "tier": "A_guardrails",
+      "query": "Space horror movie from 1979 with a strong crew trapped on a ship",
+      "expected_intent": "SEMANTIC_SEARCH",
+      "expected_path": "rrf",
+      "relevant_movie_ids": [
+        348
+      ],
+      "superlative": null,
+      "filters": {
+        "year_min": 1979,
+        "year_max": 1979
+      },
+      "notes": "era filter: Alien"
+    },
+    {
+      "id": "B01",
+      "tier": "B_retrieval",
+      "query": "mind-bending dream heist inside the subconscious",
+      "expected_intent": "SEMANTIC_SEARCH",
+      "expected_path": "rrf",
+      "relevant_movie_ids": [
+        27205
+      ],
+      "superlative": null,
+      "filters": null,
+      "notes": "Inception"
+    },
+    {
+      "id": "B02",
+      "tier": "B_retrieval",
+      "query": "simulated reality where humans are trapped by machines",
+      "expected_intent": "SEMANTIC_SEARCH",
+      "expected_path": "rrf",
+      "relevant_movie_ids": [
+        603
+      ],
+      "superlative": null,
+      "filters": null,
+      "notes": "The Matrix"
+    },
+    {
+      "id": "B03",
+      "tier": "B_retrieval",
+      "query": "dinosaur theme park goes horribly wrong",
+      "expected_intent": "SEMANTIC_SEARCH",
+      "expected_path": "rrf",
+      "relevant_movie_ids": [
+        329
+      ],
+      "superlative": null,
+      "filters": null,
+      "notes": "Jurassic Park"
+    },
+    {
+      "id": "B04",
+      "tier": "B_retrieval",
+      "query": "toy cowboy and spaceman come alive when humans leave",
+      "expected_intent": "SEMANTIC_SEARCH",
+      "expected_path": "rrf",
+      "relevant_movie_ids": [
+        862
+      ],
+      "superlative": null,
+      "filters": null,
+      "notes": "Toy Story"
+    },
+    {
+      "id": "B05",
+      "tier": "B_retrieval",
+      "query": "lion cub heir flees then returns to claim his kingdom",
+      "expected_intent": "SEMANTIC_SEARCH",
+      "expected_path": "rrf",
+      "relevant_movie_ids": [
+        8587
+      ],
+      "superlative": null,
+      "filters": null,
+      "notes": "The Lion King"
+    },
+    {
+      "id": "B06",
+      "tier": "B_retrieval",
+      "query": "teenager travels through time in a DeLorean sports car",
+      "expected_intent": "SEMANTIC_SEARCH",
+      "expected_path": "rrf",
+      "relevant_movie_ids": [
+        105
+      ],
+      "superlative": null,
+      "filters": null,
+      "notes": "Back to the Future"
+    },
+    {
+      "id": "B07",
+      "tier": "B_retrieval",
+      "query": "office tower seized by terrorists on Christmas Eve",
+      "expected_intent": "SEMANTIC_SEARCH",
+      "expected_path": "rrf",
+      "relevant_movie_ids": [
+        562
+      ],
+      "superlative": null,
+      "filters": null,
+      "notes": "Die Hard"
+    },
+    {
+      "id": "B08",
+      "tier": "B_retrieval",
+      "query": "hitmen, a glowing briefcase and a diner conversation",
+      "expected_intent": "SEMANTIC_SEARCH",
+      "expected_path": "rrf",
+      "relevant_movie_ids": [
+        680
+      ],
+      "superlative": null,
+      "filters": null,
+      "notes": "Pulp Fiction"
+    },
+    {
+      "id": "B09",
+      "tier": "B_retrieval",
+      "query": "green ogre and a talkative donkey rescue a princess",
+      "expected_intent": "SEMANTIC_SEARCH",
+      "expected_path": "rrf",
+      "relevant_movie_ids": [
+        808
+      ],
+      "superlative": null,
+      "filters": null,
+      "notes": "Shrek"
+    },
+    {
+      "id": "B10",
+      "tier": "B_retrieval",
+      "query": "father fish crosses the ocean to find his lost son",
+      "expected_intent": "SEMANTIC_SEARCH",
+      "expected_path": "rrf",
+      "relevant_movie_ids": [
+        12
+      ],
+      "superlative": null,
+      "filters": null,
+      "notes": "Finding Nemo"
+    },
+    {
+      "id": "B11",
+      "tier": "B_retrieval",
+      "query": "simple-hearted man witnesses decades of American history",
+      "expected_intent": "SEMANTIC_SEARCH",
+      "expected_path": "rrf",
+      "relevant_movie_ids": [
+        13
+      ],
+      "superlative": null,
+      "filters": null,
+      "notes": "Forrest Gump"
+    },
+    {
+      "id": "B12",
+      "tier": "B_retrieval",
+      "query": "news reporter relives the same day over and over",
+      "expected_intent": "SEMANTIC_SEARCH",
+      "expected_path": "rrf",
+      "relevant_movie_ids": [
+        137
+      ],
+      "superlative": null,
+      "filters": null,
+      "notes": "Groundhog Day"
+    },
+    {
+      "id": "B13",
+      "tier": "B_retrieval",
+      "query": "ship sinks after striking an iceberg on its maiden voyage",
+      "expected_intent": "SEMANTIC_SEARCH",
+      "expected_path": "rrf",
+      "relevant_movie_ids": [
+        597
+      ],
+      "superlative": null,
+      "filters": null,
+      "notes": "Titanic"
+    },
+    {
+      "id": "B14",
+      "tier": "B_retrieval",
+      "query": "caped vigilante faces a clown-faced agent of chaos in gotham",
+      "expected_intent": "SEMANTIC_SEARCH",
+      "expected_path": "rrf",
+      "relevant_movie_ids": [
+        155
+      ],
+      "superlative": null,
+      "filters": null,
+      "notes": "The Dark Knight"
+    },
+    {
+      "id": "B15",
+      "tier": "B_retrieval",
+      "query": "chrome wasteland warrior with a metal arm races across the desert",
+      "expected_intent": "SEMANTIC_SEARCH",
+      "expected_path": "rrf",
+      "relevant_movie_ids": [
+        76341
+      ],
+      "superlative": null,
+      "filters": null,
+      "notes": "Mad Max: Fury Road"
+    },
+    {
+      "id": "B16",
+      "tier": "B_retrieval",
+      "query": "jazz drummer pushed past his limits by a ruthless instructor",
+      "expected_intent": "SEMANTIC_SEARCH",
+      "expected_path": "rrf",
+      "relevant_movie_ids": [
+        244786
+      ],
+      "superlative": null,
+      "filters": null,
+      "notes": "Whiplash"
+    },
+    {
+      "id": "B17",
+      "tier": "B_retrieval",
+      "query": "linguist decodes an alien language and bends time",
+      "expected_intent": "SEMANTIC_SEARCH",
+      "expected_path": "rrf",
+      "relevant_movie_ids": [
+        329865
+      ],
+      "superlative": null,
+      "filters": null,
+      "notes": "Arrival"
+    },
+    {
+      "id": "B18",
+      "tier": "B_retrieval",
+      "query": "the emotions inside a young girl's head go to war",
+      "expected_intent": "SEMANTIC_SEARCH",
+      "expected_path": "rrf",
+      "relevant_movie_ids": [
+        150540
+      ],
+      "superlative": null,
+      "filters": null,
+      "notes": "Inside Out"
+    },
+    {
+      "id": "B19",
+      "tier": "B_retrieval",
+      "query": "colorful journey through the land of the dead about family memory",
+      "expected_intent": "SEMANTIC_SEARCH",
+      "expected_path": "rrf",
+      "relevant_movie_ids": [
+        354912
+      ],
+      "superlative": null,
+      "filters": null,
+      "notes": "Coco"
+    },
+    {
+      "id": "B20",
+      "tier": "B_retrieval",
+      "query": "everything everywhere all at once across the multiverse with bagels",
+      "expected_intent": "SEMANTIC_SEARCH",
+      "expected_path": "rrf",
+      "relevant_movie_ids": [
+        545611
+      ],
+      "superlative": null,
+      "filters": null,
+      "notes": "Everything Everywhere All at Once"
+    }
+  ]
+}
