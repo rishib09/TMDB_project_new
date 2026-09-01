@@ -1,71 +1,130 @@
-"""Cleanly builds all 3 ChromaDB collections from scratch without corrupted segments."""
+"""Rebuilds the 3 tier-distinct ChromaDB collections (issue #14), resumable.
 
+Each collection is a genuinely different embedding tier — different input
+set, tokenizer-exact token budget, and embedding model — driven entirely by
+MovieVectorStore.TIER_PROFILES.
+
+Resume behavior: complete collections (count matches, metadata matches) are
+skipped, so an interrupted rebuild only redoes what's missing. Pass --clean
+to wipe the directory and rebuild everything from scratch.
+"""
+
+import os
 import shutil
 import sys
 import time
 from pathlib import Path
 
+# Models are pre-cached; skip HF hub network checks so builds can't stall on
+# a hung HEAD request inside headless/background runs.
+os.environ.setdefault("HF_HUB_OFFLINE", "1")
+os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+
 # Ensure project root is in python path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from src.storage.database import MovieDatabase
 from src.indexing.vector_store import MovieVectorStore
+from src.storage.database import MovieDatabase
 
 
-def rebuild_clean_index(db_path: str = "data/tmdb_movies.db", chroma_path: str = "data/chroma_db"):
-    print("[START] Loading 9119 movies from SQLite...", flush=True)
+def rebuild_index(
+    db_path: str = "data/tmdb_movies.db",
+    chroma_path: str = "data/chroma_db",
+    clean: bool = False,
+    versions: list[str] | None = None,
+):
+    """Build tier-distinct ChromaDB collections.
+
+    ``versions`` selects a subset of TIER_PROFILES keys (default: all three).
+    """
+    selected = versions or list(MovieVectorStore.TIER_PROFILES)
+    unknown = set(selected) - set(MovieVectorStore.TIER_PROFILES)
+    if unknown:
+        raise SystemExit(
+            f"Unknown version(s): {sorted(unknown)}. "
+            f"Valid: {sorted(MovieVectorStore.TIER_PROFILES)}"
+        )
+
+    print("[START] Loading movies from SQLite...", flush=True)
     db = MovieDatabase(db_path)
     movies = db.get_all_movies()
-    print(f"  - Loaded {len(movies)} movies.", flush=True)
+    expected = len(movies)
+    print(f"  - Loaded {expected} movies.", flush=True)
 
-    # 1. Remove old/interrupted chroma_db directory to ensure 100% clean HNSW segments
     chroma_dir = Path(chroma_path)
-    if chroma_dir.exists():
-        print(f"  - Resetting existing {chroma_path} to prevent corrupted segments...", flush=True)
+    if clean and chroma_dir.exists():
+        print(f"  - --clean: wiping {chroma_path}...", flush=True)
         shutil.rmtree(chroma_dir)
 
     vector_store = MovieVectorStore(chroma_path)
 
-    # 2. Build Milestone v1.0: Baseline MiniLM
-    print("\n[INDEX 1/3] Building v1_0_baseline (all-MiniLM-L6-v2 + Overview)...", flush=True)
-    t0 = time.time()
-    c1 = vector_store.index_movies(
-        version_name="v1_0_baseline",
-        embedding_model="sentence-transformers/all-MiniLM-L6-v2",
-        chunking_strategy="baseline",
-        movies=movies,
-        batch_size=256
-    )
-    print(f"  [OK] Indexed {c1} vectors in {time.time() - t0:.2f}s", flush=True)
+    timings = {}
+    for version_name, profile in MovieVectorStore.TIER_PROFILES.items():
+        if version_name not in selected:
+            continue
 
-    # 3. Build Milestone v1.1: Enriched MiniLM
-    print("\n[INDEX 2/3] Building v1_1_enriched (all-MiniLM-L6-v2 + Enriched Metadata)...", flush=True)
-    t0 = time.time()
-    c2 = vector_store.index_movies(
-        version_name="v1_1_enriched",
-        embedding_model="sentence-transformers/all-MiniLM-L6-v2",
-        chunking_strategy="enriched_metadata",
-        movies=movies,
-        batch_size=256
-    )
-    print(f"  [OK] Indexed {c2} vectors in {time.time() - t0:.2f}s", flush=True)
+        # Resume: skip collections already complete with matching metadata.
+        try:
+            existing = vector_store.client.get_collection(version_name)
+            meta = existing.metadata or {}
+            if (
+                existing.count() == expected
+                and meta.get("embedding_model") == profile["embedding_model"]
+                and meta.get("tier") == profile["tier"]
+            ):
+                print(f"\n[SKIP] {version_name} already complete "
+                      f"({expected} vectors, metadata matches).", flush=True)
+                continue
+            state = f"incomplete: {existing.count()}/{expected} vectors"
+        except Exception:
+            state = "missing"
+        print(f"\n[INDEX] Building {version_name} ({state})...", flush=True)
+        print(f"  profile: {profile}", flush=True)
+        t0 = time.time()
 
-    # 4. Build Milestone v1.2: BGE-Small Hybrid
-    print("\n[INDEX 3/3] Building v1_2_bge_hybrid (BAAI/bge-small-en-v1.5 + Enriched Metadata)...", flush=True)
-    t0 = time.time()
-    c3 = vector_store.index_movies(
-        version_name="v1_2_bge_hybrid",
-        embedding_model="BAAI/bge-small-en-v1.5",
-        chunking_strategy="enriched_metadata",
-        movies=movies,
-        batch_size=256
-    )
-    print(f"  [OK] Indexed {c3} vectors in {time.time() - t0:.2f}s", flush=True)
+        def heartbeat(done: int, total: int, _t0=t0):
+            print(f"  {done}/{total} vectors in {time.time()-_t0:.0f}s", flush=True)
 
-    print("\n[COMPLETE] All 3 ChromaDB collections successfully built and verified!", flush=True)
+        count = vector_store.index_movies(
+            version_name=version_name, movies=movies, batch_size=128, progress=heartbeat
+        )
+        elapsed = time.time() - t0
+        timings[version_name] = elapsed
+        print(f"  [OK] Indexed {count} vectors in {elapsed:.1f}s", flush=True)
+
+    print("\n[COMPLETE] Selected tier collections verified!", flush=True)
     for col in vector_store.list_collections():
-        print(f"  - Collection '{col}': {vector_store.count(col)} vectors", flush=True)
+        meta = vector_store.client.get_collection(col).metadata
+        print(f"  - {col}: {vector_store.count(col)} vectors | {meta}", flush=True)
+    if timings:
+        print("\nIndexing wall-times:", {k: f"{v:.1f}s" for k, v in timings.items()}, flush=True)
 
 
 if __name__ == "__main__":
-    rebuild_clean_index()
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Build tier-distinct ChromaDB embedding collections (issue #14)."
+    )
+    parser.add_argument(
+        "--versions",
+        nargs="+",
+        choices=sorted(MovieVectorStore.TIER_PROFILES),
+        default=sorted(MovieVectorStore.TIER_PROFILES),
+        help="Which collection(s) to build (default: all three)."
+    )
+    parser.add_argument(
+        "--clean",
+        action="store_true",
+        help="Wipe the ChromaDB directory before building (default: resume)."
+    )
+    parser.add_argument("--db", default="data/tmdb_movies.db", help="SQLite database path.")
+    parser.add_argument("--chroma", default="data/chroma_db", help="ChromaDB persist directory.")
+    args = parser.parse_args()
+
+    rebuild_index(
+        db_path=args.db,
+        chroma_path=args.chroma,
+        clean=args.clean,
+        versions=args.versions,
+    )
