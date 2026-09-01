@@ -41,6 +41,14 @@ class ExperimentConfig(BaseModel):
 
     # Memory & Guardrails
     multi_turn_mode: str = Field(default="fused_single_pass", description="fused_single_pass | dedicated_2step_llm")
+    route_max_attempts: int = Field(
+        default=2,
+        ge=1,
+        le=5,
+        description="Bounded re-route cycle (#5): max routing attempts when the "
+        "router signals a heuristic fallback (low confidence / API error) — "
+        "measured: iterative re-routing resolves a share of routing failures (#12)",
+    )
     memory_strategy: str = Field(default="sliding_window_with_entity", description="Memory retention strategy")
     cwa_guardrail_enabled: bool = Field(default=True, description="Enforce Closed-World Assumption XML grounding")
 

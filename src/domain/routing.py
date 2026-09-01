@@ -57,3 +57,9 @@ class QueryRoutingDecision(BaseModel):
     superlative: SuperlativeCriteria | None = None
     filters: MetadataFilterCriteria | None = None
     reasoning: str = Field(default="", description="Chain-of-thought routing justification")
+    is_fallback: bool = Field(
+        default=False,
+        description="True when the heuristic fallback replaced the LLM decision "
+        "(low confidence or API error) — deterministic loop trigger for #5's "
+        "bounded re-route cycle",
+    )

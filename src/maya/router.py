@@ -139,14 +139,22 @@ class MayaRouter:
         # Bound once at construction; tests stub this attribute directly.
         self._chain = self._llm.with_structured_output(QueryRoutingDecision)
 
-    def route(self, query: str, state: ConversationState) -> QueryRoutingDecision:
+    def route(
+        self,
+        query: str,
+        state: ConversationState,
+        feedback: str | None = None,
+    ) -> QueryRoutingDecision:
         """Single public seam: classify one utterance against session state.
 
         Pipeline: build prompt -> structured LLM call -> merge persistent
         session exclusions into the decision. On API failure or low
-        confidence, returns a heuristic fallback decision instead of raising.
+        confidence, returns a heuristic fallback decision (flagged via
+        ``is_fallback``) instead of raising. The orchestrator (#5) uses that
+        flag to drive its bounded re-route cycle; ``feedback`` carries the
+        corrective context injected into the prompt on re-route attempts.
         """
-        messages = self._build_messages(query, state)
+        messages = self._build_messages(query, state, feedback)
         try:
             decision = self._chain.invoke(messages)
         except Exception as exc:  # noqa: BLE001 — any API/schema failure degrades gracefully
@@ -213,9 +221,13 @@ class MayaRouter:
                 return True
         return False
 
-    def _build_messages(self, query: str, state: ConversationState) -> list[BaseMessage]:
-        """System prompt + focused-entity context + recent history + new query."""
+    def _build_messages(
+        self, query: str, state: ConversationState, feedback: str | None = None
+    ) -> list[BaseMessage]:
+        """System prompt + re-route feedback + entity context + history + query."""
         messages: list[BaseMessage] = [SystemMessage(content=ROUTER_SYSTEM_PROMPT)]
+        if feedback:
+            messages.append(SystemMessage(content=feedback))
 
         context_lines: list[str] = []
         if state.focused_entity is not None:
@@ -269,6 +281,7 @@ class MayaRouter:
             standalone_query=query,
             requires_rag=intent in RETRIEVAL_INTENTS,
             reasoning=f"Heuristic fallback: {reason}",
+            is_fallback=True,
         )
 
     def _apply_session_exclusions(

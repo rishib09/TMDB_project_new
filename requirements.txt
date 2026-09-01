@@ -10,6 +10,7 @@ plotly>=5.24.0
 # --- Agent Orchestration & LLM Integration ---
 langgraph>=0.2.20
 langchain-core>=0.3.0
+langchain>=0.3.0  # required by langfuse v4 LangChain callback integration
 langchain-openai>=0.2.0
 openai>=1.50.0
 pydantic>=2.9.0

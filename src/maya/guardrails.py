@@ -45,8 +45,8 @@ class InjectionFilter:
             r"ignore\s+(all\s+|any\s+|the\s+)?(previous|prior|above|earlier)\s+"
             r"(instructions|prompts|rules|directions)", re.IGNORECASE)),
         ("system_prompt_extraction", re.compile(
-            r"(reveal|show|repeat|print|output|expose)\s+(me\s+)?(your\s+|the\s+)?"
-            r"(system\s+prompt|instructions|rules)", re.IGNORECASE)),
+            r"(reveal|show|repeat|print|output|expose|leak)\s+(me\s+)?(your\s+|the\s+)?"
+            r"(system\s+)?(prompt|prompts|instructions|rules)", re.IGNORECASE)),
         ("role_hijack", re.compile(
             r"\b(you\s+are\s+now|from\s+now\s+on\s+you\s+are|act\s+as\s+if\s+you\s+are|"
             r"pretend\s+(you\s+are|to\s+be))\s", re.IGNORECASE)),
@@ -131,15 +131,43 @@ class OffTopicPivot:
 
 
 class SessionTokenLimiter:
-    """Throttles sessions that exceed the hard token cap (issue #8: 15,000)."""
+    """Throttles sessions that exceed the hard token cap (issue #8: 15,000).
+
+    The #5 orchestrator wires ``record()`` after every synthesis call;
+    ``check()`` gates each turn in the graph's guard node.
+    """
 
     SESSION_CAP: ClassVar[int] = 15_000
     #: Below the cap but close — allow the turn, flag for wrap-up messaging.
     THROTTLE_RATIO: ClassVar[float] = 0.85
 
+    def __init__(self) -> None:
+        self._used_tokens = 0
+
+    #: Promised #8 interface: record(model, prompt, completion) -> BudgetStatus.
+    #: BudgetStatus aliases GuardrailVerdict (CLEAN / SUSPICIOUS / BLOCKED map
+    #: to under-cap / near-cap / over-cap) — one enum, no duplicate taxonomy.
+    BudgetStatus = GuardrailVerdict
+
+    def record(
+        self, model: str, prompt_tokens: int, completion_tokens: int
+    ) -> "SessionTokenLimiter.BudgetStatus":
+        """Accumulates one LLM call's usage and returns the resulting budget state."""
+        del model  # per-model accounting is #6 territory; the cap is per-session
+        self._used_tokens += prompt_tokens + completion_tokens
+        return self.check_used(self._used_tokens).verdict
+
     def check(self, state: ConversationState) -> GuardrailResult:
         """Verdict for allowing another turn on this session."""
-        used = state.session_tokens
+        return self.check_used(state.session_tokens)
+
+    def check_current(self) -> GuardrailResult:
+        """Verdict for the limiter's own accumulated usage (graph guard node)."""
+        return self.check_used(self._used_tokens)
+
+    def check_used(self, used_tokens: int) -> GuardrailResult:
+        """Verdict for a raw token count (shared by check() and record())."""
+        used = used_tokens
         if used >= self.SESSION_CAP:
             return GuardrailResult(
                 verdict=GuardrailVerdict.BLOCKED,

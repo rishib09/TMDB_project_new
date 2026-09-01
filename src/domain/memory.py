@@ -1,12 +1,13 @@
-"""5-Layer Conversational Memory State and LangGraph State Reducers."""
+"""Pure conversational memory models (5-Layer Conversational Memory State).
 
-import operator
-from collections.abc import Sequence
+ADR 0006: this module is pure Pydantic — zero framework imports. The
+LangGraph-shaped state view (``MayaGraphState``) and its reducer wiring live
+in ``src/graph/state.py``; the pure merge functions below are domain logic
+shared by both ``ConversationState`` (direct calls) and the graph reducers.
+"""
+
 from datetime import UTC, datetime
-from typing import Annotated
 
-from langchain_core.messages import BaseMessage
-from langgraph.graph.message import add_messages
 from pydantic import BaseModel, Field
 
 from src.domain.movie import MovieRecord
@@ -37,7 +38,7 @@ class UserSessionPreferences(BaseModel):
     preferred_genres: list[str] = Field(default_factory=list)
 
 
-# --- LangGraph Functional Reducers ---
+# --- Pure Merge Logic (domain semantics; graph reducers reuse these) ---
 
 def merge_unique_ids(left: list[int], right: list[int]) -> list[int]:
     """Reducer that appends newly shown movie IDs while preserving uniqueness."""
@@ -56,36 +57,6 @@ def merge_preferences(
         excluded_actors=list(dict.fromkeys(current.excluded_actors + incoming.excluded_actors)),
         preferred_genres=list(dict.fromkeys(current.preferred_genres + incoming.preferred_genres)),
     )
-
-
-class MayaGraphState(BaseModel):
-    """LangGraph 5-Layer Agent State with functional reducers.
-
-    Nodes return simple dict updates (e.g. {'messages': [AIMessage(...)], 'shown_movie_ids': [27205]}),
-    and LangGraph reducers handle deduplication, merging, and thread persistence automatically.
-    """
-    # 1. Message History (Sliding window managed via LangGraph add_messages)
-    messages: Annotated[Sequence[BaseMessage], add_messages] = Field(default_factory=list)
-
-    # 2. Entity Focus Layer
-    focused_entity: FocusedMovieEntity | None = None
-    focused_person: str | None = None
-
-    # 3. Seen Recommendations Tracker (Unique Reducer)
-    shown_movie_ids: Annotated[list[int], merge_unique_ids] = Field(default_factory=list)
-
-    # 4. Persistent User Preferences & Exclusions (Merge Reducer)
-    session_preferences: Annotated[UserSessionPreferences, merge_preferences] = Field(
-        default_factory=UserSessionPreferences
-    )
-
-    # 5. Session Metrics & Summary
-    rolling_summary: str = ""
-    session_tokens: Annotated[int, operator.add] = 0
-
-    # Transient per-turn pipeline artifacts
-    routing_decision: QueryRoutingDecision | None = None
-    retrieved_movies: list[MovieRecord] = Field(default_factory=list)
 
 
 class ConversationState(BaseModel):
