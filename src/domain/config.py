@@ -1,6 +1,7 @@
 """Dynamic Architecture Experimentation Control Plane Configuration."""
 
 from enum import Enum
+
 from pydantic import BaseModel, Field, model_validator
 
 
@@ -28,7 +29,14 @@ class ExperimentConfig(BaseModel):
     )
     chunking_strategy: str = Field(default="enriched_metadata", description="baseline | enriched_metadata")
     hybrid_alpha: float = Field(default=0.5, ge=0.0, le=1.0, description="0.0 = BM25 sparse, 1.0 = Dense vector")
-    reranker_enabled: bool = Field(default=True, description="Enable FlashRank CPU reranker")
+    reranker_enabled: bool = Field(
+        default=False,
+        description="Enable FlashRank CPU cross-encoder reranking (A/B: off — hurts hit-rate)"
+    )
+    reranker_model: str = Field(
+        default="ms-marco-MiniLM-L-12-v2",
+        description="FlashRank model when enabled (best of 4 measured: 71% vs RRF 86%)"
+    )
     retrieval_top_k: int = Field(default=5, ge=1, le=20, description="Number of final context movies")
 
     # Memory & Guardrails
@@ -43,7 +51,10 @@ class ExperimentConfig(BaseModel):
             "sentence-transformers/all-MiniLM-L6-v2": 256,
             "BAAI/bge-small-en-v1.5": 512,
             "BAAI/bge-base-en-v1.5": 512,
+            "snowflake/snowflake-arctic-embed-s": 512,
+            "jinaai/jina-embeddings-v2-base-en": 8192,
             "nomic-ai/nomic-embed-text-v1.5": 8192,
+            "snowflake/snowflake-arctic-embed-m": 512,
             "text-embedding-3-small": 8192,
         }
         max_allowed = model_ceilings.get(self.embedding_model, 512)
@@ -69,7 +80,9 @@ class ExperimentConfig(BaseModel):
             self.token_budget = 512
             self.chunking_strategy = "enriched_metadata"
             self.hybrid_alpha = 0.5  # 50/50 Dense + Sparse RRF
-            self.reranker_enabled = True
+            # Reranker stays OFF even in the quality preset: measured 71% vs
+            # pure-RRF 86% hit@5 on golden queries (2026-08-31 A/B, issue #4).
+            self.reranker_enabled = False
             self.retrieval_top_k = 5
         elif preset == PresetType.NAIVE_BASELINE:
             self.router_model = "meta-llama/llama-3.2-3b-instruct"

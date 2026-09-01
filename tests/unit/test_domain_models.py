@@ -1,21 +1,22 @@
 """Unit tests for pure domain models, LangGraph reducers, and dynamic token budgets."""
 
 import pytest
-from src.domain.movie import MovieRecord, CastMember
-from src.domain.routing import (
-    IntentType,
-    QueryRoutingDecision,
-    MetadataFilterCriteria,
-    SuperlativeCriteria,
-    SuperlativeMetric,
-)
+
+from src.domain.config import ExperimentConfig, PresetType
 from src.domain.memory import (
     ConversationState,
     UserSessionPreferences,
     merge_preferences,
     merge_unique_ids,
 )
-from src.domain.config import ExperimentConfig, PresetType
+from src.domain.movie import CastMember, MovieRecord
+from src.domain.routing import (
+    IntentType,
+    MetadataFilterCriteria,
+    QueryRoutingDecision,
+    SuperlativeCriteria,
+    SuperlativeMetric,
+)
 
 
 @pytest.fixture
@@ -54,24 +55,32 @@ def test_movie_record_computed_urls(sample_movie: MovieRecord):
 
 @pytest.mark.unit
 def test_movie_record_dense_text_tier_packing(sample_movie: MovieRecord):
-    """Verifies dynamic tier-packing across 256, 512, and 1024 token budgets."""
-    # 256 tokens: Core + top 4 cast + top 6 keywords + trimmed synopsis
-    text_256 = sample_movie.to_dense_text(token_budget=256)
-    assert "Title: Inception (2010)" in text_256
-    assert "Director: Christopher Nolan" in text_256
-    assert "Leonardo DiCaprio, Joseph Gordon-Levitt" in text_256
-    assert "Themes: dream, subconscious" in text_256
-    assert "Synopsis:" in text_256
+    """Verifies tier-distinct inputs (issue #14): identity < enriched < exhaustive."""
+    # t1_identity: title/year/genres/overview only — no director, cast, or extras
+    text_t1 = sample_movie.to_dense_text(tier="t1_identity", token_budget=256)
+    assert "Title: Inception (2010)" in text_t1
+    assert "Genres: Action, Science Fiction, Adventure" in text_t1
+    assert "Synopsis:" in text_t1
+    assert "Director:" not in text_t1
+    assert "Cast:" not in text_t1
+    assert "Themes:" not in text_t1
 
-    # 512 tokens: Includes character roles ("as Dom Cobb"), runtime, and ratings
-    text_512 = sample_movie.to_dense_text(token_budget=512)
-    assert "Leonardo DiCaprio as Dom Cobb" in text_512
-    assert "Runtime: 148 mins" in text_512
-    assert "Rating: 8.4/10" in text_512
+    # t2_enriched: adds director, cast WITH character roles, themes, runtime, rating
+    text_t2 = sample_movie.to_dense_text(tier="t2_enriched", token_budget=512)
+    assert "Director: Christopher Nolan" in text_t2
+    assert "Leonardo DiCaprio as Dom Cobb" in text_t2
+    assert "Themes: dream, subconscious" in text_t2
+    assert "Runtime: 148 mins" in text_t2
+    assert "Rating: 8.4/10" in text_t2
+    assert "Budget:" not in text_t2  # financials are tier-3 only
 
-    # 1024 tokens: Includes financials (budget and box office)
-    text_1024 = sample_movie.to_dense_text(token_budget=1024)
-    assert "Financials: Budget $160,000,000 | Box Office $839,030,630" in text_1024
+    # t3_exhaustive: adds financials as words, no imdb_id, no raw digit dumps
+    text_t3 = sample_movie.to_dense_text(tier="t3_exhaustive", token_budget=1024)
+    assert "Budget: $160 million" in text_t3
+    assert "Box office: $839 million" in text_t3
+    assert "IMDb" not in text_t3
+    assert "$160,000,000" not in text_t3  # digits as words, per issue #14
+    assert len(text_t3) > len(text_t2) > len(text_t1)
 
 
 @pytest.mark.unit
@@ -164,7 +173,8 @@ def test_experiment_config_presets_and_budget_clamping():
     """Verifies that preset switching and token budget clamping work properly."""
     config = ExperimentConfig()
     assert config.hybrid_alpha == 0.5
-    assert config.reranker_enabled is True
+    assert config.reranker_enabled is False  # measured off beats on (issue #4 A/B)
+    assert config.reranker_model == "ms-marco-MiniLM-L-12-v2"
 
     # Switch to Fast Budget (MiniLM with 256 tokens)
     config.apply_preset(PresetType.FAST_BUDGET)
