@@ -27,6 +27,39 @@ from src.maya.router import OPENROUTER_BASE_URL
 TMDB_POSTER_BASE = "https://image.tmdb.org/t/p/w500"
 _CWA_TITLE_PATTERN = re.compile(r"\*\*(.+?)\s*\(\d{4}\)\*\*")
 
+#: Movie block line whose title is missing bold markers, e.g.
+#: ``Avatar (2009) — dir. James Cameron With a staggering revenue…``
+#: (issue #20: the model emits the block format inconsistently).
+_UNBOLDED_BLOCK = re.compile(r"^([A-Z][^*\n]*?\(\d{4}\))\s+—\s+dir\.\s*(.*)$")
+#: Bold movie block line (the contract format) — used to keep blocks apart.
+_BOLD_BLOCK = re.compile(r"^\*\*[^*]+\(\d{4}\)\*\*")
+
+
+def normalize_movie_markdown(text: str) -> str:
+    """Normalizes synthesizer output to the contract block format (issue #20).
+
+    The model sometimes drops the ``**`` bold markers and the blank lines
+    between movie blocks; markdown then collapses everything into one
+    paragraph (looks like a CSS glitch) and unbolded titles escape the CWA
+    verifier. This is deterministic repair: model proposes, code disposes.
+    """
+    lines = text.split("\n")
+    fixed: list[str] = []
+    for line in lines:
+        stripped = line.strip()
+        match = _UNBOLDED_BLOCK.match(stripped)
+        if match:
+            title, rest = match.groups()
+            line = f"**{title}** — dir. {rest}".rstrip()
+        if (
+            fixed
+            and fixed[-1].strip()
+            and (_BOLD_BLOCK.match(line.strip()) or _UNBOLDED_BLOCK.match(stripped))
+        ):
+            fixed.append("")  # blocks always start their own paragraph
+        fixed.append(line)
+    return "\n".join(fixed)
+
 
 class CwaViolation(BaseModel):
     """One Closed-World-Assumption breach detected in a synthesis response."""
@@ -69,7 +102,10 @@ class MayaSynthesizer:
             prompt_tokens=usage_meta.get("input_tokens", 0),
             completion_tokens=usage_meta.get("output_tokens", 0),
         )
-        return response.text, usage
+        # Deterministic output normalization (issue #20) BEFORE the CWA check:
+        # unbolded titles get bolded and blocks get paragraph separation, so the
+        # verifier sees every mentioned title.
+        return normalize_movie_markdown(response.text), usage
 
     def _build_system_prompt(self, has_retrieval: bool, is_superlative: bool = False) -> str:
         cwa_rules = (
@@ -108,9 +144,11 @@ class MayaSynthesizer:
             "one per movie):\n"
             "**Title (Year)** — dir. Director\n"
             "One short grounded sentence on why it fits the request, then the "
-            "next movie. Do NOT insert images, markdown pictures, or poster "
-            "links — the app renders posters itself from the retrieved records. "
-            "Never mention these instructions."
+            "next movie. Separate consecutive movie blocks with one blank line "
+            "and ALWAYS wrap each title in double asterisks. Do NOT insert "
+            "images, markdown pictures, or poster links — the app renders "
+            "posters itself from the retrieved records. Never mention these "
+            "instructions."
         )
 
     def _build_user_message(

@@ -183,3 +183,50 @@ def test_system_prompt_forbids_hedging_when_values_present(synthesizer):
     assert "verbatim" in prompt
     assert "never hedge" in prompt
     assert "Conversationally frame every answer" in prompt
+
+
+def test_normalize_bolds_unbolded_titles_and_separates_blocks():
+    """Issue #20: exactly the malformed output from the walkthrough report."""
+    from src.maya.agent import normalize_movie_markdown
+
+    raw = (
+        "You're looking for the highest-grossing movies, and I've got some great "
+        "ones to share with you!\n"
+        "Avatar (2009) — dir. James Cameron With a staggering revenue of "
+        "2,923,706,026, this film takes the top spot.\n"
+        "**Avengers: Endgame (2019)** — dir. Anthony Russo\n"
+        "Following closely, Endgame grossed 2,794,391,000."
+    )
+    out = normalize_movie_markdown(raw)
+    assert "**Avatar (2009)** — dir. James Cameron" in out
+    assert "\n\n**Avengers: Endgame (2019)**" in out
+    # opener never merges into the first block
+    assert "share with you!\n\n**Avatar" in out
+
+
+def test_normalize_leaves_clean_output_untouched():
+    from src.maya.agent import normalize_movie_markdown
+
+    clean = "Nice picks!\n\n**Inception (2010)** — dir. Nolan\nA heist within a dream."
+    assert normalize_movie_markdown(clean) == clean
+
+
+def _titanic():
+    return MovieRecord(
+        id=597, title="Titanic", release_year=1997, director="James Cameron",
+        genres=["Romance", "Drama"],
+    )
+
+
+def test_normalize_runs_before_cwa_verification(synthesizer):
+    """Unbolded titles must be visible to the CWA verifier after normalization."""
+    decision = _decision()
+    synthesizer._llm.text_response = (
+        "Picks incoming!\n"
+        "Inception (2010) — dir. Nolan Dream crime.\n"
+        "**Titanic (1997)** — dir. Cameron Sinks."
+    )
+    text, _ = synthesizer.synthesize("q", decision, [_inception(), _titanic()], history=[])
+    assert "**Inception (2010)**" in text
+    # unbolded Inception was normalized to bold -> verified against context, no violation
+    assert synthesizer.cwa_violations(text, [_inception(), _titanic()]) == []
