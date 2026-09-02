@@ -19,6 +19,7 @@ The graph compiles against ``MayaGraphState`` (Pydantic schema, see
 updates that LangGraph applies through the Annotated reducers.
 """
 
+import re
 from typing import Literal
 
 from langchain_core.messages import AIMessage
@@ -128,17 +129,38 @@ def build_maya_graph(
         return {"retrieved_movies": movies, "shown_movie_ids": [m.id for m in movies]}
 
     def synthesize_node(state: MayaGraphState) -> dict:
-        """CWA-grounded synthesis; usage recorded into the session budget (#8)."""
+        """CWA-grounded synthesis; usage recorded into the session budget (#8).
+
+        Zero-retrieval RAG turns (#21) never reach the LLM: an empty
+        ``<retrieved_movies>`` block is the highest hallucination-risk input
+        (the model fills the void with popular titles and invented facts),
+        so the deterministic branch answers with a grounded refinement
+        question instead — model proposes, code disposes taken to its end.
+        """
         decision = state.routing_decision
         query = decision.standalone_query or state.current_query
         movies = state.retrieved_movies
+        if decision.requires_rag and not movies:
+            response_text = _empty_retrieval_text(query)
+            tracer.record_local(
+                "synthesize",
+                {"movies": 0, "retrieval_empty": True, "path": "deterministic"},
+            )
+            return {
+                "final_response": response_text,
+                "messages": [AIMessage(content=response_text)],
+                "rolling_summary": _update_summary(state, decision),
+            }
         history: list = list(state.messages)[:-1]
         response_text, usage = synthesizer.synthesize(query, decision, movies, history)
         # CWA verification: detect (never silently fix) foreign-title leaks.
+        # Runs on EMPTY context too (#21): with no allowed set, any bolded
+        # title mention is a violation — previously the highest-risk case
+        # (empty retrieval) was exactly when verification was skipped.
         # The verifier is a MayaSynthesizer method; fakes without it are clean.
         violations = []
         cwa_check = getattr(synthesizer, "cwa_violations", None)
-        if cwa_check and movies:
+        if cwa_check:
             violations = [v.mentioned_title for v in cwa_check(response_text, movies)]
         tokens_used = usage.prompt_tokens + usage.completion_tokens
         budget_status = limiter.record(usage.model, usage.prompt_tokens, usage.completion_tokens)
@@ -216,6 +238,34 @@ def _refusal_text(reason: str) -> str:
         "I can't help with that request. "
         + (f"({reason})" if reason else "")
         + "\nI'm Maya, a film curator — ask me about movies from 1970 to 2026!"
+    )
+
+
+#: Echo cap for the zero-retrieval response — a hostile query must not be
+#: able to balloon the deterministic reply.
+_EMPTY_QUERY_ECHO_CAP = 120
+_SMUGGLED_MARKUP_RE = re.compile(r"</?\s*\w+\s*/?>|```.*?```", re.DOTALL)
+
+
+def _empty_retrieval_text(query: str) -> str:
+    """Deterministic zero-retrieval response (#21): grounded, probing, CWA-safe.
+
+    No LLM call happens on this path, so no title can be hallucinated. The
+    echoed query is markup-stripped and length-capped to stay inject-safe;
+    the follow-up question is the first rung of the #22 narrowing funnel.
+    """
+    echo = _SMUGGLED_MARKUP_RE.sub(" ", query)
+    echo = re.sub(r"\s{2,}", " ", echo).strip()
+    if len(echo) > _EMPTY_QUERY_ECHO_CAP:
+        echo = echo[:_EMPTY_QUERY_ECHO_CAP].rstrip() + "…"
+    echoed = f' for "{echo}"' if echo else ""
+    return (
+        f"I searched the archive but couldn't find any movies matching that"
+        f"{echoed}.\n\n"
+        "Help me narrow it down: which decade are you in the mood for, and do "
+        "you lean animation or live-action? You can also loosen a filter — "
+        "for example, I know films up to PG-13, and telling me a genre or mood "
+        "works wonders."
     )
 
 

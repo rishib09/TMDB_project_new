@@ -198,11 +198,15 @@ def test_fallback_loop_cannot_be_forced_indefinitely():
 
 
 def test_empty_world_synth_cannot_recommend():
-    """Empty retrieval: even a malicious synth gets an empty closed world."""
+    """Empty retrieval: even a malicious synth never runs (#21).
+
+    Issue #21 upgraded this defense from "prompt asks nicely" to structural:
+    the deterministic zero-retrieval branch bypasses the LLM entirely, so a
+    malicious synthesizer cannot inject titles into an empty closed world.
+    """
     synth = MaliciousSynthesizer()
     graph = _graph(engine=ScriptedEngine(movies=[]), synthesizer=synth)
     out = graph.invoke({"messages": [HumanMessage(content="obscure film")]})
 
-    query, movies = synth.calls[0]
-    assert movies == []  # closed world is genuinely empty
-    assert out["final_response"]  # graceful response still produced
+    assert synth.calls == []  # LLM skipped entirely on the empty-world path
+    assert "couldn't find" in out["final_response"]  # grounded deterministic text
