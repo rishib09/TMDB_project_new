@@ -42,15 +42,19 @@ class DualModeObservabilityManager:
         ):
             return None
         try:
+            from langfuse import get_client
             from langfuse.langchain import CallbackHandler
             from langfuse.types import TraceContext
 
-            kwargs: dict = {
-                "session_id": self.session_id,
-                "public_key": os.getenv("LANGFUSE_PUBLIC_KEY"),
-                "secret_key": os.getenv("LANGFUSE_SECRET_KEY"),
-                "host": os.getenv("LANGFUSE_HOST", "https://cloud.langfuse.com"),
-            }
+            # langfuse v4: the handler binds to the GLOBAL client, which is
+            # configured from LANGFUSE_HOST / LANGFUSE_SECRET_KEY /
+            # LANGFUSE_PUBLIC_KEY env. The client must be initialized FIRST
+            # or the handler silently skips tracing ("No Langfuse client…").
+            # v3-era kwargs (session_id/secret_key/host) raised TypeError,
+            # swallowed by this except: cloud tracing was silently OFF for
+            # the whole session until the #26 key check caught it.
+            get_client()
+            kwargs: dict = {"public_key": os.getenv("LANGFUSE_PUBLIC_KEY")}
             if trace_id:
                 kwargs["trace_context"] = TraceContext(trace_id=trace_id)
             return CallbackHandler(**kwargs)
@@ -65,6 +69,17 @@ class DualModeObservabilityManager:
     def callbacks(self) -> list:
         """LangGraph runnable config callbacks — empty list in local-only mode."""
         return [self._handler] if self._handler else []
+
+    def metadata(self) -> dict:
+        """Runnable-config metadata for cloud runs (empty dict in local mode).
+
+        langfuse v4 dropped the handler's session_id kwarg — session grouping
+        travels via ``langfuse_session_id`` invoke metadata instead (verified
+        against the live API during the #26 key check).
+        """
+        if self._handler:
+            return {"langfuse_session_id": self.session_id}
+        return {}
 
     def new_turn_trace(self) -> str:
         """Mints the per-turn trace id and rebinds the cloud handler to it (#9).
@@ -109,4 +124,11 @@ class DualModeObservabilityManager:
     def flush(self) -> None:
         """Flushes cloud traces; no-op in local-only mode."""
         if self._handler:
-            self._handler.langfuse.flush()
+            try:
+                # langfuse v4: the handler carries no client — the global
+                # client (env-configured) owns the background flush.
+                from langfuse import get_client
+
+                get_client().flush()
+            except Exception:
+                pass  # fail-open: flushing is cloud-side hygiene only

@@ -145,7 +145,10 @@ class MayaSession:
             },
             # cloud tracing was silently inactive in the UI before #9 — wired
             # every turn now so the trace id and the run actually correlate
-            config={"callbacks": self.tracer.callbacks()},
+            config={
+                "callbacks": self.tracer.callbacks(),
+                "metadata": self.tracer.metadata(),  # v4 session grouping
+            },
         )
         row = self._build_turn_row(
             out,
