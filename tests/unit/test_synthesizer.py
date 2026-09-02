@@ -168,3 +168,18 @@ def test_cwa_violations_case_insensitive(synthesizer):
 def test_cwa_violations_ignores_non_title_bold_text(synthesizer):
     response = "Here's why **this fits perfectly**: mind-bending structure."
     assert synthesizer.cwa_violations(response, [_inception()]) == []
+
+
+def test_movie_xml_exposes_ranking_facts(synthesizer):
+    """Issue #19: the closed world must include the metric values (revenue etc.),
+    otherwise the model cannot cite them and hedges superlative answers."""
+    xml = synthesizer._movie_xml(_inception())
+    for tag in ("<revenue>", "<budget>", "<popularity>", "<vote_count>"):
+        assert tag in xml
+
+
+def test_system_prompt_forbids_hedging_when_values_present(synthesizer):
+    prompt = synthesizer._build_system_prompt(has_retrieval=True, is_superlative=True)
+    assert "verbatim" in prompt
+    assert "never hedge" in prompt
+    assert "Conversationally frame every answer" in prompt

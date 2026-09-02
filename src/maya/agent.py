@@ -87,9 +87,13 @@ class MayaSynthesizer:
         superlative_rule = (
             "\nThis is a SUPERLATIVE question. Answer it directly: lead with THE "
             "single movie that wins on the ranking criteria given in the "
-            "<ranking_criteria> block, state the metric value when the record "
-            "includes it, and justify in one or two sentences. Then at most two "
-            "runners-up. Never hedge with a generic 'top picks' list."
+            "<ranking_criteria> block, state the metric value taken verbatim "
+            "from the movie record (e.g. a $1,052M gross or a 9.2 rating), and "
+            "justify in one or two sentences. Then at most two runners-up with "
+            "their values. The numbers are deterministic database facts — when "
+            "a value is present in context, state it as fact and never hedge "
+            "with 'likely' or 'may be'. Never hedge with a generic 'top picks' "
+            "list."
             if is_superlative
             else ""
         )
@@ -98,7 +102,10 @@ class MayaSynthesizer:
             "You are warm, film-literate and concise.\n"
             f"{cwa_rules}"
             f"{superlative_rule}\n"
-            "Formatting for every recommended movie (exact block, one per movie):\n"
+            "Conversationally frame every answer: briefly react to the question "
+            "in your own voice (one sentence, address the user) before any "
+            "movie blocks. Formatting for every recommended movie (exact block, "
+            "one per movie):\n"
             "**Title (Year)** — dir. Director\n"
             "One short grounded sentence on why it fits the request, then the "
             "next movie. Do NOT insert images, markdown pictures, or poster "
@@ -139,7 +146,12 @@ class MayaSynthesizer:
 
     @staticmethod
     def _movie_xml(movie: MovieRecord) -> str:
-        """One <movie_record> element — the closed world the model may speak of."""
+        """One <movie_record> element — the closed world the model may speak of.
+
+        Includes the deterministic ranking facts (revenue, budget, popularity,
+        vote_count, issue #19): without them the model cannot cite metric
+        values and hedges superlative answers (CWA correctly blocks guessing).
+        """
         cast = ", ".join(c.name for c in movie.cast[:5])
         return (
             f'  <movie_record id="{movie.id}">\n'
@@ -149,6 +161,10 @@ class MayaSynthesizer:
             f"    <genres>{', '.join(movie.genres)}</genres>\n"
             f"    <rating>{movie.vote_average:.1f}</rating>\n"
             f"    <runtime>{movie.runtime} min</runtime>\n"
+            f"    <revenue>{movie.revenue}</revenue>\n"
+            f"    <budget>{movie.budget}</budget>\n"
+            f"    <popularity>{movie.popularity:.1f}</popularity>\n"
+            f"    <vote_count>{movie.vote_count}</vote_count>\n"
             f"    <overview>{movie.overview}</overview>\n"
             f"    <poster_path>{movie.poster_path}</poster_path>\n"
             f"    <cast>{cast}</cast>\n"
