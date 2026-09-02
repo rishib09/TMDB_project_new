@@ -12,7 +12,7 @@ from typing import ClassVar
 
 from pydantic import BaseModel
 
-from src.domain.memory import UserSessionPreferences
+from src.domain.memory import UserSessionPreferences, merge_preferences
 from src.domain.routing import QueryRoutingDecision
 
 #: Queries longer than this are treated as specific enough to answer directly.
@@ -21,6 +21,20 @@ BROAD_QUERY_WORD_LIMIT: ClassVar[int] = 5
 MAX_PROBE_TURNS: ClassVar[int] = 2
 #: Probing only makes sense while at least this many axes are unanswered.
 MIN_UNANSWERED_AXES: ClassVar[int] = 2
+#: Once this many axes are answered, confirm before retrieving (#23).
+CONFIRM_THRESHOLD: ClassVar[int] = 2
+#: Phrases that end the funnel and trigger retrieval immediately (#23).
+RETRIEVE_CONFIRMATIONS: ClassVar[tuple[str, ...]] = (
+    "go ahead",
+    "show me",
+    "pull the films",
+    "pull them up",
+    "just show",
+    "no more questions",
+    "that's all",
+    "thats all",
+    "good enough",
+)
 
 #: Echo sanitization — identical contract to the #21 empty-retrieval response.
 _SMUGGLED_MARKUP_RE = re.compile(r"</?\s*\w+\s*/?>|```.*?```", re.DOTALL)
@@ -64,6 +78,10 @@ PROBE_FUNNEL: ClassVar[list[ProbeQuestion]] = [
 #: small and literal — the router already extracts genres/directors/don'ts
 #: via MetadataFilterCriteria; this covers what the router schema does not.
 _MOOD_VOCAB: ClassVar[dict[str, str]] = {
+    "edge of the seat": "edge-of-your-seat",
+    "edge of your seat": "edge-of-your-seat",
+    "edge-of-your-seat": "edge-of-your-seat",
+    "on the edge of my seat": "edge-of-your-seat",
     "funny": "funny",
     "hilarious": "funny",
     "comedy": "funny",
@@ -74,7 +92,10 @@ _MOOD_VOCAB: ClassVar[dict[str, str]] = {
     "romantic": "romantic",
     "romance": "romantic",
     "thrilling": "thrilling",
+    "thriller": "thrilling",
     "intense": "thrilling",
+    "gripping": "thrilling",
+    "suspense": "thrilling",
     "sad": "tearjerker",
     "cry": "tearjerker",
     "epic": "epic",
@@ -190,3 +211,89 @@ _NEGATION_PREFIX_RE = re.compile(r"\b(no|not|without|never|nothing)[\s-]+$")
 def _is_negated(text: str, keyword_start: int) -> bool:
     prefix = text[max(0, keyword_start - 16):keyword_start]
     return bool(_NEGATION_PREFIX_RE.search(prefix))
+
+
+# --- funnel state machine (#23): the turn after a probe is OURS -----------
+#
+# Walkthrough defect (#23): probe answers like "edge of the seat" confused
+# the router (GREETING) and topical follow-ups pivoted OUT_OF_SCOPE. Fix:
+# when a probe was just asked, the funnel handles the reply deterministically
+# and the router only sees queries the funnel can't own.
+
+
+class FunnelOutcome(BaseModel):
+    """What the funnel decides to do with a post-probe user message."""
+
+    action: str  # probe | confirm | retrieve | fallthrough
+    response: str | None = None  # deterministic response for probe/confirm
+    prefs_update: UserSessionPreferences | None = None
+
+
+def _is_confirmation(query: str) -> bool:
+    lowered = query.lower()
+    return any(phrase in lowered for phrase in RETRIEVE_CONFIRMATIONS)
+
+
+def build_confirm_response(prefs: UserSessionPreferences) -> str:
+    """Deterministic confirm-before-retrieve turn (#23)."""
+    trail_items = [
+        f"a {prefs.preferred_mood} mood" if prefs.preferred_mood else "",
+        f"for {prefs.audience}" if prefs.audience else "",
+        *(f"no {d}" for d in prefs.noted_donts),
+        *(prefs.preferred_genres or []),
+        *(f"{d}'s films" for d in prefs.preferred_directors),
+    ]
+    trail = ", ".join(t for t in trail_items if t)
+    return (
+        f"Got it — {trail}. Want to add anything else — a year, a director, "
+        "a genre? Or shall I pull the films now?"
+    )
+
+
+def build_funnel_query(prefs: UserSessionPreferences) -> str:
+    """Natural-language retrieval query synthesized from funnel answers.
+
+    Embeddings handle this fluently; genres/directors keep flowing through
+    the router's SQL filters when the user states them explicitly.
+    """
+    parts = []
+    if prefs.preferred_mood:
+        parts.append(prefs.preferred_mood)
+    parts.append("movies")
+    if prefs.preferred_genres:
+        parts.append(" ".join(prefs.preferred_genres))
+    if prefs.audience:
+        parts.append(f"for {prefs.audience}")
+    if prefs.preferred_directors:
+        parts.append(f"directed by {' and '.join(prefs.preferred_directors)}")
+    return " ".join(parts).strip() or "good movies"
+
+
+def handle_probe_answer(
+    query: str, prefs: UserSessionPreferences, probe_count: int
+) -> FunnelOutcome:
+    """Funnel decision for the message following a probe (#23).
+
+    Order matters: confirmations beat extraction, extraction beats probing,
+    and anything the funnel can't own falls through to normal routing.
+    """
+    prefs_update = extract_probe_answers(query)
+    if _is_confirmation(query):
+        return FunnelOutcome(action="retrieve", prefs_update=prefs_update)
+    if prefs_update.answered_axes():
+        merged = merge_preferences(prefs, prefs_update)
+        if len(merged.answered_axes()) >= CONFIRM_THRESHOLD:
+            return FunnelOutcome(
+                action="confirm",
+                response=build_confirm_response(merged),
+                prefs_update=prefs_update,
+            )
+        question = next_probe_question(merged)
+        if question and probe_count < MAX_PROBE_TURNS:
+            return FunnelOutcome(
+                action="probe",
+                response=build_probe_response(merged, query),
+                prefs_update=prefs_update,
+            )
+        return FunnelOutcome(action="retrieve", prefs_update=prefs_update)
+    return FunnelOutcome(action="fallthrough")

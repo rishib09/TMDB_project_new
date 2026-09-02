@@ -118,3 +118,56 @@ def test_graph_full_probe_flow_bounded_and_deterministic():
         else:
             break  # retrieval path taken — cap enforced
     assert probe_turns == MAX_PROBE_TURNS  # exactly the cap, never more
+
+
+# --- funnel ownership: misrouting is impossible (#23) ----------------------
+
+def test_funnel_reply_can_never_pivot_out_of_scope():
+    """'more into the theoretical physics' after a probe → converse, not pivot."""
+    from src.domain.routing import IntentType, QueryRoutingDecision
+    from src.graph.orchestrator import build_maya_graph
+    from src.observability.tracer import DualModeObservabilityManager
+    from tests.unit.test_orchestrator import FakeEngine, FakeRouter, FakeSynthesizer
+
+    pivot_decision = QueryRoutingDecision(
+        intent=IntentType.OUT_OF_SCOPE, confidence=1.0,
+        standalone_query="theoretical physics", requires_rag=False,
+    )
+    graph = build_maya_graph(
+        ExperimentConfig(), FakeRouter([pivot_decision]), FakeEngine(movies=[]),
+        FakeSynthesizer(), DualModeObservabilityManager(session_id="t"),
+    )
+    out = graph.invoke({
+        "messages": [HumanMessage(content="more into the theoretical physics")],
+        "funnel_active": True,  # a probe was just shown
+    })
+    assert "outside my reel" not in out["final_response"]  # pivot text
+    assert "final_response" in out  # conversational reply instead
+
+
+def test_confirm_then_retrieve_uses_funnel_query_not_router():
+    """'go ahead' after confirm → deterministic retrieval, router skipped."""
+    from src.graph.orchestrator import build_maya_graph
+    from src.maya.guardrails import SessionTokenLimiter
+    from src.observability.tracer import DualModeObservabilityManager
+    from tests.unit.test_orchestrator import FakeEngine, FakeSynthesizer
+
+    # Router must never be consulted: scripted to explode if called
+    class ExplodingRouter:
+        def route(self, *a, **k):
+            raise AssertionError("router must not run on funnel-confirmed retrieval")
+
+    graph = build_maya_graph(
+        ExperimentConfig(), ExplodingRouter(), FakeEngine(movies=[]),
+        FakeSynthesizer(), DualModeObservabilityManager(session_id="t"),
+        SessionTokenLimiter(),
+    )
+    out = graph.invoke({
+        "messages": [HumanMessage(content="go ahead")],
+        "session_preferences": UserSessionPreferences(preferred_mood="funny", audience="kids"),
+        "funnel_active": True,
+        "probe_count": 2,
+    })
+    # retrieval happened (empty world → #21 deterministic text, no LLM)
+    assert "couldn't find" in out["final_response"]
+    assert out["funnel_active"] is False

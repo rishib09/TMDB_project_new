@@ -101,6 +101,7 @@ class ConversationState(BaseModel):
     rolling_summary: str = ""
     session_tokens: int = 0
     probe_count: int = 0  # guided narrowing (#22): persists across turns, caps probing
+    funnel_active: bool = False  # #23: next message belongs to the funnel
 
     def add_turn(
         self,

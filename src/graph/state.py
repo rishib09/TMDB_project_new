@@ -75,6 +75,13 @@ class MayaGraphState(BaseModel):
     #: Guided narrowing (#22): probe turns used (persists via UI round-trip,
     #: so no add-reducer — the session passes the running total each turn).
     probe_count: int = 0
+    #: Funnel mode (#23): a probe/confirm was just shown; the next message
+    #: belongs to the funnel, not the router. Persists via UI round-trip.
+    funnel_active: bool = False
+    #: Transient (#23): this turn fell through the funnel — OUT_OF_SCOPE
+    #: pivots are suppressed for exactly this turn (it may be an answer to
+    #: our own question, not an off-topic query).
+    from_funnel: bool = False
     retrieved_movies: list[MovieRecord] = Field(default_factory=list)
     synthesis_usage: SynthesisUsage | None = None
     final_response: str = ""

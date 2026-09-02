@@ -40,8 +40,10 @@ from src.maya.guardrails import (
     WeeklyBudgetTracker,
 )
 from src.maya.probing import (
+    build_funnel_query,
     build_probe_response,
     extract_probe_answers,
+    handle_probe_answer,
     should_probe,
 )
 from src.maya.router import MayaRouter
@@ -152,8 +154,8 @@ def build_maya_graph(
         """Guided narrowing (#22): one deterministic question, zero LLM cost.
 
         The answer extraction rides on the user's NEXT message: probe
-        answers are vocabulary-matched from it in route_node, so no extra
-        LLM call is needed to understand the reply.
+        answers are vocabulary-matched from it in the funnel node (#23),
+        so no extra LLM call is needed to understand the reply.
         """
         response_text = build_probe_response(state.session_preferences, state.current_query)
         tracer.record_local(
@@ -164,7 +166,68 @@ def build_maya_graph(
             "final_response": response_text,
             "messages": [AIMessage(content=response_text)],
             "probe_count": state.probe_count + 1,  # session-persisted running total
+            "funnel_active": True,  # next message belongs to the funnel (#23)
             "rolling_summary": _update_summary(state, state.routing_decision),
+        }
+
+    def funnel_node(state: MayaGraphState) -> dict:
+        """Owns the reply to a probe/confirm (#23) — router only on fallthrough.
+
+        Deterministic state machine: confirmations retrieve immediately,
+        extracted answers either keep probing, trigger the confirm stage,
+        or (budget/spaces exhausted) go straight to retrieval with a funnel-
+        synthesized query. Anything else falls through to normal routing —
+        with OUT_OF_SCOPE pivots suppressed for exactly this turn.
+        """
+        outcome = handle_probe_answer(
+            state.current_query, state.session_preferences, state.probe_count
+        )
+        if outcome.action == "retrieve":
+            from src.domain.memory import merge_preferences
+
+            merged = (
+                merge_preferences(state.session_preferences, outcome.prefs_update)
+                if outcome.prefs_update
+                else state.session_preferences
+            )
+            from src.domain.routing import QueryRoutingDecision
+
+            synthetic = QueryRoutingDecision(
+                intent=IntentType.SEMANTIC_SEARCH,
+                confidence=1.0,
+                standalone_query=build_funnel_query(merged),
+                requires_rag=True,
+                reasoning="funnel confirmed retrieval (#23)",
+            )
+            tracer.record_local(
+                "probe",
+                {"stage": "retrieve", "axes": merged.answered_axes()},
+            )
+            return {
+                "funnel_active": False,
+                "routing_decision": synthetic,
+                "session_preferences": outcome.prefs_update,
+            }
+        if outcome.action == "fallthrough":
+            tracer.record_local("probe", {"stage": "fallthrough"})
+            # NOTE: funnel stays ACTIVE — a user who ignores one probe may
+            # still say "go ahead" next turn (#23 walkthrough defect); the
+            # funnel is a cheap pre-router filter, so lingering is harmless.
+            return {"from_funnel": True}
+        # probe | confirm → deterministic response, end the turn
+        tracer.record_local(
+            "probe",
+            {
+                "stage": outcome.action,
+                "probe_count": state.probe_count + (1 if outcome.action == "probe" else 0),
+            },
+        )
+        return {
+            "final_response": outcome.response,
+            "messages": [AIMessage(content=outcome.response)],
+            "probe_count": state.probe_count + (1 if outcome.action == "probe" else 0),
+            "session_preferences": outcome.prefs_update,
+            "funnel_active": True,
         }
 
     def retrieve_node(state: MayaGraphState) -> dict:
@@ -264,11 +327,19 @@ def build_maya_graph(
         tracer.record_local("pivot", {})
         return {"final_response": response_text, "messages": [AIMessage(content=response_text)]}
 
-    def route_after_guard(state: MayaGraphState) -> Literal["refusal", "route"]:
+    def route_after_guard(state: MayaGraphState) -> Literal["refusal", "funnel", "route"]:
         guardrail = state.guardrail_result
         if guardrail and guardrail.verdict is GuardrailVerdict.BLOCKED:
             return "refusal"
+        if state.funnel_active:
+            return "funnel"
         return "route"
+
+    def route_after_funnel(state: MayaGraphState) -> Literal["route", "retrieve"]:
+        """#23: probe/confirm responses end the turn; the rest routes on."""
+        if state.routing_decision is not None:  # funnel confirmed retrieval
+            return "retrieve"
+        return "route"  # fallthrough — normal routing takes over
 
     def route_after_router(state: MayaGraphState) -> Literal["route", "retrieve", "synthesize", "pivot", "probe"]:
         """Bounded re-route cycle (#12) + guided narrowing gate (#22).
@@ -283,6 +354,10 @@ def build_maya_graph(
         if decision.is_fallback and state.route_attempts < config.route_max_attempts:
             return "route"
         if decision.intent is IntentType.OUT_OF_SCOPE:
+            # #23: a message that just fell through the funnel may be an
+            # answer to our own question — converse, never pivot.
+            if state.from_funnel:
+                return "synthesize"
             return "pivot"
         if not decision.requires_rag:
             return "synthesize"
@@ -298,9 +373,11 @@ def build_maya_graph(
     graph.add_node("refusal", refusal_node)
     graph.add_node("pivot", pivot_node)
     graph.add_node("probe", probe_node)
+    graph.add_node("funnel", funnel_node)
 
     graph.add_edge(START, "guard_input")
     graph.add_conditional_edges("guard_input", route_after_guard)
+    graph.add_conditional_edges("funnel", route_after_funnel)
     graph.add_conditional_edges("route", route_after_router)
     # The route→route cycle is implicit: route_after_router may return "route".
     graph.add_edge("retrieve", "synthesize")

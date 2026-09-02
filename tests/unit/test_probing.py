@@ -7,8 +7,11 @@ from src.domain.routing import IntentType, QueryRoutingDecision
 from src.maya.probing import (
     MAX_PROBE_TURNS,
     PROBE_FUNNEL,
+    build_confirm_response,
+    build_funnel_query,
     build_probe_response,
     extract_probe_answers,
+    handle_probe_answer,
     next_probe_question,
     should_probe,
 )
@@ -123,8 +126,8 @@ def test_extraction_matches_mood_and_audience():
 
 
 def test_extraction_is_word_boundary_exact():
-    assert extract_probe_answers("a cryogenic space thriller").preferred_mood == ""
-    assert extract_probe_answers("kidnapping thriller").preferred_mood == ""
+    assert extract_probe_answers("a documentary about glaciers").preferred_mood == ""
+    assert extract_probe_answers("kidnapping documentaries").preferred_mood == ""
     assert extract_probe_answers("FEEL-GOOD vibes").preferred_mood == "feel-good"
 
 
@@ -141,3 +144,61 @@ def test_merge_preferences_extends_to_probe_axes():
     merged = merge_preferences(current, incoming)
     assert merged.preferred_mood == "funny"  # scalar last-wins, empty doesn't clobber
     assert merged.audience == "family"
+
+
+# --- funnel state machine (#23) -------------------------------------------
+
+
+def test_probe_answer_fragments_update_prefs_and_continue_funnel():
+    """Walkthrough repro: 'edge of the seat' after a mood probe → next probe."""
+    outcome = handle_probe_answer("edge of the seat", UserSessionPreferences(), 0)
+    assert outcome.action == "probe"
+    assert outcome.prefs_update.preferred_mood == "edge-of-your-seat"
+    assert "audience" in outcome.response or "Who" in outcome.response
+
+
+def test_two_answers_trigger_confirm_stage():
+    first = handle_probe_answer("something funny", UserSessionPreferences(), 0)
+    assert first.action == "probe"
+    merged = UserSessionPreferences(preferred_mood="funny")
+    second = handle_probe_answer("for the kids", merged, 1)
+    assert second.action == "confirm"
+    assert "shall I pull the films" in second.response
+    assert "for kids" in second.response  # trail echoes both axes
+
+
+def test_confirmation_phrase_retrieves_immediately():
+    outcome = handle_probe_answer("go ahead and show me", UserSessionPreferences(), 0)
+    assert outcome.action == "retrieve"
+
+
+def test_funnel_capped_but_answered_retrieves():
+    """Answers found but budget gone → retrieve rather than probe again."""
+    prefs = UserSessionPreferences()
+    outcome = handle_probe_answer("something funny for real", prefs, MAX_PROBE_TURNS)
+    assert outcome.action == "retrieve"
+    assert outcome.prefs_update.preferred_mood == "funny"
+
+
+def test_unmatched_answer_at_cap_falls_through():
+    """No vocabulary hit + at cap → router's turn (may carry year/genre)."""
+    outcome = handle_probe_answer("what about the 1990s", UserSessionPreferences(), MAX_PROBE_TURNS)
+    assert outcome.action == "fallthrough"
+
+
+def test_unrecognized_fallback_falls_through_to_router():
+    outcome = handle_probe_answer("what about the physics of it all", UserSessionPreferences(), 0)
+    assert outcome.action == "fallthrough"
+
+
+def test_confirm_response_lists_trail_and_options():
+    prefs = UserSessionPreferences(preferred_mood="funny", audience="kids")
+    text = build_confirm_response(prefs)
+    assert "a funny mood" in text and "for kids" in text
+    assert "year" in text and "director" in text  # user's requested add-more axes
+
+
+def test_funnel_query_natural_language_from_prefs():
+    prefs = UserSessionPreferences(preferred_mood="funny", audience="kids")
+    assert build_funnel_query(prefs) == "funny movies for kids"  # reads naturally
+    assert build_funnel_query(UserSessionPreferences()) == "movies"  # bare fallback
