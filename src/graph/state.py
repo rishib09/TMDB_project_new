@@ -72,6 +72,9 @@ class MayaGraphState(BaseModel):
     routing_decision: QueryRoutingDecision | None = None
     #: Bounded re-route cycle (#12): routing attempts so far this turn.
     route_attempts: int = 0
+    #: Guided narrowing (#22): probe turns used (persists via UI round-trip,
+    #: so no add-reducer — the session passes the running total each turn).
+    probe_count: int = 0
     retrieved_movies: list[MovieRecord] = Field(default_factory=list)
     synthesis_usage: SynthesisUsage | None = None
     final_response: str = ""

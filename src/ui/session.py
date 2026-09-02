@@ -131,6 +131,7 @@ class MayaSession:
                 "messages": [*history, HumanMessage(content=query)],
                 "session_preferences": self.conversation.session_preferences,
                 "session_tokens": self.conversation.session_tokens,
+                "probe_count": self.conversation.probe_count,
             },
             # cloud tracing was silently inactive in the UI before #9 — wired
             # every turn now so the trace id and the run actually correlate
@@ -141,6 +142,12 @@ class MayaSession:
         response = out["final_response"]
         self.last_movies = movies
         tokens = out.get("session_tokens", 0) - self.conversation.session_tokens
+        # Guided narrowing (#22): probe answers extracted this turn persist
+        # in session state; probe turns carry no movies and no synthesis cost.
+        self.conversation.session_preferences = out.get(
+            "session_preferences", self.conversation.session_preferences
+        )
+        self.conversation.probe_count = out.get("probe_count", self.conversation.probe_count)
         self.conversation.add_turn(
             query, response, movies, decision, tokens_used=max(tokens, 0)
         )
@@ -161,6 +168,10 @@ class MayaSession:
             "n_movies": len(movies),
             "tokens": max(tokens, 0),
             "response": response,
+            "probe": len(self.tracer.traces()) > 0 and any(
+                t["node"] == "probe"
+                for t in slice_new_traces(ring_before, self.tracer.traces())
+            ),
         })
 
     @staticmethod

@@ -82,6 +82,21 @@ def render_poster_grid(movies, cols: int = 4) -> None:
                 st.caption(f"{movie.vote_average:.1f} / 10 — " + ", ".join(movie.genres[:3]))
 
 
+def render_narrowing_trail(session: MayaSession) -> None:
+    """Chips for probed preferences gathered so far (#22) — the narrowing trail."""
+    prefs = session.conversation.session_preferences
+    chips: list[str] = []
+    if prefs.preferred_mood:
+        chips.append(f"mood: {prefs.preferred_mood}")
+    if prefs.audience:
+        chips.append(f"audience: {prefs.audience}")
+    chips.extend(f"no {d}" for d in prefs.noted_donts)
+    chips.extend(prefs.preferred_genres)
+    chips.extend(f"dir. {d}" for d in prefs.preferred_directors)
+    if chips:
+        st.caption("Narrowing by: " + " · ".join(chips))
+
+
 def render_chat(session: MayaSession) -> None:
     st.markdown(_CHAT_CSS, unsafe_allow_html=True)
     st.markdown(
@@ -137,4 +152,5 @@ def render_chat(session: MayaSession) -> None:
         st.markdown(last["response"])
         render_intent_badge(last)
         render_feedback(session, idx)
+    render_narrowing_trail(session)
     render_poster_grid(session.last_movies)

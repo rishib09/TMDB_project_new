@@ -39,6 +39,11 @@ from src.maya.guardrails import (
     SessionTokenLimiter,
     WeeklyBudgetTracker,
 )
+from src.maya.probing import (
+    build_probe_response,
+    extract_probe_answers,
+    should_probe,
+)
 from src.maya.router import MayaRouter
 from src.observability.tracer import DualModeObservabilityManager
 from src.retrieval.hybrid_engine import HybridRetrievalEngine
@@ -123,6 +128,9 @@ def build_maya_graph(
             _to_conversation_state(state),
             feedback=feedback,
         )
+        # Guided narrowing (#22): vocabulary-extract probe answers from the
+        # user's reply to a previous probe turn — deterministic, zero LLM.
+        prefs_update = extract_probe_answers(state.current_query)
         tracer.record_local(
             "route",
             {
@@ -131,15 +139,57 @@ def build_maya_graph(
                 "confidence": decision.confidence,
                 "requires_rag": decision.requires_rag,
                 "is_fallback": decision.is_fallback,
+                "probe_answers": prefs_update.answered_axes(),
             },
         )
-        return {"routing_decision": decision, "route_attempts": attempts}
+        return {
+            "routing_decision": decision,
+            "route_attempts": attempts,
+            "session_preferences": prefs_update,
+        }
+
+    def probe_node(state: MayaGraphState) -> dict:
+        """Guided narrowing (#22): one deterministic question, zero LLM cost.
+
+        The answer extraction rides on the user's NEXT message: probe
+        answers are vocabulary-matched from it in route_node, so no extra
+        LLM call is needed to understand the reply.
+        """
+        response_text = build_probe_response(state.session_preferences, state.current_query)
+        tracer.record_local(
+            "probe",
+            {"probe_count": state.probe_count + 1, "query": state.current_query},
+        )
+        return {
+            "final_response": response_text,
+            "messages": [AIMessage(content=response_text)],
+            "probe_count": state.probe_count + 1,  # session-persisted running total
+            "rolling_summary": _update_summary(state, state.routing_decision),
+        }
 
     def retrieve_node(state: MayaGraphState) -> dict:
-        """Hybrid retrieval (#4): SQL path or RRF fusion, per routing decision."""
+        """Hybrid retrieval (#4): SQL path or RRF fusion, per routing decision.
+
+        Probed mood/audience (#22) enrich the semantic query text — the
+        embedding model handles natural-language flavor natively — while
+        genres/directors stay as the router's deterministic SQL filters.
+        """
         decision = state.routing_decision
+        prefs = state.session_preferences
+        flavor = ", ".join(
+            filter(
+                None,
+                (
+                    f"mood: {prefs.preferred_mood}" if prefs.preferred_mood else "",
+                    f"audience: {prefs.audience}" if prefs.audience else "",
+                ),
+            )
+        )
+        query = decision.standalone_query
+        if flavor:
+            query = f"{query} ({flavor})"
         results = engine.retrieve(
-            query=decision.standalone_query,
+            query=query,
             routing=decision,
             top_k=config.retrieval_top_k,
         )
@@ -220,13 +270,14 @@ def build_maya_graph(
             return "refusal"
         return "route"
 
-    def route_after_router(state: MayaGraphState) -> Literal["route", "retrieve", "synthesize", "pivot"]:
-        """Bounded re-route cycle (#12): retry while the router signals fallback.
+    def route_after_router(state: MayaGraphState) -> Literal["route", "retrieve", "synthesize", "pivot", "probe"]:
+        """Bounded re-route cycle (#12) + guided narrowing gate (#22).
 
-        The trigger is deterministic — ``is_fallback`` is set by the router's
-        own code (confidence < threshold or API error), never by the model
-        (ADR 0005). Bounded by ``config.route_max_attempts``; when attempts
-        are exhausted the (degraded but safe) heuristic decision proceeds.
+        The re-route trigger is deterministic — ``is_fallback`` is set by
+        the router's own code (confidence < threshold or API error), never
+        by the model (ADR 0005). Probing is a code policy, not a prompt
+        suggestion: broad filterless requests ask one narrowing question
+        (bounded by MAX_PROBE_TURNS) instead of guessing a movie dump.
         """
         decision = state.routing_decision
         if decision.is_fallback and state.route_attempts < config.route_max_attempts:
@@ -235,6 +286,8 @@ def build_maya_graph(
             return "pivot"
         if not decision.requires_rag:
             return "synthesize"
+        if should_probe(decision, state.session_preferences, state.probe_count):
+            return "probe"
         return "retrieve"
 
     graph = StateGraph(MayaGraphState)
@@ -244,6 +297,7 @@ def build_maya_graph(
     graph.add_node("synthesize", synthesize_node)
     graph.add_node("refusal", refusal_node)
     graph.add_node("pivot", pivot_node)
+    graph.add_node("probe", probe_node)
 
     graph.add_edge(START, "guard_input")
     graph.add_conditional_edges("guard_input", route_after_guard)
@@ -253,6 +307,7 @@ def build_maya_graph(
     graph.add_edge("synthesize", END)
     graph.add_edge("refusal", END)
     graph.add_edge("pivot", END)
+    graph.add_edge("probe", END)
 
     return graph.compile()
 

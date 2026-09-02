@@ -32,10 +32,36 @@ class FocusedMovieEntity(BaseModel):
 
 
 class UserSessionPreferences(BaseModel):
-    """Persistent session-level constraints and preferences across turns."""
+    """Persistent session-level constraints and preferences across turns.
+
+    Populated two ways (issue #22): the router's MetadataFilterCriteria
+    extraction (genres/directors/exclusions) and deterministic keyword
+    extraction of probe answers (mood/audience/don'ts).
+    """
+
     excluded_genres: list[str] = Field(default_factory=list)
     excluded_actors: list[str] = Field(default_factory=list)
     preferred_genres: list[str] = Field(default_factory=list)
+    # Probing axes (#22) — scalar answers are last-wins, lists accumulate.
+    preferred_mood: str = ""
+    audience: str = ""
+    preferred_directors: list[str] = Field(default_factory=list)
+    noted_donts: list[str] = Field(default_factory=list)
+
+    def answered_axes(self) -> list[str]:
+        """Ordered narrowing axes with a value — drives the probe funnel."""
+        axes = []
+        if self.preferred_mood:
+            axes.append("mood")
+        if self.audience:
+            axes.append("audience")
+        if self.noted_donts:
+            axes.append("donts")
+        if self.preferred_genres:
+            axes.append("genres")
+        if self.preferred_directors:
+            axes.append("directors")
+        return axes
 
 
 # --- Pure Merge Logic (domain semantics; graph reducers reuse these) ---
@@ -56,6 +82,12 @@ def merge_preferences(
         excluded_genres=list(dict.fromkeys(current.excluded_genres + incoming.excluded_genres)),
         excluded_actors=list(dict.fromkeys(current.excluded_actors + incoming.excluded_actors)),
         preferred_genres=list(dict.fromkeys(current.preferred_genres + incoming.preferred_genres)),
+        preferred_mood=incoming.preferred_mood or current.preferred_mood,
+        audience=incoming.audience or current.audience,
+        preferred_directors=list(
+            dict.fromkeys(current.preferred_directors + incoming.preferred_directors)
+        ),
+        noted_donts=list(dict.fromkeys(current.noted_donts + incoming.noted_donts)),
     )
 
 
@@ -68,6 +100,7 @@ class ConversationState(BaseModel):
     session_preferences: UserSessionPreferences = Field(default_factory=UserSessionPreferences)
     rolling_summary: str = ""
     session_tokens: int = 0
+    probe_count: int = 0  # guided narrowing (#22): persists across turns, caps probing
 
     def add_turn(
         self,

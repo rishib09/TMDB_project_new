@@ -61,7 +61,8 @@ class FakeSynthesizer:
 
 
 def _decision(intent=IntentType.SEMANTIC_SEARCH, requires_rag=True,
-              confidence=0.9, is_fallback=False, query="standalone query"):
+              confidence=0.9, is_fallback=False,
+              query="a mind-bending sci-fi thriller about dream heists"):
     return QueryRoutingDecision(
         intent=intent,
         confidence=confidence,
@@ -109,14 +110,14 @@ def test_happy_path_semantic_search(tracer):
     nodes = [t["node"] for t in tracer.traces()]
     assert nodes == ["guard_input", "route", "retrieve", "synthesize"]
     # engine received the router's standalone query and config top_k
-    assert engine.calls[0][0] == "standalone query"
+    assert engine.calls[0][0] == "a mind-bending sci-fi thriller about dream heists"
     assert engine.calls[0][2] == config.retrieval_top_k
 
 
 def test_synthesizer_receives_history_and_movies(tracer):
     config = ExperimentConfig()
     prior = AIMessage(content="earlier answer")
-    router = FakeRouter([_decision(query="his other films")])
+    router = FakeRouter([_decision(query="more films like the one we just discussed tonight")])
     engine = FakeEngine(movies=[_movie()])
     synth = FakeSynthesizer()
     graph = build_maya_graph(config, router, engine, synth, tracer)
@@ -125,7 +126,7 @@ def test_synthesizer_receives_history_and_movies(tracer):
         "messages": [prior, HumanMessage(content="more like that")],
     })
     query, decision, movies, history = synth.calls[0]
-    assert query == "his other films"
+    assert query == "more films like the one we just discussed tonight"
     assert history == [prior]  # everything except the current-turn HumanMessage
     assert [m.id for m in movies] == [27205]
 
@@ -329,7 +330,7 @@ def test_zero_retrieval_rag_turn_never_calls_llm():
         ExperimentConfig(), FakeRouter([_decision()]), FakeEngine(movies=[]),
         synth, DualModeObservabilityManager(session_id="t"),
     )
-    result = _invoke(graph, "family movie that is pg-14")
+    result = _invoke(graph, "family movie that is pg-14 and not horror")
     assert "HALLUCINATED" not in result["final_response"]
     assert "couldn't find any movies" in result["final_response"]
     assert synth.calls == []  # synthesis LLM skipped entirely
@@ -338,15 +339,15 @@ def test_zero_retrieval_rag_turn_never_calls_llm():
 def test_zero_retrieval_response_asks_refinement_question():
     """#21: the deterministic reply probes instead of dead-ending."""
     graph = build_maya_graph(
-        ExperimentConfig(), FakeRouter([_decision(query="pg-14 family movie")]),
+        ExperimentConfig(), FakeRouter([_decision(query="a family movie rated pg-14 that we can all watch together")]),
         FakeEngine(movies=[]), FakeSynthesizer(),
         DualModeObservabilityManager(session_id="t"),
     )
-    result = _invoke(graph, "pg-14 family movie")
+    result = _invoke(graph, "a family movie rated pg-14 that we can all watch together")
     text = result["final_response"]
     assert "decade" in text and "animation or live-action" in text
     assert "PG-13" in text  # graceful hint for near-miss certifications
-    assert "pg-14 family movie" in text  # echoed (sanitized) query
+    assert "a family movie rated pg-14" in text  # echoed (sanitized) query
 
 
 def test_zero_retrieval_no_usage_no_budget_charge():
@@ -356,7 +357,7 @@ def test_zero_retrieval_no_usage_no_budget_charge():
         ExperimentConfig(), FakeRouter([_decision()]), FakeEngine(movies=[]),
         FakeSynthesizer(), DualModeObservabilityManager(session_id="t"), limiter,
     )
-    result = _invoke(graph, "nothing matches this")
+    result = _invoke(graph, "nothing in the archive can match this ultra specific ask")
     assert result["session_tokens"] == 0
     assert result.get("synthesis_usage") is None
     assert limiter.check_current().verdict.value == "clean"
@@ -369,7 +370,7 @@ def test_zero_retrieval_trace_marks_deterministic_path():
         ExperimentConfig(), FakeRouter([_decision()]), FakeEngine(movies=[]),
         FakeSynthesizer(), tracer,
     )
-    _invoke(graph, "obscure filter combo")
+    _invoke(graph, "an obscure filter combination no movie can satisfy")
     spans = [t for t in tracer.traces() if t["node"] == "synthesize"]
     assert spans and spans[0]["payload"]["retrieval_empty"] is True
     assert spans[0]["payload"]["path"] == "deterministic"

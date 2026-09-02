@@ -76,7 +76,7 @@ def _decision(intent=IntentType.SEMANTIC_SEARCH, requires_rag=True,
     return QueryRoutingDecision(
         intent=intent,
         confidence=confidence,
-        standalone_query="q",
+        standalone_query="a specific long standalone query for tests",
         requires_rag=requires_rag,
         is_fallback=is_fallback,
     )
@@ -130,7 +130,7 @@ def test_cwa_violation_detected_in_trace_not_silently_hidden():
     tracer = DualModeObservabilityManager(session_id="cwa")
     synth = MaliciousSynthesizer()
     graph = _graph(synthesizer=synth, tracer=tracer)
-    out = graph.invoke({"messages": [HumanMessage(content="a dream heist movie")]})
+    out = graph.invoke({"messages": [HumanMessage(content="a dream heist movie with spinning corridors")]})
 
     synthesize_traces = [t for t in tracer.traces() if t["node"] == "synthesize"]
     assert synthesize_traces, "synthesize node must be traced"
@@ -206,7 +206,7 @@ def test_empty_world_synth_cannot_recommend():
     """
     synth = MaliciousSynthesizer()
     graph = _graph(engine=ScriptedEngine(movies=[]), synthesizer=synth)
-    out = graph.invoke({"messages": [HumanMessage(content="obscure film")]})
+    out = graph.invoke({"messages": [HumanMessage(content="an obscure film nobody has ever matched before")]})
 
     assert synth.calls == []  # LLM skipped entirely on the empty-world path
     assert "couldn't find" in out["final_response"]  # grounded deterministic text
