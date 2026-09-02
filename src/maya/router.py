@@ -12,6 +12,7 @@ Design notes:
 
 import os
 import re
+from collections.abc import Collection
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
@@ -23,6 +24,7 @@ from src.domain.routing import (
     MetadataFilterCriteria,
     QueryRoutingDecision,
 )
+from src.maya.probing import extract_probe_answers, strip_markup
 
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
@@ -42,6 +44,10 @@ FILTER_INTENTS = {
 
 #: First year covered by the bundled dataset (see ADR 0001).
 DATASET_START_YEAR = 1970
+
+#: Textual pre-1970 references (years or decades) — backs the genre guard's
+#: temporal exemption (#26): "1950s horror movies" must stay OUT_OF_SCOPE.
+_PRE_1970_TEXT_RE = re.compile(r"\b(18\d\d|19[0-6]\d|18\d0s|19[0-6]0s)\b")
 
 #: Max conversation turns (2 messages each) replayed to the router for
 #: coreference resolution. Keeps prompt size bounded regardless of history.
@@ -128,6 +134,7 @@ class MayaRouter:
         config: ExperimentConfig,
         api_key: str | None = None,
         confidence_threshold: float = 0.5,
+        genre_vocabulary: Collection[str] = (),
     ) -> None:
         """Builds the bound structured-output chain once.
 
@@ -136,9 +143,15 @@ class MayaRouter:
             api_key: OpenRouter key; defaults to ``OPENROUTER_API_KEY`` env var.
             confidence_threshold: Decisions below this confidence trigger the
                 heuristic fallback.
+            genre_vocabulary: Genre names present in the dataset (#26 genre
+                guard). Fed from ``MovieDatabase.distinct_genres()`` — the
+                data is the vocabulary. Empty set simply disables the guard.
         """
         self.config = config
         self.confidence_threshold = confidence_threshold
+        self.genre_vocabulary = frozenset(
+            g.lower().strip() for g in genre_vocabulary if g.strip()
+        )
         self._llm = ChatOpenAI(
             model=config.router_model,
             temperature=config.temperature,
@@ -173,7 +186,7 @@ class MayaRouter:
             )
             return self._apply_session_exclusions(fallback, state)
 
-        decision = self._normalize_decision(decision)
+        decision = self._normalize_decision(decision, query)
         if decision.confidence < self.confidence_threshold:
             fallback = self._heuristic_fallback(
                 query, state, reason=f"low router confidence: {decision.confidence:.2f}"
@@ -183,17 +196,24 @@ class MayaRouter:
 
     # --- private helpers (the only custom logic) -----------------------------
 
-    def _normalize_decision(self, decision: QueryRoutingDecision) -> QueryRoutingDecision:
+    def _normalize_decision(
+        self, decision: QueryRoutingDecision, query: str = ""
+    ) -> QueryRoutingDecision:
         """Deterministic post-processing: the model proposes, code disposes.
 
         Enforces the invariants the LLM cannot be trusted to respect (measured
-        on live runs — see issue #13):
+        on live runs — see issues #13 and #26):
         1. ``requires_rag`` is derived from intent, never taken from the model.
         2. Any pre-1970 reference forces OUT_OF_SCOPE and clears criteria.
         3. Spurious filters on non-filter intents are stripped.
         4. ``cast_member`` duplicating an excluded actor is dropped.
-        5. ``mood``/``audience`` are whitespace-stripped (extracted on every
-           intent — the funnel consumes them; #24).
+        5. ``mood``/``audience`` are whitespace-stripped, with the
+           deterministic vocabulary as fallback when the model missed them.
+        6. #26-B/C: OUT_OF_SCOPE is FORBIDDEN when the query carries in-scope
+           vocabulary — a genre word or a mood/audience answer is a film
+           request by definition ("suggest me horror movies" misrouted at
+           confidence 1.00 in the walkthrough). The pre-1970 rule above wins:
+           "1950s horror" stays out of scope.
         """
         if self._references_pre_1970(decision):
             return decision.model_copy(
@@ -206,7 +226,31 @@ class MayaRouter:
                 }
             )
 
-        requires_rag = decision.intent in RETRIEVAL_INTENTS
+        if decision.intent is IntentType.OUT_OF_SCOPE and self._has_in_scope_vocabulary(
+            query
+        ) and not _PRE_1970_TEXT_RE.search(query):
+            decision = decision.model_copy(
+                update={
+                    "intent": IntentType.SEMANTIC_SEARCH,
+                    "reasoning": (
+                        (decision.reasoning or "") + " [genre-guard: in-scope "
+                        "vocabulary present, OUT_OF_SCOPE overridden (#26)]"
+                    ).strip(),
+                }
+            )
+
+        # Mood/audience fallback (#26-D): the vocab is deterministic where the
+        # 3B model is variance-prone; the LLM's own extraction always wins.
+        mood = (decision.mood or "").strip()
+        audience = (decision.audience or "").strip()
+        if not mood or not audience:
+            vocab = extract_probe_answers(query)
+            mood = mood or vocab.preferred_mood
+            audience = audience or vocab.audience
+        # Markup sanitizer: these fields reach retrieval queries and
+        # deterministic responses downstream (#26-E notice).
+        mood = strip_markup(mood).strip()
+        audience = strip_markup(audience).strip()
 
         filters = decision.filters
         if decision.intent not in FILTER_INTENTS:
@@ -222,12 +266,24 @@ class MayaRouter:
 
         return decision.model_copy(
             update={
-                "requires_rag": requires_rag,
+                "requires_rag": decision.intent in RETRIEVAL_INTENTS,
                 "filters": filters,
-                "mood": (decision.mood or "").strip(),
-                "audience": (decision.audience or "").strip(),
+                "mood": mood,
+                "audience": audience,
             }
         )
+
+    def _has_in_scope_vocabulary(self, query: str) -> bool:
+        """True when the query contains a genre word or mood/audience vocab (#26)."""
+        if not query:
+            return False
+        lowered = re.sub(r"\bsci fi\b", "sci-fi", query.lower())
+        if any(
+            re.search(rf"\b{re.escape(genre)}\b", lowered)
+            for genre in self.genre_vocabulary
+        ):
+            return True
+        return bool(extract_probe_answers(lowered).answered_axes())
 
     @staticmethod
     def _references_pre_1970(decision: QueryRoutingDecision) -> bool:
@@ -322,18 +378,16 @@ class MayaRouter:
             return decision
 
         filters = decision.filters or MetadataFilterCriteria()
-        merged = MetadataFilterCriteria(
-            exact_year=filters.exact_year,
-            year_min=filters.year_min,
-            year_max=filters.year_max,
-            genres=filters.genres,
-            director=filters.director,
-            cast_member=filters.cast_member,
-            excluded_genres=list(
-                dict.fromkeys(filters.excluded_genres + preferences.excluded_genres)
-            ),
-            excluded_actors=list(
-                dict.fromkeys(filters.excluded_actors + preferences.excluded_actors)
-            ),
+        # model_copy preserves fields the reconstruction used to silently
+        # drop (person, genre_match — #26 latent filter-eating bug).
+        merged = filters.model_copy(
+            update={
+                "excluded_genres": list(
+                    dict.fromkeys(filters.excluded_genres + preferences.excluded_genres)
+                ),
+                "excluded_actors": list(
+                    dict.fromkeys(filters.excluded_actors + preferences.excluded_actors)
+                ),
+            }
         )
         return decision.model_copy(update={"filters": merged})

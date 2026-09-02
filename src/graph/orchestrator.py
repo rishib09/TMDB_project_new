@@ -40,10 +40,12 @@ from src.maya.guardrails import (
     WeeklyBudgetTracker,
 )
 from src.maya.probing import (
+    build_filter_carryover_notice,
     build_funnel_query,
     build_probe_response,
     extract_probe_answers,
     handle_probe_answer,
+    is_fresh_start,
     match_genre_pick,
     next_funnel_step,
     should_probe,
@@ -107,6 +109,20 @@ def build_maya_graph(
         tracer.record_local("guard_input", {"verdict": injection.verdict.value})
         # SUSPICIOUS verdict (stripped markup): proceed with the sanitized query.
         sanitized = injection.sanitized_query or query
+        # #26-E: "something completely different" wipes accumulated preferences
+        # at the ONE choke point every turn passes — covering funnel turns and
+        # post-retrieval turns alike. route_after_guard sees funnel_active=False
+        # (LangGraph applies updates before conditional edges) so the funnel
+        # cannot re-own the turn; routing proceeds on a clean slate.
+        if is_fresh_start(sanitized):
+            tracer.record_local("guard_input", {"fresh_start": True})
+            return {
+                "guardrail_result": injection,
+                "current_query": sanitized,
+                "session_preferences": UserSessionPreferences(reset_requested=True),
+                "funnel_active": False,
+                "offered_genre_options": [],
+            }
         return {"guardrail_result": injection, "current_query": sanitized}
 
     def route_node(state: MayaGraphState) -> dict:
@@ -178,6 +194,7 @@ def build_maya_graph(
             "messages": [AIMessage(content=response_text)],
             "probe_count": state.probe_count + 1,  # session-persisted running total
             "funnel_active": True,  # next message belongs to the funnel (#23)
+            "turn_stage": "probe",  # #26-A: UI row stays complete without the router
             "rolling_summary": _update_summary(state, state.routing_decision),
         }
 
@@ -226,18 +243,23 @@ def build_maya_graph(
                 "probe",
                 {"stage": "retrieve", "axes": merged.answered_axes()},
             )
+            # from_funnel rides along so synthesize_node can append the #26-E
+            # carry-over announcement to this first post-funnel recommendation.
             return {
                 "funnel_active": False,
                 "routing_decision": synthetic,
                 "session_preferences": merged,
                 "offered_genre_options": [],
+                "from_funnel": True,
+                "turn_stage": "retrieve",
             }
         if outcome.action == "fallthrough":
             tracer.record_local("probe", {"stage": "fallthrough"})
             # NOTE: funnel stays ACTIVE — a user who ignores one probe may
             # still say "go ahead" next turn (#23 walkthrough defect); the
             # funnel is a cheap pre-router filter, so lingering is harmless.
-            return {"from_funnel": True, "offered_genre_options": outcome.offered_genre_options}
+            return {"from_funnel": True, "turn_stage": "fallthrough",
+                    "offered_genre_options": outcome.offered_genre_options}
         # probe | confirm | confirm_genres → deterministic response, end turn
         tracer.record_local(
             "probe",
@@ -253,6 +275,7 @@ def build_maya_graph(
             "session_preferences": outcome.prefs_update,
             "funnel_active": True,
             "offered_genre_options": outcome.offered_genre_options,
+            "turn_stage": outcome.action,  # #26-A
         }
 
     def retrieve_node(state: MayaGraphState) -> dict:
@@ -355,6 +378,13 @@ def build_maya_graph(
              "weekly_budget": weekly_status.value if weekly_status else "off",
              "cwa_violations": violations},
         )
+        # #26-E: the first recommendation after funnel narrowing announces the
+        # filters that REMAIN ACTIVE, with the deterministic escape hatch.
+        if state.from_funnel and movies:
+            notice = build_filter_carryover_notice(state.session_preferences)
+            if notice:
+                response_text += notice
+                tracer.record_local("synthesize", {"carryover_notice": True})
         return {
             "final_response": response_text,
             "synthesis_usage": usage,

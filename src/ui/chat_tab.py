@@ -32,15 +32,26 @@ _CHAT_CSS = """
 
 
 def intent_badge_text(log_row: dict) -> str:
-    """Pure helper (unit-tested): one-line routing chip for a turn."""
+    """Pure helper (unit-tested): ONE inline metadata line per turn (#26-F).
+
+    The intent chip, the narrowing trail and the active SQL filters share a
+    single caption — the line is the turn's single source of pipeline truth.
+    """
     path = log_row.get("path", "?")
     attempts = log_row.get("attempts", 1)
     path_label = f"{path} (x{attempts})" if attempts > 1 else path
-    return (
+    text = (
         f"INTENT: {log_row.get('intent', '?')} — confidence {log_row.get('confidence', 0):.2f} "
         f"— route: {path_label} — {log_row.get('n_movies', 0)} movies "
         f"— {log_row.get('tokens', 0)} tokens"
     )
+    narrowing = log_row.get("narrowing") or []
+    if narrowing:
+        text += " · Narrowing by: " + " · ".join(narrowing)
+    filters = log_row.get("filters") or []
+    if filters:
+        text += " · Filters: " + " · ".join(filters)
+    return text
 
 
 def render_intent_badge(log_row: dict) -> None:
@@ -80,21 +91,6 @@ def render_poster_grid(movies, cols: int = 4) -> None:
                 st.image(movie.poster_url)
                 st.markdown(f"**{movie.title}** ({movie.release_year})")
                 st.caption(f"{movie.vote_average:.1f} / 10 — " + ", ".join(movie.genres[:3]))
-
-
-def render_narrowing_trail(session: MayaSession) -> None:
-    """Chips for probed preferences gathered so far (#22) — the narrowing trail."""
-    prefs = session.conversation.session_preferences
-    chips: list[str] = []
-    if prefs.preferred_mood:
-        chips.append(f"mood: {prefs.preferred_mood}")
-    if prefs.audience:
-        chips.append(f"audience: {prefs.audience}")
-    chips.extend(f"no {d}" for d in prefs.noted_donts)
-    chips.extend(prefs.preferred_genres)
-    chips.extend(f"dir. {d}" for d in prefs.preferred_directors)
-    if chips:
-        st.caption("Narrowing by: " + " · ".join(chips))
 
 
 def render_chat(session: MayaSession) -> None:
@@ -152,5 +148,4 @@ def render_chat(session: MayaSession) -> None:
         st.markdown(last["response"])
         render_intent_badge(last)
         render_feedback(session, idx)
-    render_narrowing_trail(session)
     render_poster_grid(session.last_movies)

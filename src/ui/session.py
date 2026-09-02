@@ -19,6 +19,7 @@ from src.graph.orchestrator import build_maya_graph
 from src.indexing.vector_store import MovieVectorStore
 from src.maya.agent import MayaSynthesizer
 from src.maya.guardrails import SessionTokenLimiter, WeeklyBudgetTracker
+from src.maya.probing import preference_chips
 from src.maya.router import MayaRouter
 from src.observability.tracer import DualModeObservabilityManager
 from src.retrieval.hybrid_engine import HybridRetrievalEngine
@@ -81,7 +82,8 @@ class MayaSession:
         )
         return build_maya_graph(
             self.config,
-            MayaRouter(self.config),
+            # #26-B: the dataset's own genres are the genre-guard vocabulary.
+            MayaRouter(self.config, genre_vocabulary=self.db.distinct_genres()),
             engine,
             MayaSynthesizer(self.config),
             self.tracer,
@@ -121,7 +123,13 @@ class MayaSession:
     # --- conversation turn ---
 
     def turn(self, query: str) -> None:
-        """One full Maya turn: guard → route → retrieve → synthesize."""
+        """One full Maya turn: guard → route/funnel → retrieve → synthesize.
+
+        The turn_log row is built ATOMICALLY by ``_build_turn_row`` from the
+        graph's output alone (#26-A) — chip metadata, response, movie count
+        and token count can never come from different turns, even on funnel
+        turns where the router never ran (``routing_decision`` is None).
+        """
         graph = self.ensure_graph()
         ring_before = len(self.tracer.traces())
         trace_id = self.tracer.new_turn_trace()  # per-turn id for feedback (#9)
@@ -139,13 +147,19 @@ class MayaSession:
             # every turn now so the trace id and the run actually correlate
             config={"callbacks": self.tracer.callbacks()},
         )
-        decision = out["routing_decision"]
+        row = self._build_turn_row(
+            out,
+            query=query,
+            trace_id=trace_id,
+            rag_version=self.rag_version,
+            new_traces=slice_new_traces(ring_before, self.tracer.traces()),
+            prev_tokens=self.conversation.session_tokens,
+        )
         movies = out.get("retrieved_movies", [])
-        response = out["final_response"]
         self.last_movies = movies
-        tokens = out.get("session_tokens", 0) - self.conversation.session_tokens
         # Guided narrowing (#22): probe answers extracted this turn persist
         # in session state; probe turns carry no movies and no synthesis cost.
+        # #26-E: a fresh-start turn clears preferences via the reducer.
         self.conversation.session_preferences = out.get(
             "session_preferences", self.conversation.session_preferences
         )
@@ -157,30 +171,84 @@ class MayaSession:
             "offered_genre_options", []
         )
         self.conversation.add_turn(
-            query, response, movies, decision, tokens_used=max(tokens, 0)
+            query, row["response"], movies, out.get("routing_decision"),
+            tokens_used=row["tokens"],
         )
-        route_traces = [
-            t
-            for t in slice_new_traces(ring_before, self.tracer.traces())
-            if t["node"] == "route"
-        ]
-        self.turn_log.append({
+        self.turn_log.append(row)
+
+    @staticmethod
+    def _build_turn_row(
+        out: dict,
+        *,
+        query: str,
+        trace_id: str,
+        rag_version: str,
+        new_traces: list[dict],
+        prev_tokens: int,
+    ) -> dict:
+        """Pure, atomic turn_log row (#26-A) — unit-testable without a graph.
+
+        Funnel-owned turns (probe/confirm/genre-confirm) end without a
+        routing decision: the deterministic funnel stage becomes the intent
+        label and the path reads "funnel". Previously ``decision.intent``
+        crashed here mid-turn, leaving a stale row that made the UI render
+        one turn's chip against another turn's response.
+        """
+        decision = out.get("routing_decision")
+        stage = out.get("turn_stage", "")
+        response = out["final_response"]
+        tokens = max(out.get("session_tokens", 0) - prev_tokens, 0)
+        route_traces = [t for t in new_traces if t["node"] == "route"]
+        if decision is None:
+            intent = f"FUNNEL_{(stage or 'probe').upper()}"
+            confidence = 1.0  # deterministic — no model involved
+            path = "funnel"
+        else:
+            intent = decision.intent.value
+            confidence = decision.confidence
+            path = "funnel" if stage == "retrieve" else MayaSession._path_taken(route_traces)
+        prefs = out.get("session_preferences")
+        return {
             "timestamp": datetime.now(UTC).isoformat(),
             "trace_id": trace_id,
-            "rag_version": self.rag_version,
+            "rag_version": rag_version,
             "query": query,
-            "intent": decision.intent.value,
-            "confidence": decision.confidence,
-            "path": self._path_taken(route_traces),
-            "attempts": sum(1 for t in route_traces),
-            "n_movies": len(movies),
-            "tokens": max(tokens, 0),
+            "intent": intent,
+            "confidence": confidence,
+            "path": path,
+            "stage": stage,
+            "attempts": len(route_traces),
+            "n_movies": len(out.get("retrieved_movies", [])),
+            "tokens": tokens,
             "response": response,
-            "probe": len(self.tracer.traces()) > 0 and any(
-                t["node"] == "probe"
-                for t in slice_new_traces(ring_before, self.tracer.traces())
-            ),
-        })
+            "probe": any(t["node"] == "probe" for t in new_traces),
+            "narrowing": preference_chips(prefs) if prefs else [],
+            "filters": MayaSession._filter_chips(decision),
+        }
+
+    @staticmethod
+    def _filter_chips(decision) -> list[str]:
+        """Active SQL filters for this turn's metadata line (#26-F)."""
+        if decision is None or decision.filters is None:
+            return []
+        f = decision.filters
+        chips: list[str] = []
+        if f.genres:
+            mode = f" ({f.genre_match})" if len(f.genres) > 1 else ""
+            chips.append("genres: " + ", ".join(f.genres) + mode)
+        if f.exact_year:
+            chips.append(str(f.exact_year))
+        elif f.year_min or f.year_max:
+            chips.append(f"{f.year_min or '…'}–{f.year_max or '…'}")
+        if f.director:
+            chips.append(f"dir. {f.director}")
+        if f.cast_member:
+            chips.append(f"cast {f.cast_member}")
+        if f.person:
+            chips.append(f"person: {f.person}")
+        chips.extend(f"no {g}" for g in f.excluded_genres)
+        chips.extend(f"no {a}" for a in f.excluded_actors)
+        return chips
 
     @staticmethod
     def _path_taken(route_traces: list[dict]) -> str:

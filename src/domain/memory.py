@@ -49,6 +49,9 @@ class UserSessionPreferences(BaseModel):
     noted_donts: list[str] = Field(default_factory=list)
     #: #25: mood→genre confirmation settled (never re-asked for this mood).
     genre_confirmation_done: bool = False
+    #: #26-E: one-shot signal to WIPE accumulated preferences. Must ride the
+    #: reducer (an empty update would otherwise be a no-op merge).
+    reset_requested: bool = False
 
     def answered_axes(self) -> list[str]:
         """Ordered narrowing axes with a value — drives the probe funnel."""
@@ -80,6 +83,8 @@ def merge_preferences(
     """Reducer that merges session-level preferences and persistent exclusions."""
     if not incoming:
         return current
+    if incoming.reset_requested:  # #26-E: clean slate beats any merge
+        return UserSessionPreferences()
     return UserSessionPreferences(
         excluded_genres=list(dict.fromkeys(current.excluded_genres + incoming.excluded_genres)),
         excluded_actors=list(dict.fromkeys(current.excluded_actors + incoming.excluded_actors)),

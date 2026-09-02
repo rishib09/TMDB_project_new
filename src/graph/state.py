@@ -84,6 +84,10 @@ class MayaGraphState(BaseModel):
     from_funnel: bool = False
     #: #25: genre candidates offered and awaiting the user's pick.
     offered_genre_options: list[str] = Field(default_factory=list)
+    #: #26-A: which deterministic stage produced this turn's response
+    #: (probe | confirm | confirm_genres | retrieve | fallthrough) — the UI
+    #: turn row stays complete on turns where the router never ran.
+    turn_stage: str = ""
     retrieved_movies: list[MovieRecord] = Field(default_factory=list)
     synthesis_usage: SynthesisUsage | None = None
     final_response: str = ""

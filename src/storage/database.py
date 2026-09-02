@@ -117,6 +117,23 @@ class MovieDatabase:
             )
             conn.commit()
 
+    def distinct_genres(self) -> list[str]:
+        """Every genre name present in the dataset (#26 genre guard vocabulary).
+
+        One JSON1 query over ``genres_json`` — the data is the vocabulary, no
+        hand-maintained duplicate list. Fails open to an empty list so a
+        schema hiccup never blocks routing.
+        """
+        try:
+            with self._get_connection() as conn:
+                rows = conn.execute(
+                    "SELECT DISTINCT json_each.value FROM movies, "
+                    "json_each(movies.genres_json) ORDER BY 1"
+                ).fetchall()
+            return [r[0] for r in rows if isinstance(r[0], str) and r[0].strip()]
+        except sqlite3.Error:
+            return []
+
     def weekly_spend_usd(self, reference: date | None = None) -> float:
         """Sum of cost_usd for the ISO week (Mon–Sun) containing ``reference``."""
         ref = reference or date.today()

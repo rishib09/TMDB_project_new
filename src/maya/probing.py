@@ -36,9 +36,32 @@ RETRIEVE_CONFIRMATIONS: ClassVar[tuple[str, ...]] = (
     "good enough",
 )
 
+#: Phrases that wipe accumulated preferences for a clean start (#26-E).
+#: Deterministic and matched by substring on the lowered query — the
+#: carry-over announcement explicitly offers this escape hatch, so the
+#: vocabulary MUST cover its own suggestion.
+FRESH_START_PHRASES: ClassVar[tuple[str, ...]] = (
+    "something completely different",
+    "start fresh",
+    "start over",
+    "fresh start",
+    "watch something else",
+    "clear my preferences",
+)
+
 #: Echo sanitization — identical contract to the #21 empty-retrieval response.
 _SMUGGLED_MARKUP_RE = re.compile(r"</?\s*\w+\s*/?>|```.*?```", re.DOTALL)
 _ECHO_CAP: ClassVar[int] = 120
+
+
+def strip_markup(text: str) -> str:
+    """Removes smuggled HTML/code fences — extraction-boundary sanitizer.
+
+    LLM-extracted fields (mood/audience per #24) flow into retrieval queries
+    and deterministic responses; this is the single choke point that keeps
+    them markup-free, shared by the router and the notice builders.
+    """
+    return _SMUGGLED_MARKUP_RE.sub(" ", text or "")
 
 
 class ProbeQuestion(BaseModel):
@@ -89,6 +112,10 @@ _MOOD_VOCAB: ClassVar[dict[str, str]] = {
     "heartwarming": "feel-good",
     "scary": "scary",
     "spooky": "scary",
+    "horror": "scary",  # #26-D: the domain's own genre word maps to the mood
+    "creepy": "scary",
+    "frightening": "scary",
+    "terrifying": "scary",
     "romantic": "romantic",
     "romance": "romantic",
     "thrilling": "thrilling",
@@ -228,6 +255,46 @@ class FunnelOutcome(BaseModel):
     response: str | None = None  # deterministic response for probe/confirm
     prefs_update: UserSessionPreferences | None = None  # MERGED prefs (idempotent under the reducer)
     offered_genre_options: list[str] = Field(default_factory=list)  # #25 confirm_genres
+
+
+def is_fresh_start(query: str) -> bool:
+    """True when the user asks to drop accumulated preferences (#26-E).
+
+    Deterministic escape hatch offered by the carry-over announcement —
+    checked in the guard node, the single choke point every turn passes.
+    """
+    lowered = query.lower()
+    return any(phrase in lowered for phrase in FRESH_START_PHRASES)
+
+
+def build_filter_carryover_notice(prefs: UserSessionPreferences) -> str:
+    """Post-funnel transparency line (#26-E): announce carried filters.
+
+    Appended to the first recommendation after funnel narrowing so the
+    user knows the filters REMAIN ACTIVE — with the deterministic escape
+    hatch vocabulary as the way out.
+    """
+    chips = preference_chips(prefs)
+    if not chips:
+        return ""  # no prefs carried → nothing to announce
+    return (
+        "\n\n---\nStill filtering by " + " · ".join(chips) + " — want to "
+        'continue with these, or watch something completely different?'
+    )
+
+
+def preference_chips(prefs: UserSessionPreferences) -> list[str]:
+    """Human-readable chips for the active preferences (shared by UI + notice)."""
+    chips: list[str] = []
+    if prefs.preferred_mood:
+        chips.append(f"mood: {prefs.preferred_mood}")
+    if prefs.audience:
+        chips.append(f"audience: {prefs.audience}")
+    chips.extend(f"no {d}" for d in prefs.noted_donts)
+    if prefs.preferred_genres:
+        chips.append("genres: " + ", ".join(prefs.preferred_genres))
+    chips.extend(f"dir. {d}" for d in prefs.preferred_directors)
+    return chips
 
 
 def _is_confirmation(query: str) -> bool:
