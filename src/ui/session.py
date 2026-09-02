@@ -13,6 +13,8 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 
 from src.domain.config import ExperimentConfig, PresetType
 from src.domain.memory import ConversationState
+from src.feedback.langfuse_score import push_feedback_score
+from src.feedback.store import FeedbackStore
 from src.graph.orchestrator import build_maya_graph
 from src.indexing.vector_store import MovieVectorStore
 from src.maya.agent import MayaSynthesizer
@@ -55,6 +57,8 @@ class MayaSession:
         self.limiter = SessionTokenLimiter()
         self.view = "Chat"  # sidebar navigation: Chat | Evals | Traces
         self.feedback_log: dict[int, int] = {}  # assistant-turn index → ±1 (thumbs)
+        self.feedback_store = FeedbackStore()  # SQLite persistence (#9)
+        self.rag_version = "v1_1_enriched"  # matches _build_graph engine wiring
         self.admin_mode = False
         self.config_version = 0  # bumped on preset apply → knob widgets remount
         self.turn_log: list[dict] = []  # one row per turn for badges/trace
@@ -68,7 +72,7 @@ class MayaSession:
         engine = HybridRetrievalEngine(
             db=MovieDatabase("data/tmdb_movies.db"),
             vector_store=MovieVectorStore("data/chroma_db"),
-            rag_version="v1_1_enriched",
+            rag_version=self.rag_version,
             hybrid_alpha=self.config.hybrid_alpha,
             reranker_enabled=self.config.reranker_enabled,
             reranker_model=self.config.reranker_model,
@@ -117,12 +121,18 @@ class MayaSession:
         """One full Maya turn: guard → route → retrieve → synthesize."""
         graph = self.ensure_graph()
         ring_before = len(self.tracer.traces())
+        trace_id = self.tracer.new_turn_trace()  # per-turn id for feedback (#9)
         history = _to_lc_messages(self.conversation.messages)
-        out = graph.invoke({
-            "messages": [*history, HumanMessage(content=query)],
-            "session_preferences": self.conversation.session_preferences,
-            "session_tokens": self.conversation.session_tokens,
-        })
+        out = graph.invoke(
+            {
+                "messages": [*history, HumanMessage(content=query)],
+                "session_preferences": self.conversation.session_preferences,
+                "session_tokens": self.conversation.session_tokens,
+            },
+            # cloud tracing was silently inactive in the UI before #9 — wired
+            # every turn now so the trace id and the run actually correlate
+            config={"callbacks": self.tracer.callbacks()},
+        )
         decision = out["routing_decision"]
         movies = out.get("retrieved_movies", [])
         response = out["final_response"]
@@ -138,6 +148,8 @@ class MayaSession:
         ]
         self.turn_log.append({
             "timestamp": datetime.now(UTC).isoformat(),
+            "trace_id": trace_id,
+            "rag_version": self.rag_version,
             "query": query,
             "intent": decision.intent.value,
             "confidence": decision.confidence,
@@ -153,6 +165,24 @@ class MayaSession:
         if not route_traces:
             return "refusal"
         return "reroute" if len(route_traces) > 1 else "single-route"
+
+    def record_feedback(self, turn_index: int, value: int) -> bool:
+        """Persists a thumb rating and pushes it to Langfuse (#9).
+
+        UPSERT semantics: changing the thumb on the same turn updates the
+        row and re-pushes the score (deterministic score_id) — never
+        duplicates. Returns True when the cloud push succeeded.
+        """
+        if value not in (1, -1):
+            raise ValueError(f"rating must be +1 or -1, got {value!r}")
+        if not (0 <= turn_index < len(self.turn_log)):
+            raise IndexError(f"turn_index {turn_index} out of range")
+        row = self.turn_log[turn_index]
+        self.feedback_store.record(
+            row["trace_id"], value, row["rag_version"], intent=row["intent"]
+        )
+        self.feedback_log[turn_index] = value
+        return push_feedback_score(row["trace_id"], value)
 
     @staticmethod
     def is_admin_command(query: str) -> bool:

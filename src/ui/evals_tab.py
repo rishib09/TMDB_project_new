@@ -11,6 +11,8 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 
+from src.feedback.store import FeedbackStore
+
 RESULTS_DIR = Path("evals/results")
 _METRICS = ["hit_rate", "mrr", "context_precision", "faithfulness", "relevancy"]
 _METRIC_LABELS = {
@@ -56,12 +58,39 @@ def render_history_chart(runs: list[dict]) -> None:
     st.plotly_chart(fig, use_container_width=True)
 
 
+def render_feedback_section(store: FeedbackStore | None = None) -> None:
+    """User feedback breakdown by RAG version (issue #9)."""
+    store = store or FeedbackStore()
+    stats = store.stats_by_version()
+    st.markdown("#### User Feedback")
+    if not stats:
+        st.info(
+            "No feedback yet — rate replies with thumbs in the Chat tab; "
+            "ratings land here per RAG version."
+        )
+        return
+    frame = pd.DataFrame(stats)
+    left, right = st.columns([1, 2])
+    with left:
+        st.dataframe(frame, use_container_width=True, hide_index=True)
+    with right:
+        fig = px.bar(
+            frame, x="rag_version", y="avg_rating", color="n",
+            hover_data=["thumbs_up", "thumbs_down"],
+            color_continuous_scale="RdYlGn", range_y=[-1, 1],
+            labels={"avg_rating": "avg rating (+1/−1)", "n": "n ratings"},
+        )
+        fig.update_layout(height=260, margin=dict(l=10, r=10, t=10, b=10))
+        st.plotly_chart(fig, use_container_width=True)
+
+
 def render_evals(results_dir: Path = RESULTS_DIR) -> None:
     st.header("Evals")
     st.caption(
         "Benchmark runs from `src/evals/runner.py` — deltas compare against the "
         "previous run of the same label. Sweep via the CLI, view here."
     )
+    render_feedback_section()
     if not results_dir.exists() or not list(results_dir.glob("*.json")):
         st.info(
             "No benchmark results yet. Run:\n\n"

@@ -47,11 +47,23 @@ def render_intent_badge(log_row: dict) -> None:
     st.caption(intent_badge_text(log_row))
 
 
+def _widget_rating_to_canonical(value: int) -> int:
+    """Pure boundary mapping: st.feedback 1/0 → canonical +1/-1 (unit-tested)."""
+    return 1 if value == 1 else -1
+
+
 def render_feedback(session: MayaSession, turn_index: int) -> None:
-    """Thumbs up/down per assistant turn; value persists in the session log."""
+    """Thumbs up/down per assistant turn; persisted + pushed on change (#9).
+
+    st.feedback('thumbs') yields 1 = up, 0 = down, None = unset; stored
+    canonically as ±1 at the UI boundary (0 → -1).
+    """
     value = st.feedback("thumbs", key=f"feedback_{turn_index}")
-    if value is not None:
-        session.feedback_log[turn_index] = value
+    if value is None:
+        return
+    rating = _widget_rating_to_canonical(value)
+    if rating != session.feedback_log.get(turn_index):
+        session.record_feedback(turn_index, rating)
 
 
 def render_poster_grid(movies, cols: int = 4) -> None:
