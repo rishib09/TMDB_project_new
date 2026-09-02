@@ -92,7 +92,7 @@ def test_user_message_empty_retrieval_has_no_block(synthesizer):
 
 def test_system_prompt_enforces_cwa_with_retrieval(synthesizer):
     prompt = synthesizer._build_system_prompt(has_retrieval=True)
-    assert "CLOSED-WORLD ASSUMPTION" in prompt
+    assert "Closed-World Assumption" in prompt  # #10 prompt layer phrasing
     assert "<retrieved_movies>" in prompt
     assert "NEVER invent" in prompt
     # Poster images live ONLY in the UI grid (issue #18) — never inline markdown
@@ -102,7 +102,7 @@ def test_system_prompt_enforces_cwa_with_retrieval(synthesizer):
 
 def test_system_prompt_superlative_answers_directly(synthesizer):
     prompt = synthesizer._build_system_prompt(has_retrieval=True, is_superlative=True)
-    assert "SUPERLATIVE" in prompt
+    assert "SUPERLATIVE question" in prompt
     assert "<ranking_criteria>" in prompt
     assert "Never hedge" in prompt
 
@@ -182,7 +182,7 @@ def test_system_prompt_forbids_hedging_when_values_present(synthesizer):
     prompt = synthesizer._build_system_prompt(has_retrieval=True, is_superlative=True)
     assert "verbatim" in prompt
     assert "never hedge" in prompt
-    assert "Conversationally frame every answer" in prompt
+    assert "Conversationally frame every answer" in prompt  # FORMAT contract kept
 
 
 def test_normalize_bolds_unbolded_titles_and_separates_blocks():
