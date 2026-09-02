@@ -133,6 +133,7 @@ class MayaSession:
                 "session_tokens": self.conversation.session_tokens,
                 "probe_count": self.conversation.probe_count,
                 "funnel_active": self.conversation.funnel_active,
+                "offered_genre_options": self.conversation.offered_genre_options,
             },
             # cloud tracing was silently inactive in the UI before #9 — wired
             # every turn now so the trace id and the run actually correlate
@@ -151,6 +152,9 @@ class MayaSession:
         self.conversation.probe_count = out.get("probe_count", self.conversation.probe_count)
         self.conversation.funnel_active = out.get(
             "funnel_active", self.conversation.funnel_active
+        )
+        self.conversation.offered_genre_options = out.get(
+            "offered_genre_options", []
         )
         self.conversation.add_turn(
             query, response, movies, decision, tokens_used=max(tokens, 0)

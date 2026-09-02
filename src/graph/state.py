@@ -82,6 +82,8 @@ class MayaGraphState(BaseModel):
     #: pivots are suppressed for exactly this turn (it may be an answer to
     #: our own question, not an off-topic query).
     from_funnel: bool = False
+    #: #25: genre candidates offered and awaiting the user's pick.
+    offered_genre_options: list[str] = Field(default_factory=list)
     retrieved_movies: list[MovieRecord] = Field(default_factory=list)
     synthesis_usage: SynthesisUsage | None = None
     final_response: str = ""

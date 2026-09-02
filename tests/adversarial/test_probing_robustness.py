@@ -134,7 +134,7 @@ def test_funnel_reply_can_never_pivot_out_of_scope():
         standalone_query="theoretical physics", requires_rag=False,
     )
     graph = build_maya_graph(
-        ExperimentConfig(), FakeRouter([pivot_decision]), FakeEngine(movies=[]),
+        ExperimentConfig(), FakeRouter([pivot_decision, pivot_decision]), FakeEngine(movies=[]),
         FakeSynthesizer(), DualModeObservabilityManager(session_id="t"),
     )
     out = graph.invoke({

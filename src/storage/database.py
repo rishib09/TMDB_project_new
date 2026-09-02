@@ -129,6 +129,23 @@ class MovieDatabase:
             ).fetchone()
         return float(row[0])
 
+    def classify_person(self, name: str) -> tuple[bool, bool]:
+        """DB ground truth for a named person (#24): ``(is_director, is_cast)``.
+
+        The router cannot know whether "movies of Mad Demon" means their
+        filmography as actor, director, or both — the archive knows.
+        """
+        pattern = f"%{name}%"
+        with self._get_connection() as conn:
+            as_director = conn.execute(
+                "SELECT COUNT(*) FROM movies WHERE director LIKE ?", (pattern,)
+            ).fetchone()[0]
+            as_cast = conn.execute(
+                "SELECT COUNT(*) FROM movies WHERE cast_json LIKE ?",
+                (f'%"{name}%',),  # matches "name": "<person>" in the JSON array
+            ).fetchone()[0]
+        return as_director > 0, as_cast > 0
+
     def upsert_movie(self, movie_data: dict[str, Any]) -> None:
         """Insert or replace a movie and synchronize the FTS5 index."""
         with self._get_connection() as conn:
@@ -342,9 +359,17 @@ class MovieDatabase:
         if filters.year_max is not None:
             query += " AND release_year <= ?"
             params.append(filters.year_max)
-        for genre in filters.genres:
-            query += " AND genres_json LIKE ?"
-            params.append(f'%"{genre}"%')
+        if filters.genres:
+            if filters.genre_match == "all":
+                # intersection (#25): movie must carry EVERY confirmed genre
+                for genre in filters.genres:
+                    query += " AND genres_json LIKE ?"
+                    params.append(f'%"{genre}"%')
+            else:
+                # any-match (#25 default): at least one wanted genre
+                clauses = " OR ".join("genres_json LIKE ?" for _ in filters.genres)
+                query += f" AND ({clauses})"
+                params.extend(f'%"{genre}"%' for genre in filters.genres)
         if filters.director:
             query += " AND director LIKE ?"
             params.append(f"%{filters.director}%")

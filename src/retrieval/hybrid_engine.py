@@ -67,6 +67,10 @@ class HybridRetrievalEngine:
         if not routing.requires_rag:
             return []
 
+        routing = self._resolve_person(routing)
+        if routing is None:  # named person not in the archive (#24)
+            return []
+
         if self._use_sql_path(routing):
             return self._retrieve_sql(routing, top_k)
 
@@ -81,6 +85,31 @@ class HybridRetrievalEngine:
         if self.reranker_enabled and fused:
             return self._rerank(query, fused, top_k)
         return fused[:top_k]
+
+    # --- person role resolution (#24) -------------------------------------------
+
+    def _resolve_person(self, routing: QueryRoutingDecision) -> QueryRoutingDecision | None:
+        """DB ground truth for role-less person mentions (#24).
+
+        director-only → director filter; cast-only → cast filter; BOTH → keep
+        ``person`` (the predicate OR-matches both filmographies); neither →
+        None (caller turns this into the deterministic not-found response).
+        """
+        filters = routing.filters
+        if not filters or not filters.person:
+            return routing
+        as_director, as_cast = self.db.classify_person(filters.person)
+        if as_director and as_cast:
+            return routing  # union: predicate OR-matches director + cast
+        if as_director:
+            return routing.model_copy(update={"filters": filters.model_copy(
+                update={"person": None, "director": filters.person}
+            )})
+        if as_cast:
+            return routing.model_copy(update={"filters": filters.model_copy(
+                update={"person": None, "cast_member": filters.person}
+            )})
+        return None
 
     # --- path selection ---------------------------------------------------------
 
@@ -242,7 +271,16 @@ class HybridRetrievalEngine:
             return False
         if filters.genres:
             wanted = {g.lower() for g in filters.genres}
-            if not wanted & {g.lower() for g in movie.genres}:
+            have = {g.lower() for g in movie.genres}
+            if filters.genre_match == "all":
+                if not wanted <= have:  # intersection (#25)
+                    return False
+            elif not wanted & have:
+                return False
+        if filters.person:
+            name = filters.person.lower()
+            in_cast = any(name in c.name.lower() for c in movie.cast)
+            if not (name in movie.director.lower() or in_cast):
                 return False
         if filters.director and filters.director.lower() not in movie.director.lower():
             return False

@@ -1,6 +1,7 @@
 """Routing, Intent taxonomy, and deterministic filter criteria schemas."""
 
 from enum import Enum
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -41,8 +42,15 @@ class MetadataFilterCriteria(BaseModel):
     year_min: int | None = None
     year_max: int | None = None
     genres: list[str] = Field(default_factory=list)
+    #: "any" = movie carries at least one wanted genre (legacy default);
+    #: "all" = movie carries EVERY wanted genre (#25 narrowing intersection).
+    genre_match: Literal["any", "all"] = "any"
     director: str | None = None
     cast_member: str | None = None
+    #: Person named WITHOUT an explicit role (#24). The engine resolves the
+    #: role against DB ground truth: director-only → director, cast-only →
+    #: cast_member, both → OR-union of both filmographies.
+    person: str | None = None
     excluded_genres: list[str] = Field(default_factory=list)
     excluded_actors: list[str] = Field(default_factory=list)
 
@@ -57,6 +65,10 @@ class QueryRoutingDecision(BaseModel):
     superlative: SuperlativeCriteria | None = None
     filters: MetadataFilterCriteria | None = None
     reasoning: str = Field(default="", description="Chain-of-thought routing justification")
+    #: Open-vocabulary signals (#24): extracted from the utterance regardless
+    #: of intent; the funnel consumes them, the vocab is the offline fallback.
+    mood: str = Field(default="", description="Emotional flavor when expressed (e.g. 'edge of the seat', 'feel-good')")
+    audience: str = Field(default="", description="Viewing audience when expressed (e.g. 'kids', 'family', 'date night')")
     is_fallback: bool = Field(
         default=False,
         description="True when the heuristic fallback replaced the LLM decision "

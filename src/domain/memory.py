@@ -47,6 +47,8 @@ class UserSessionPreferences(BaseModel):
     audience: str = ""
     preferred_directors: list[str] = Field(default_factory=list)
     noted_donts: list[str] = Field(default_factory=list)
+    #: #25: mood→genre confirmation settled (never re-asked for this mood).
+    genre_confirmation_done: bool = False
 
     def answered_axes(self) -> list[str]:
         """Ordered narrowing axes with a value — drives the probe funnel."""
@@ -88,6 +90,13 @@ def merge_preferences(
             dict.fromkeys(current.preferred_directors + incoming.preferred_directors)
         ),
         noted_donts=list(dict.fromkeys(current.noted_donts + incoming.noted_donts)),
+        # Mood change reopens genre confirmation (#25): the new mood may map
+        # to different candidate genres. Same mood → confirmation stays settled.
+        genre_confirmation_done=(
+            incoming.genre_confirmation_done
+            if incoming.preferred_mood and incoming.preferred_mood != current.preferred_mood
+            else incoming.genre_confirmation_done or current.genre_confirmation_done
+        ),
     )
 
 
@@ -102,6 +111,7 @@ class ConversationState(BaseModel):
     session_tokens: int = 0
     probe_count: int = 0  # guided narrowing (#22): persists across turns, caps probing
     funnel_active: bool = False  # #23: next message belongs to the funnel
+    offered_genre_options: list[str] = Field(default_factory=list)  # #25 pending genre picks
 
     def add_turn(
         self,

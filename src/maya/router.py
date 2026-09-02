@@ -87,7 +87,17 @@ Never also set `cast_member` to an excluded actor.
 4. Set `requires_rag` to false for GREETING, CAPABILITIES, and OUT_OF_SCOPE. \
 (Inconsistent values are corrected automatically; focus on intent accuracy.)
 5. Set `confidence` to your routing confidence between 0.0 and 1.0.
-6. Respond with JSON matching the schema only — no prose.
+6. ALWAYS fill `mood` and `audience` when the utterance expresses them, \
+regardless of intent: `mood` = emotional flavor in the user's own words \
+(e.g. "edge of the seat", "feel-good", "funny", "scary", "mind-bending"); \
+`audience` = who is watching (e.g. "kids", "family", "date night", "adults"). \
+Leave them as empty strings otherwise. Never invent a mood or audience \
+that was not expressed.
+7. When the user names a PERSON without stating a role (e.g. "movies of \
+Clint Eastwood"), fill `filters.person`. Use `filters.director` or \
+`filters.cast_member` ONLY when the role is explicit ("directed by", \
+"starring"). The system resolves the role against its own database.
+8. Respond with JSON matching the schema only — no prose.
 
 Intent boundary examples (follow these closely):
 - "best movies from the 1950s" -> OUT_OF_SCOPE (pre-1970)
@@ -182,6 +192,8 @@ class MayaRouter:
         2. Any pre-1970 reference forces OUT_OF_SCOPE and clears criteria.
         3. Spurious filters on non-filter intents are stripped.
         4. ``cast_member`` duplicating an excluded actor is dropped.
+        5. ``mood``/``audience`` are whitespace-stripped (extracted on every
+           intent — the funnel consumes them; #24).
         """
         if self._references_pre_1970(decision):
             return decision.model_copy(
@@ -199,11 +211,22 @@ class MayaRouter:
         filters = decision.filters
         if decision.intent not in FILTER_INTENTS:
             filters = None
-        elif filters is not None and filters.cast_member in filters.excluded_actors:
-            filters = filters.model_copy(update={"cast_member": None})
+        elif filters is not None:
+            updates = {}
+            if filters.cast_member in filters.excluded_actors:
+                updates["cast_member"] = None
+            if filters.person:
+                updates["person"] = filters.person.strip() or None
+            if updates:
+                filters = filters.model_copy(update=updates)
 
         return decision.model_copy(
-            update={"requires_rag": requires_rag, "filters": filters}
+            update={
+                "requires_rag": requires_rag,
+                "filters": filters,
+                "mood": (decision.mood or "").strip(),
+                "audience": (decision.audience or "").strip(),
+            }
         )
 
     @staticmethod

@@ -150,11 +150,12 @@ def test_merge_preferences_extends_to_probe_axes():
 
 
 def test_probe_answer_fragments_update_prefs_and_continue_funnel():
-    """Walkthrough repro: 'edge of the seat' after a mood probe → next probe."""
+    """Walkthrough repro: 'edge of the seat' after a mood probe → genre confirm."""
     outcome = handle_probe_answer("edge of the seat", UserSessionPreferences(), 0)
-    assert outcome.action == "probe"
+    assert outcome.action == "confirm_genres"  # mood maps to 4 candidates (#25)
     assert outcome.prefs_update.preferred_mood == "edge-of-your-seat"
-    assert "audience" in outcome.response or "Who" in outcome.response
+    assert set(outcome.offered_genre_options) == {"Thriller", "Sci-Fi", "Horror", "Drama"}
+    assert "Which of those" in outcome.response
 
 
 def test_two_answers_trigger_confirm_stage():

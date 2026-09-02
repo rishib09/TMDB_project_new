@@ -10,7 +10,7 @@ no fuzzy matching, so a hostile or garbled query can never invent fields.
 import re
 from typing import ClassVar
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from src.domain.memory import UserSessionPreferences, merge_preferences
 from src.domain.routing import QueryRoutingDecision
@@ -224,9 +224,10 @@ def _is_negated(text: str, keyword_start: int) -> bool:
 class FunnelOutcome(BaseModel):
     """What the funnel decides to do with a post-probe user message."""
 
-    action: str  # probe | confirm | retrieve | fallthrough
+    action: str  # probe | confirm | confirm_genres | retrieve | fallthrough
     response: str | None = None  # deterministic response for probe/confirm
-    prefs_update: UserSessionPreferences | None = None
+    prefs_update: UserSessionPreferences | None = None  # MERGED prefs (idempotent under the reducer)
+    offered_genre_options: list[str] = Field(default_factory=list)  # #25 confirm_genres
 
 
 def _is_confirmation(query: str) -> bool:
@@ -269,31 +270,153 @@ def build_funnel_query(prefs: UserSessionPreferences) -> str:
     return " ".join(parts).strip() or "good movies"
 
 
+def funnel_axes(prefs: UserSessionPreferences) -> list[str]:
+    """Axes the USER directly expressed, for the confirm threshold (#25).
+
+    A mood and its mapped genre are ONE signal, not two: "something funny"
+    yielding Comedy must not jump straight to confirmation. Genres count as
+    their own axis only when confirmed OUTSIDE the mood map (user picked
+    them from a candidate list for an unmapped/absent mood).
+    """
+    axes = [a for a in prefs.answered_axes() if a != "genres"]
+    mood_covered = (
+        prefs.preferred_mood
+        and prefs.preferred_mood.casefold() in MOOD_GENRE_MAP
+    )
+    if prefs.preferred_genres and prefs.genre_confirmation_done and not mood_covered:
+        axes.append("genres")
+    return axes
+
+
 def handle_probe_answer(
-    query: str, prefs: UserSessionPreferences, probe_count: int
+    query: str, prefs: UserSessionPreferences, probe_count: int,
+    prefs_update: UserSessionPreferences | None = None,
 ) -> FunnelOutcome:
     """Funnel decision for the message following a probe (#23).
 
     Order matters: confirmations beat extraction, extraction beats probing,
     and anything the funnel can't own falls through to normal routing.
+    ``prefs_update`` carries the extractor's findings (LLM per #24, with the
+    deterministic vocab as fallback) — merging and stage progression are
+    pure functions of that input.
     """
-    prefs_update = extract_probe_answers(query)
     if _is_confirmation(query):
         return FunnelOutcome(action="retrieve", prefs_update=prefs_update)
+    if prefs_update is None:
+        prefs_update = extract_probe_answers(query)
     if prefs_update.answered_axes():
         merged = merge_preferences(prefs, prefs_update)
-        if len(merged.answered_axes()) >= CONFIRM_THRESHOLD:
-            return FunnelOutcome(
-                action="confirm",
-                response=build_confirm_response(merged),
-                prefs_update=prefs_update,
-            )
-        question = next_probe_question(merged)
-        if question and probe_count < MAX_PROBE_TURNS:
-            return FunnelOutcome(
-                action="probe",
-                response=build_probe_response(merged, query),
-                prefs_update=prefs_update,
-            )
-        return FunnelOutcome(action="retrieve", prefs_update=prefs_update)
+        return next_funnel_step(merged, probe_count, query)
     return FunnelOutcome(action="fallthrough")
+
+
+def next_funnel_step(
+    prefs: UserSessionPreferences, probe_count: int, query: str = ""
+) -> FunnelOutcome:
+    """Pure funnel progression from the CURRENT merged preferences (#25).
+
+    Stage order: genre confirmation (mood just learned) → enough-axes
+    confirm → next probe → retrieval. Single-candidate mood maps auto-accept
+    their genre without wasting a turn ("funny" IS comedy, no need to ask).
+    """
+    merged = prefs
+    pending = UserSessionPreferences()
+    if prefs.preferred_mood and not prefs.genre_confirmation_done:
+        candidates = MOOD_GENRE_MAP.get(prefs.preferred_mood.casefold(), [])
+        have = {g.casefold() for g in prefs.preferred_genres}
+        remaining = [g for g in candidates if g.casefold() not in have]
+        if len(remaining) == 1:
+            pending = UserSessionPreferences(
+                preferred_genres=remaining, genre_confirmation_done=True
+            )
+            merged = merge_preferences(prefs, pending)
+        elif remaining:
+            return FunnelOutcome(
+                action="confirm_genres",
+                response=build_genre_confirm_response(prefs, remaining),
+                prefs_update=merged,
+                offered_genre_options=remaining,
+            )
+        else:
+            pending = UserSessionPreferences(genre_confirmation_done=True)
+            merged = merge_preferences(prefs, pending)
+
+    if len(funnel_axes(merged)) >= CONFIRM_THRESHOLD:
+        return FunnelOutcome(
+            action="confirm", response=build_confirm_response(merged),
+            prefs_update=merged,
+        )
+    question = next_probe_question(merged)
+    if question and probe_count < MAX_PROBE_TURNS:
+        return FunnelOutcome(
+            action="probe", response=build_probe_response(merged, query),
+            prefs_update=merged,
+        )
+    return FunnelOutcome(action="retrieve", prefs_update=merged)
+
+
+# --- mood → genre mapping (#25): close the open-vocabulary loop -------------
+
+#: Mood values (from the vocab or LLM extraction) → candidate genres for the
+#: confirmation turn. Curated DATA, not prompts — the LLM proposes the mood,
+#: this map proposes the genres, the USER confirms. Unmapped moods skip the
+#: stage (flavor-only) so the loop can never dead-end.
+MOOD_GENRE_MAP: ClassVar[dict[str, list[str]]] = {
+    "edge-of-your-seat": ["Thriller", "Sci-Fi", "Horror", "Drama"],
+    "thrilling": ["Thriller", "Action", "Crime"],
+    "funny": ["Comedy"],
+    "feel-good": ["Comedy", "Drama", "Family", "Romance"],
+    "scary": ["Horror", "Thriller"],
+    "romantic": ["Romance", "Drama"],
+    "tearjerker": ["Drama", "Romance"],
+    "epic": ["Action", "Adventure", "Fantasy", "History"],
+}
+
+#: Phrases accepting the ENTIRE offered candidate set (#25).
+_CONFIRM_ALL_RE = re.compile(
+    r"\b(all of them|all|everything|any of them|both|either)\b"
+)
+
+
+def build_genre_confirm_response(
+    prefs: UserSessionPreferences, candidates: list[str]
+) -> str:
+    """Deterministic genre-confirmation turn (#25).
+
+    Framing adapts to provenance: with an explicit genre already confirmed
+    the question narrows WITHIN it ("within sci-fi…"); otherwise it's a
+    plain candidate list.
+    """
+    mood = prefs.preferred_mood
+    have = {g.casefold() for g in prefs.preferred_genres}
+    options = ", ".join(candidates)
+    if have:
+        established = ", ".join(g for g in prefs.preferred_genres if g.casefold() in have)
+        return (
+            f'Good taste — "{mood}" runs right through {established}. Within '
+            f"{established}, do you also want the {options} side? Pick any "
+            '(or say "all of them").'
+        )
+    return (
+        f'"{mood}" can mean a few things on my shelves: {options}. '
+        'Which of those are you in the mood for? (or say "all of them")'
+    )
+
+
+def match_genre_pick(query: str, options: list[str]) -> list[str] | None:
+    """Match a user reply against the offered genre candidates (#25).
+
+    Deterministic against the KNOWN candidate list — no LLM needed for a
+    multiple-choice question. Returns the picks, or None when the reply
+    isn't a genre answer (caller falls through to normal handling).
+    Negated mentions ("no horror") never count as picks.
+    """
+    lowered = re.sub(r"\bsci fi\b", "sci-fi", query.lower())
+    if _CONFIRM_ALL_RE.search(lowered):
+        return list(options)
+    picks = []
+    for option in options:
+        match = re.search(rf"\b{re.escape(option.lower())}\b", lowered)
+        if match and not _is_negated(lowered, match.start()):
+            picks.append(option)
+    return picks or None

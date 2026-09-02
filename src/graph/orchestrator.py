@@ -27,8 +27,8 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
 from src.domain.config import ExperimentConfig
-from src.domain.memory import ConversationState
-from src.domain.routing import IntentType
+from src.domain.memory import ConversationState, UserSessionPreferences, merge_preferences
+from src.domain.routing import IntentType, QueryRoutingDecision
 from src.graph.state import MayaGraphState
 from src.maya.agent import MayaSynthesizer
 from src.maya.guardrails import (
@@ -44,6 +44,8 @@ from src.maya.probing import (
     build_probe_response,
     extract_probe_answers,
     handle_probe_answer,
+    match_genre_pick,
+    next_funnel_step,
     should_probe,
 )
 from src.maya.router import MayaRouter
@@ -130,9 +132,18 @@ def build_maya_graph(
             _to_conversation_state(state),
             feedback=feedback,
         )
-        # Guided narrowing (#22): vocabulary-extract probe answers from the
-        # user's reply to a previous probe turn — deterministic, zero LLM.
-        prefs_update = extract_probe_answers(state.current_query)
+        # Guided narrowing (#22/#24): mood/audience extracted by the router
+        # itself (open vocabulary), with the deterministic vocab as fallback.
+        signals = UserSessionPreferences(
+            preferred_mood=(decision.mood or "").strip(),
+            audience=(decision.audience or "").strip(),
+        )
+        if not signals.preferred_mood or not signals.audience:
+            vocab = extract_probe_answers(state.current_query)
+            signals = UserSessionPreferences(
+                preferred_mood=signals.preferred_mood or vocab.preferred_mood,
+                audience=signals.audience or vocab.audience,
+            )
         tracer.record_local(
             "route",
             {
@@ -141,13 +152,13 @@ def build_maya_graph(
                 "confidence": decision.confidence,
                 "requires_rag": decision.requires_rag,
                 "is_fallback": decision.is_fallback,
-                "probe_answers": prefs_update.answered_axes(),
+                "probe_answers": signals.answered_axes(),
             },
         )
         return {
             "routing_decision": decision,
             "route_attempts": attempts,
-            "session_preferences": prefs_update,
+            "session_preferences": signals,
         }
 
     def probe_node(state: MayaGraphState) -> dict:
@@ -173,25 +184,37 @@ def build_maya_graph(
     def funnel_node(state: MayaGraphState) -> dict:
         """Owns the reply to a probe/confirm (#23) — router only on fallthrough.
 
-        Deterministic state machine: confirmations retrieve immediately,
-        extracted answers either keep probing, trigger the confirm stage,
-        or (budget/spaces exhausted) go straight to retrieval with a funnel-
-        synthesized query. Anything else falls through to normal routing —
-        with OUT_OF_SCOPE pivots suppressed for exactly this turn.
+        Stage machine (#25): pending genre picks are matched deterministically
+        against the offered candidates; confirmations retrieve immediately;
+        otherwise the router acts as a PURE EXTRACTOR (#24 — its intent
+        classification is ignored, so misrouting cannot derail the funnel)
+        with the deterministic vocab as fallback. Anything the funnel can't
+        own falls through to normal routing — OUT_OF_SCOPE pivots suppressed
+        for exactly this turn.
         """
-        outcome = handle_probe_answer(
-            state.current_query, state.session_preferences, state.probe_count
-        )
-        if outcome.action == "retrieve":
-            from src.domain.memory import merge_preferences
+        query = state.current_query
+        prefs = state.session_preferences
 
-            merged = (
-                merge_preferences(state.session_preferences, outcome.prefs_update)
-                if outcome.prefs_update
-                else state.session_preferences
+        # 1. Genre pick pending? (#25) deterministic multiple-choice matching.
+        if state.offered_genre_options:
+            picks = match_genre_pick(query, state.offered_genre_options)
+            if picks is not None:
+                outcome = next_funnel_step(merge_preferences(prefs, UserSessionPreferences(
+                    preferred_genres=picks, genre_confirmation_done=True,
+                )), state.probe_count, query)
+                tracer.record_local("probe", {"stage": "genre_pick", "picked": picks})
+        else:
+            outcome = None
+
+        # 2. Explicit confirmation → retrieve now; otherwise extract + progress.
+        if outcome is None:
+            outcome = handle_probe_answer(
+                query, prefs, state.probe_count,
+                prefs_update=_extract_signals(state, router),
             )
-            from src.domain.routing import QueryRoutingDecision
 
+        if outcome.action == "retrieve":
+            merged = outcome.prefs_update or prefs
             synthetic = QueryRoutingDecision(
                 intent=IntentType.SEMANTIC_SEARCH,
                 confidence=1.0,
@@ -206,15 +229,16 @@ def build_maya_graph(
             return {
                 "funnel_active": False,
                 "routing_decision": synthetic,
-                "session_preferences": outcome.prefs_update,
+                "session_preferences": merged,
+                "offered_genre_options": [],
             }
         if outcome.action == "fallthrough":
             tracer.record_local("probe", {"stage": "fallthrough"})
             # NOTE: funnel stays ACTIVE — a user who ignores one probe may
             # still say "go ahead" next turn (#23 walkthrough defect); the
             # funnel is a cheap pre-router filter, so lingering is harmless.
-            return {"from_funnel": True}
-        # probe | confirm → deterministic response, end the turn
+            return {"from_funnel": True, "offered_genre_options": outcome.offered_genre_options}
+        # probe | confirm | confirm_genres → deterministic response, end turn
         tracer.record_local(
             "probe",
             {
@@ -228,6 +252,7 @@ def build_maya_graph(
             "probe_count": state.probe_count + (1 if outcome.action == "probe" else 0),
             "session_preferences": outcome.prefs_update,
             "funnel_active": True,
+            "offered_genre_options": outcome.offered_genre_options,
         }
 
     def retrieve_node(state: MayaGraphState) -> dict:
@@ -251,11 +276,33 @@ def build_maya_graph(
         query = decision.standalone_query
         if flavor:
             query = f"{query} ({flavor})"
+        # Confirmed funnel genres (#25) drive deterministic genre filters.
+        if prefs.preferred_genres and not (
+            decision.filters and decision.filters.genres
+        ):
+            from src.domain.routing import MetadataFilterCriteria
+
+            filters = decision.filters or MetadataFilterCriteria()
+            decision = decision.model_copy(update={"filters": filters.model_copy(update={
+                "genres": prefs.preferred_genres,
+                "genre_match": "all" if len(prefs.preferred_genres) > 1 else "any",
+            })})
         results = engine.retrieve(
             query=query,
             routing=decision,
             top_k=config.retrieval_top_k,
         )
+        # Intersection too narrow? (#25) retry ANY-match, relaxation on record.
+        if not results and decision.filters and decision.filters.genre_match == "all":
+            relaxed = decision.model_copy(update={"filters": decision.filters.model_copy(
+                update={"genre_match": "any"}
+            )})
+            results = engine.retrieve(
+                query=query,
+                routing=relaxed,
+                top_k=config.retrieval_top_k,
+            )
+            tracer.record_local("retrieve", {"genre_match_relaxed": True})
         movies = [r.movie for r in results]
         tracer.record_local("retrieve", {"count": len(movies), "ids": [m.id for m in movies]})
         return {"retrieved_movies": movies, "shown_movie_ids": [m.id for m in movies]}
@@ -335,10 +382,18 @@ def build_maya_graph(
             return "funnel"
         return "route"
 
-    def route_after_funnel(state: MayaGraphState) -> Literal["route", "retrieve"]:
-        """#23: probe/confirm responses end the turn; the rest routes on."""
+    def route_after_funnel(state: MayaGraphState) -> Literal["route", "retrieve", "__end__"]:
+        """#23/#25: probe & confirm responses END the turn — never re-route.
+
+        Walkthrough-defect fix: without the END branch the deterministic
+        probe/confirm/genre-confirmation response fell through to ``route``,
+        letting a second routing pass overwrite it (the 'edge of the seat'
+        GREETING overwrite). Fallthrough still routes on.
+        """
         if state.routing_decision is not None:  # funnel confirmed retrieval
             return "retrieve"
+        if state.final_response and state.funnel_active:  # probe/confirm ready
+            return END
         return "route"  # fallthrough — normal routing takes over
 
     def route_after_router(state: MayaGraphState) -> Literal["route", "retrieve", "synthesize", "pivot", "probe"]:
@@ -403,6 +458,24 @@ def _refusal_text(reason: str) -> str:
 #: able to balloon the deterministic reply.
 _EMPTY_QUERY_ECHO_CAP = 120
 _SMUGGLED_MARKUP_RE = re.compile(r"</?\s*\w+\s*/?>|```.*?```", re.DOTALL)
+
+
+def _extract_signals(state: "MayaGraphState", router) -> "UserSessionPreferences | None":
+    """Router-as-extractor (#24): intent IGNORED, only mood/audience consumed.
+
+    The funnel decides actions deterministically; the LLM only reads meaning.
+    Router failure → None (handle_probe_answer falls back to the vocab).
+    """
+    try:
+        decision = router.route(state.current_query, _to_conversation_state(state))
+    except Exception:  # noqa: BLE001 — extraction must never break the funnel
+        return None
+    if not (decision.mood or decision.audience):
+        return None
+    return UserSessionPreferences(
+        preferred_mood=decision.mood.strip(),
+        audience=decision.audience.strip(),
+    )
 
 
 def _empty_retrieval_text(query: str) -> str:
