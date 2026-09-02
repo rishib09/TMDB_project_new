@@ -2,6 +2,7 @@
 
 import json
 import sqlite3
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -101,6 +102,32 @@ class MovieDatabase:
             );
             """)
             conn.commit()
+
+    # --- weekly budget tracker (#8): aggregate API spend -----------------
+
+    def record_budget_entry(
+        self, date_str: str, cost_usd: float, tokens_used: int, model_name: str
+    ) -> None:
+        """Appends one LLM call's estimated cost to the budget_tracker table."""
+        with self._get_connection() as conn:
+            conn.execute(
+                "INSERT INTO budget_tracker (date_str, cost_usd, tokens_used, model_name) "
+                "VALUES (?, ?, ?, ?)",
+                (date_str, cost_usd, tokens_used, model_name),
+            )
+            conn.commit()
+
+    def weekly_spend_usd(self, reference: date | None = None) -> float:
+        """Sum of cost_usd for the ISO week (Mon–Sun) containing ``reference``."""
+        ref = reference or date.today()
+        week_start = ref - timedelta(days=ref.weekday())
+        with self._get_connection() as conn:
+            row = conn.execute(
+                "SELECT COALESCE(SUM(cost_usd), 0) FROM budget_tracker "
+                "WHERE date_str >= ?",
+                (week_start.isoformat(),),
+            ).fetchone()
+        return float(row[0])
 
     def upsert_movie(self, movie_data: dict[str, Any]) -> None:
         """Insert or replace a movie and synchronize the FTS5 index."""

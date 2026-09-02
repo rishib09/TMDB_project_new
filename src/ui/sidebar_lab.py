@@ -105,12 +105,28 @@ def knob_editor(config: ExperimentConfig, version: int) -> ExperimentConfig | No
 
 
 def render_budget_meter(session) -> None:
-    """Session token pressure vs the 15k cap (#8) — visible, no surprises."""
+    """Session tokens vs the 15k cap + weekly $ spend vs the $10 cap (#8)."""
     used = session.conversation.session_tokens
     ratio = min(used / SessionTokenLimiter.SESSION_CAP, 1.0)
     st.progress(ratio, text=f"Session tokens: {used:,} / {SessionTokenLimiter.SESSION_CAP:,}")
     if session.limiter.check_current().verdict.value == "suspicious":
         st.warning("Near the session token cap — wrap up this session soon.")
+
+    tracker = session.budget_tracker
+    try:
+        weekly_spend = tracker.weekly_spend()
+    except Exception:  # sink read failure must not break the sidebar
+        return
+    spend_ratio = min(weekly_spend / tracker.WEEKLY_CAP_USD, 1.0)
+    st.progress(
+        spend_ratio,
+        text=f"Weekly API spend: ${weekly_spend:.2f} / ${tracker.WEEKLY_CAP_USD:.2f}",
+    )
+    weekly_verdict = tracker.verdict_for(weekly_spend)
+    if weekly_verdict.value == "suspicious":
+        st.warning("Weekly API budget nearing its cap — Maya will pause when it's exhausted.")
+    elif weekly_verdict.value == "blocked":
+        st.error("Weekly API budget exhausted — spend resets on Monday.")
 
 
 def render_lab(session) -> None:

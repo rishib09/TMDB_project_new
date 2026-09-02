@@ -10,13 +10,17 @@ before routing. Design notes:
   the router prompt (see #10 / ADR 0005 role separation).
 """
 
+import logging
 import re
+from datetime import date
 from enum import Enum
-from typing import ClassVar
+from typing import ClassVar, Protocol
 
 from pydantic import BaseModel, Field
 
 from src.domain.memory import ConversationState
+
+logger = logging.getLogger(__name__)
 
 
 class GuardrailVerdict(str, Enum):
@@ -188,3 +192,92 @@ class SessionTokenLimiter:
                 ),
             )
         return GuardrailResult(verdict=GuardrailVerdict.CLEAN, sanitized_query="")
+
+
+# --- weekly API expenditure ceiling (#8, completion of the deferred half) ---
+
+
+class BudgetSink(Protocol):
+    """Duck-typed storage port — keeps this module import-free of storage."""
+
+    def record_budget_entry(
+        self, date_str: str, cost_usd: float, tokens_used: int, model_name: str
+    ) -> None: ...
+
+    def weekly_spend_usd(self) -> float: ...
+
+
+#: Blended $/1M-token estimates (input+output mixed), matched by substring
+#: against the model id. Estimates for overspend PROTECTION, not billing —
+#: the point is an order-of-magnitude ceiling, not accounting precision.
+#: Unknown models fall back to the priciest rate (fail-closed on cost).
+MODEL_PRICES_PER_MTOK: ClassVar[list[tuple[str, float]]] = [
+    ("llama-3.2-3b", 0.06),
+    ("llama-3.3-70b", 0.20),
+    ("flash-lite", 0.12),
+]
+DEFAULT_PRICE_PER_MTOK: ClassVar[float] = 1.00
+
+
+def estimate_cost(model: str, prompt_tokens: int, completion_tokens: int) -> float:
+    """Blended-cost estimate for one LLM call (pure, deterministic)."""
+    tokens = max(0, int(prompt_tokens)) + max(0, int(completion_tokens))
+    model_lower = (model or "").lower()
+    price = next(
+        (p for key, p in MODEL_PRICES_PER_MTOK if key in model_lower),
+        DEFAULT_PRICE_PER_MTOK,
+    )
+    return tokens / 1_000_000 * price
+
+
+class WeeklyBudgetTracker:
+    """Persistent weekly API-spend ceiling (issue #8: $10.00/week).
+
+    Complements the per-session token limiter: that one bounds a single
+    conversation, this bounds aggregate spend across all sessions and days.
+    Storage errors fail OPEN (logged, treated as no data) — a database
+    hiccup must never brick the chat; the ceiling is protection, not a wall.
+    """
+
+    WEEKLY_CAP_USD: ClassVar[float] = 10.00
+    #: Below the cap but close — allow turns, surface a visible warning.
+    WARN_RATIO: ClassVar[float] = 0.80
+
+    def __init__(self, sink: BudgetSink) -> None:
+        self._sink = sink
+
+    def record(
+        self, model: str, prompt_tokens: int, completion_tokens: int
+    ) -> GuardrailVerdict:
+        """Logs one call's estimated cost and returns the resulting weekly verdict."""
+        cost = estimate_cost(model, prompt_tokens, completion_tokens)
+        try:
+            self._sink.record_budget_entry(
+                date.today().isoformat(), cost, prompt_tokens + completion_tokens, model
+            )
+            spend = self._sink.weekly_spend_usd()
+        except Exception:  # noqa: BLE001 — fail-open, see class docstring
+            logger.warning("weekly budget sink failed; ceiling unenforced this turn", exc_info=True)
+            return GuardrailVerdict.CLEAN
+        return self.verdict_for(spend)
+
+    def current_verdict(self) -> GuardrailVerdict:
+        """Verdict for gating the NEXT turn (graph guard node) — fail-open."""
+        try:
+            spend = self.weekly_spend()
+        except Exception:  # noqa: BLE001 — sink read failure, see class docstring
+            logger.warning("weekly budget read failed; ceiling unenforced", exc_info=True)
+            return GuardrailVerdict.CLEAN
+        return self.verdict_for(spend)
+
+    def weekly_spend(self) -> float:
+        """Current ISO-week spend in USD (raises if the sink fails)."""
+        return self._sink.weekly_spend_usd()
+
+    def verdict_for(self, spend_usd: float) -> GuardrailVerdict:
+        """Pure threshold logic (CLEAN / SUSPICIOUS warn / BLOCKED stop)."""
+        if spend_usd >= self.WEEKLY_CAP_USD:
+            return GuardrailVerdict.BLOCKED
+        if spend_usd >= self.WEEKLY_CAP_USD * self.WARN_RATIO:
+            return GuardrailVerdict.SUSPICIOUS
+        return GuardrailVerdict.CLEAN

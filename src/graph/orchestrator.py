@@ -32,10 +32,12 @@ from src.domain.routing import IntentType
 from src.graph.state import MayaGraphState
 from src.maya.agent import MayaSynthesizer
 from src.maya.guardrails import (
+    GuardrailResult,
     GuardrailVerdict,
     InjectionFilter,
     OffTopicPivot,
     SessionTokenLimiter,
+    WeeklyBudgetTracker,
 )
 from src.maya.router import MayaRouter
 from src.observability.tracer import DualModeObservabilityManager
@@ -49,6 +51,7 @@ def build_maya_graph(
     synthesizer: MayaSynthesizer,
     tracer: DualModeObservabilityManager,
     limiter: SessionTokenLimiter | None = None,
+    budget_tracker: WeeklyBudgetTracker | None = None,
 ) -> CompiledStateGraph:
     """Compiles the Maya workflow with injected components (DI-friendly).
 
@@ -76,6 +79,22 @@ def build_maya_graph(
         if budget.verdict is GuardrailVerdict.BLOCKED:
             tracer.record_local("guard_input", {"verdict": "budget_blocked"})
             return {"guardrail_result": budget, "final_response": _refusal_text(budget.reason)}
+        # Weekly $ ceiling (#8): aggregate spend across sessions and days.
+        if budget_tracker is not None:
+            weekly = budget_tracker.current_verdict()
+            if weekly is GuardrailVerdict.BLOCKED:
+                tracer.record_local("guard_input", {"verdict": "weekly_budget_blocked"})
+                weekly_result = GuardrailResult(
+                    verdict=GuardrailVerdict.BLOCKED,
+                    sanitized_query="",
+                    reason=(
+                        f"Weekly budget exhausted (${budget_tracker.WEEKLY_CAP_USD:.2f})"
+                    ),
+                )
+                return {
+                    "guardrail_result": weekly_result,
+                    "final_response": _refusal_text(weekly_result.reason),
+                }
         tracer.record_local("guard_input", {"verdict": injection.verdict.value})
         # SUSPICIOUS verdict (stripped markup): proceed with the sanitized query.
         sanitized = injection.sanitized_query or query
@@ -164,9 +183,16 @@ def build_maya_graph(
             violations = [v.mentioned_title for v in cwa_check(response_text, movies)]
         tokens_used = usage.prompt_tokens + usage.completion_tokens
         budget_status = limiter.record(usage.model, usage.prompt_tokens, usage.completion_tokens)
+        # Weekly $ accounting (#8): one row per LLM call, cost-estimated.
+        weekly_status = None
+        if budget_tracker is not None:
+            weekly_status = budget_tracker.record(
+                usage.model, usage.prompt_tokens, usage.completion_tokens
+            )
         tracer.record_local(
             "synthesize",
             {"movies": len(movies), "tokens": tokens_used, "budget": budget_status.value,
+             "weekly_budget": weekly_status.value if weekly_status else "off",
              "cwa_violations": violations},
         )
         return {

@@ -18,7 +18,7 @@ from src.feedback.store import FeedbackStore
 from src.graph.orchestrator import build_maya_graph
 from src.indexing.vector_store import MovieVectorStore
 from src.maya.agent import MayaSynthesizer
-from src.maya.guardrails import SessionTokenLimiter
+from src.maya.guardrails import SessionTokenLimiter, WeeklyBudgetTracker
 from src.maya.router import MayaRouter
 from src.observability.tracer import DualModeObservabilityManager
 from src.retrieval.hybrid_engine import HybridRetrievalEngine
@@ -55,6 +55,8 @@ class MayaSession:
         self.conversation = ConversationState()
         self.tracer = DualModeObservabilityManager(session_id=f"ui-{datetime.now(UTC):%H%M%S}")
         self.limiter = SessionTokenLimiter()
+        self.db = MovieDatabase("data/tmdb_movies.db")  # shared: engine + budget sink
+        self.budget_tracker = WeeklyBudgetTracker(self.db)  # weekly $ ceiling (#8)
         self.view = "Chat"  # sidebar navigation: Chat | Evals | Traces
         self.feedback_log: dict[int, int] = {}  # assistant-turn index → ±1 (thumbs)
         self.feedback_store = FeedbackStore()  # SQLite persistence (#9)
@@ -70,7 +72,7 @@ class MayaSession:
 
     def _build_graph(self):
         engine = HybridRetrievalEngine(
-            db=MovieDatabase("data/tmdb_movies.db"),
+            db=self.db,
             vector_store=MovieVectorStore("data/chroma_db"),
             rag_version=self.rag_version,
             hybrid_alpha=self.config.hybrid_alpha,
@@ -84,6 +86,7 @@ class MayaSession:
             MayaSynthesizer(self.config),
             self.tracer,
             limiter=self.limiter,
+            budget_tracker=self.budget_tracker,
         )
 
     def _graph_signature(self) -> str:
