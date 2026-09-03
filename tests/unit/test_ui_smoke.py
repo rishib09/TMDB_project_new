@@ -67,3 +67,21 @@ def test_slice_new_traces_only_current_turn():
     assert slice_new_traces(2, ring) == []  # nothing new this turn
     new_ring = ring + [{"node": "route", "payload": {}}, {"node": "route", "payload": {}}]
     assert len(slice_new_traces(2, new_ring)) == 2
+
+
+def test_auto_scroll_script_targets_streamlit_containers():
+    """Issue #27-R: the scroll snippet must target Streamlit's main scroller
+    with fallbacks — a selector miss would silently leave the viewport stale."""
+    from src.ui.chat_tab import _AUTO_SCROLL_JS
+
+    assert "section.stMain" in _AUTO_SCROLL_JS
+    assert "section.main" in _AUTO_SCROLL_JS          # legacy fallback
+    assert "stAppViewContainer" in _AUTO_SCROLL_JS    # container fallback
+    assert "scrollHeight" in _AUTO_SCROLL_JS          # bottom-of-conversation
+
+
+def test_scroll_to_newest_renders_without_runtime():
+    """The zero-height component call must not raise outside a Streamlit run."""
+    from src.ui.chat_tab import scroll_to_newest
+
+    scroll_to_newest()  # smoke: import-time wiring correct

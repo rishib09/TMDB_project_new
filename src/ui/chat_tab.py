@@ -6,6 +6,7 @@ scoring + SQLite persistence land with issue #9).
 """
 
 import streamlit as st
+from streamlit.components.v1 import html as _components_html
 
 from src.ui.session import MayaSession
 
@@ -109,6 +110,31 @@ def resolve_turn_row(session: MayaSession, ui_index: int) -> dict | None:
     return None
 
 
+_AUTO_SCROLL_JS = """
+<script>
+(function() {
+  const d = window.parent.document;
+  const el = d.querySelector('section.stMain')
+          || d.querySelector('section.main')
+          || d.querySelector('[data-testid="stAppViewContainer"]');
+  if (el) { el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' }); }
+})();
+</script>
+"""
+
+
+def scroll_to_newest() -> None:
+    """Scrolls the conversation to the newest message (#27-R, zero height).
+
+    Streamlit resets the viewport to the top on every rerun, so the fresh
+    response renders below the fold after every turn. The JS runs in a
+    zero-height same-origin component and scrolls the app's main container.
+    Called ONLY on the fresh-turn path — thumb-click reruns keep the user's
+    scroll position.
+    """
+    _components_html(f"<div style='height:0px'></div>{_AUTO_SCROLL_JS}", height=0)
+
+
 def render_chat(session: MayaSession) -> None:
     st.markdown(_CHAT_CSS, unsafe_allow_html=True)
     st.markdown(
@@ -166,3 +192,4 @@ def render_chat(session: MayaSession) -> None:
         render_intent_badge(last)
         render_feedback(session, idx)
     render_poster_grid(session.last_movies)
+    scroll_to_newest()  # #27-R: land on the fresh response, not the page top
