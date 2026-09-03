@@ -93,6 +93,22 @@ def render_poster_grid(movies, cols: int = 4) -> None:
                 st.caption(f"{movie.vote_average:.1f} / 10 — " + ", ".join(movie.genres[:3]))
 
 
+def resolve_turn_row(session: MayaSession, ui_index: int) -> dict | None:
+    """Maps the UI's assistant-message counter to its turn row (#26-K).
+
+    Identity join through the stamped ``turn_ref`` — the message window
+    slides while turn_log grows, so raw index arithmetic silently points at
+    the wrong row past 5 assistant turns (the badge/feedback misalignment
+    from the walkthrough). Falls back to the raw index for legacy rows.
+    """
+    assistants = [m for m in session.conversation.messages if m.role == "assistant"]
+    if 0 <= ui_index < len(assistants):
+        ref = assistants[ui_index].turn_ref
+        if ref is not None and 0 <= ref < len(session.turn_log):
+            return session.turn_log[ref]
+    return None
+
+
 def render_chat(session: MayaSession) -> None:
     st.markdown(_CHAT_CSS, unsafe_allow_html=True)
     st.markdown(
@@ -115,8 +131,9 @@ def render_chat(session: MayaSession) -> None:
             if msg.role != "assistant":
                 continue
             turn_index += 1
-            if turn_index < len(session.turn_log):
-                render_intent_badge(session.turn_log[turn_index])
+            row = resolve_turn_row(session, turn_index)  # #26-K identity join
+            if row is not None:
+                render_intent_badge(row)
             render_feedback(session, turn_index)
 
     render_poster_grid(session.last_movies)
@@ -144,7 +161,7 @@ def render_chat(session: MayaSession) -> None:
         return
     idx = len(session.turn_log) - 1
     with assistant:
-        last = session.turn_log[idx]
+        last = resolve_turn_row(session, idx) or session.turn_log[idx]
         st.markdown(last["response"])
         render_intent_badge(last)
         render_feedback(session, idx)

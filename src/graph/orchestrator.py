@@ -211,6 +211,7 @@ def build_maya_graph(
         """
         query = state.current_query
         prefs = state.session_preferences
+        outcome = None  # #25 latent crash: options pending + reply not a pick
 
         # 1. Genre pick pending? (#25) deterministic multiple-choice matching.
         if state.offered_genre_options:
@@ -220,8 +221,6 @@ def build_maya_graph(
                     preferred_genres=picks, genre_confirmation_done=True,
                 )), state.probe_count, query)
                 tracer.record_local("probe", {"stage": "genre_pick", "picked": picks})
-        else:
-            outcome = None
 
         # 2. Explicit confirmation → retrieve now; otherwise extract + progress.
         if outcome is None:
@@ -355,15 +354,29 @@ def build_maya_graph(
             }
         history: list = list(state.messages)[:-1]
         response_text, usage = synthesizer.synthesize(query, decision, movies, history)
-        # CWA verification: detect (never silently fix) foreign-title leaks.
+        # CWA verification + enforcement (#26-G): on no-retrieval turns a
+        # flagged response is DISCARDED for the deterministic steer; on
+        # retrieval turns foreign-title leaks are still reported (trace) —
+        # the user keeps grounded titles, the violation is on record.
         # Runs on EMPTY context too (#21): with no allowed set, any bolded
-        # title mention is a violation — previously the highest-risk case
-        # (empty retrieval) was exactly when verification was skipped.
-        # The verifier is a MayaSynthesizer method; fakes without it are clean.
+        # title mention is a violation. The verifier is a MayaSynthesizer
+        # method; fakes without it are clean.
         violations = []
         cwa_check = getattr(synthesizer, "cwa_violations", None)
         if cwa_check:
             violations = [v.mentioned_title for v in cwa_check(response_text, movies)]
+        # #26-G: CWA ENFORCEMENT, not just detection. On a no-retrieval turn
+        # any title mention is a hallucination (nothing is grounded); the
+        # flagged response is discarded and replaced by the deterministic
+        # steer. Detection without enforcement shipped hallucinated cards
+        # four turns in a row in the walkthrough.
+        if not movies and violations and not decision.requires_rag:
+            tracer.record_local(
+                "synthesize",
+                {"cwa_gate": True, "discarded_titles": violations[:5]},
+            )
+            response_text = _no_retrieval_steer(state.current_query)
+            violations = []  # the shipped response is title-free
         tokens_used = usage.prompt_tokens + usage.completion_tokens
         budget_status = limiter.record(usage.model, usage.prompt_tokens, usage.completion_tokens)
         # Weekly $ accounting (#8): one row per LLM call, cost-estimated.
@@ -527,6 +540,26 @@ def _empty_retrieval_text(query: str) -> str:
         "you lean animation or live-action? You can also loosen a filter — "
         "for example, I know films up to PG-13, and telling me a genre or mood "
         "works wonders."
+    )
+
+
+def _no_retrieval_steer(query: str) -> str:
+    """Deterministic conversational steer (#26-G): replaces a no-retrieval
+    synthesis whose response the CWA verifier flagged for title mentions.
+
+    The LLM response is DISCARDED, never shown — the user still gets a warm,
+    grounded, inject-safe reply that steers toward a film request. Same echo
+    sanitization contract as the #21 zero-retrieval response.
+    """
+    echo = _SMUGGLED_MARKUP_RE.sub(" ", query)
+    echo = re.sub(r"\s{2,}", " ", echo).strip()
+    if len(echo) > _EMPTY_QUERY_ECHO_CAP:
+        echo = echo[:_EMPTY_QUERY_ECHO_CAP].rstrip() + "…"
+    return (
+        "Let's talk movies! Tell me what you're in the mood for — a genre, "
+        "a mood, an era, a director — and I'll pull films from the shelf. "
+        "For example: \"edge-of-your-seat sci-fi from the 2010s\"."
+        + (f' (I heard: "{echo}")' if echo else "")
     )
 
 

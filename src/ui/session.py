@@ -176,8 +176,22 @@ class MayaSession:
         self.conversation.add_turn(
             query, row["response"], movies, out.get("routing_decision"),
             tokens_used=row["tokens"],
+            turn_ref=len(self.turn_log),  # #26-K: identity join, stamped pre-append
         )
         self.turn_log.append(row)
+
+    @staticmethod
+    def turn_ref_for(session_or_messages) -> int | None:
+        """Latest assistant message's turn_log index (#26-K), None if absent.
+
+        Accepts a MayaSession or any object exposing ``conversation.messages``
+        (kept forgiving for tests).
+        """
+        conversation = getattr(session_or_messages, "conversation", session_or_messages)
+        for message in reversed(conversation.messages):
+            if message.role == "assistant":
+                return message.turn_ref
+        return None
 
     @staticmethod
     def _build_turn_row(
@@ -265,17 +279,37 @@ class MayaSession:
         UPSERT semantics: changing the thumb on the same turn updates the
         row and re-pushes the score (deterministic score_id) — never
         duplicates. Returns True when the cloud push succeeded.
+
+        ``turn_index`` is the UI's assistant-message counter (#26-K). It is
+        resolved through the message's ``turn_ref`` stamp — the message
+        window slides while turn_log grows, so the index alone points at the
+        wrong row once trimming begins (feedback was mis-attributed
+        accordingly). Falls back to the raw index only for legacy rows.
         """
         if value not in (1, -1):
             raise ValueError(f"rating must be +1 or -1, got {value!r}")
         if not (0 <= turn_index < len(self.turn_log)):
             raise IndexError(f"turn_index {turn_index} out of range")
-        row = self.turn_log[turn_index]
+        row = self._turn_row_for_ui_index(turn_index) or self.turn_log[turn_index]
         self.feedback_store.record(
             row["trace_id"], value, row["rag_version"], intent=row["intent"]
         )
         self.feedback_log[turn_index] = value
         return push_feedback_score(row["trace_id"], value)
+
+    def _turn_row_for_ui_index(self, ui_index: int) -> dict | None:
+        """Resolves the UI's assistant-message counter to its turn row (#26-K).
+
+        The Nth assistant message carries ``turn_ref`` — the turn_log index
+        it was produced under. Returns None when no stamped message exists
+        (pre-#26-K sessions) so callers can fall back to index arithmetic.
+        """
+        assistants = [m for m in self.conversation.messages if m.role == "assistant"]
+        if 0 <= ui_index < len(assistants):
+            ref = assistants[ui_index].turn_ref
+            if ref is not None and 0 <= (ref := ref) < len(self.turn_log):
+                return self.turn_log[ref]
+        return None
 
     @staticmethod
     def is_admin_command(query: str) -> bool:

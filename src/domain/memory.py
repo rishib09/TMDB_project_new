@@ -21,6 +21,11 @@ class ChatMessage(BaseModel):
     intent: str | None = None
     retrieved_movie_ids: list[int] = Field(default_factory=list)
     timestamp: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
+    #: #26-K: index into MayaSession.turn_log captured at append time — the
+    #: identity join for badges and feedback. The message window slides (last
+    #: 10 messages); turn_log never trims; index arithmetic drifts by the
+    #: trim offset. This ref is the only correct link.
+    turn_ref: int | None = None
 
 
 class FocusedMovieEntity(BaseModel):
@@ -85,22 +90,34 @@ def merge_preferences(
         return current
     if incoming.reset_requested:  # #26-E: clean slate beats any merge
         return UserSessionPreferences()
+    # #26-M: a mood change retires mood-derived genres — they came from the
+    # OLD mood's mapping/confirmation ("funny" -> Comedy), and keeping them
+    # produced "'scary' runs right through Comedy". Router-extracted explicit
+    # genres live in decision.filters and are untouched by this merge.
+    mood_changed = (
+        incoming.preferred_mood
+        and current.preferred_mood
+        and incoming.preferred_mood != current.preferred_mood
+    )
+    # On mood change the OLD genres are dropped: merged genres come only
+    # from the incoming update (the new mood's picks), never accumulated.
+    current_genres = [] if mood_changed else current.preferred_genres
     return UserSessionPreferences(
         excluded_genres=list(dict.fromkeys(current.excluded_genres + incoming.excluded_genres)),
         excluded_actors=list(dict.fromkeys(current.excluded_actors + incoming.excluded_actors)),
-        preferred_genres=list(dict.fromkeys(current.preferred_genres + incoming.preferred_genres)),
+        preferred_genres=list(dict.fromkeys(current_genres + incoming.preferred_genres)),
         preferred_mood=incoming.preferred_mood or current.preferred_mood,
         audience=incoming.audience or current.audience,
         preferred_directors=list(
             dict.fromkeys(current.preferred_directors + incoming.preferred_directors)
         ),
         noted_donts=list(dict.fromkeys(current.noted_donts + incoming.noted_donts)),
-        # Mood change reopens genre confirmation (#25): the new mood may map
-        # to different candidate genres. Same mood → confirmation stays settled.
+        # Mood change reopens genre confirmation (#25/#26-M): the new mood may
+        # map to different candidate genres. Same mood → confirmation stays.
         genre_confirmation_done=(
-            incoming.genre_confirmation_done
-            if incoming.preferred_mood and incoming.preferred_mood != current.preferred_mood
-            else incoming.genre_confirmation_done or current.genre_confirmation_done
+            incoming.genre_confirmation_done or current.genre_confirmation_done
+            if not mood_changed
+            else False
         ),
     )
 
@@ -125,8 +142,14 @@ class ConversationState(BaseModel):
         retrieved_movies: list[MovieRecord],
         decision: QueryRoutingDecision | None = None,
         tokens_used: int = 0,
+        turn_ref: int | None = None,
     ) -> None:
-        """Updates conversational state with new turn, entity focus, and shown IDs."""
+        """Updates conversational state with new turn, entity focus, and shown IDs.
+
+        ``turn_ref`` (#26-K): the turn_log index this exchange corresponds to
+        — stamped on the assistant message so badges/feedback survive the
+        sliding message window.
+        """
         user_intent_str = decision.intent.value if decision else None
         retrieved_ids = [m.id for m in retrieved_movies]
 
@@ -138,7 +161,8 @@ class ConversationState(BaseModel):
         self.messages.append(ChatMessage(
             role="assistant",
             content=assistant_response,
-            retrieved_movie_ids=retrieved_ids
+            retrieved_movie_ids=retrieved_ids,
+            turn_ref=turn_ref,
         ))
 
         # Use functional reducers for state updates

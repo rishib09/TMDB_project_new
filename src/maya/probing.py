@@ -36,17 +36,37 @@ RETRIEVE_CONFIRMATIONS: ClassVar[tuple[str, ...]] = (
     "good enough",
 )
 
-#: Phrases that wipe accumulated preferences for a clean start (#26-E).
+#: Phrases that wipe accumulated preferences for a clean start (#26-E/L).
 #: Deterministic and matched by substring on the lowered query — the
 #: carry-over announcement explicitly offers this escape hatch, so the
-#: vocabulary MUST cover its own suggestion.
+#: vocabulary MUST cover its own suggestion. #26-L walkthrough: "remove all
+#: the filters and start with a fresh search" and "lets start with
+#: something different" both missed the narrower vocabulary.
 FRESH_START_PHRASES: ClassVar[tuple[str, ...]] = (
     "something completely different",
+    "something different",
     "start fresh",
     "start over",
     "fresh start",
+    "fresh search",
+    "start with a fresh",
     "watch something else",
     "clear my preferences",
+    "clear the filters",
+    "clear all filters",
+    "remove all the filters",
+    "remove all filters",
+    "remove the filters",
+    "reset filters",
+    "reset my preferences",
+    "no filters",
+)
+
+#: Bare affirmations (#26-O): after a confirm/genre stage, a bare "yes" must
+#: RETRIEVE — it fell through to the router and became an ungrounded answer.
+AFFIRMATIONS: ClassVar[tuple[str, ...]] = (
+    "yes", "yeah", "yep", "yup", "sure", "ok", "okay", "please do",
+    "sounds good", "do it", "go on",
 )
 
 #: Echo sanitization — identical contract to the #21 empty-retrieval response.
@@ -206,6 +226,24 @@ def build_probe_response(prefs: UserSessionPreferences, query: str = "") -> str:
     return f"{opener}But before I start pulling films, let me narrow it down. {trail}{question.question}"
 
 
+def canonical_mood(mood: str) -> str:
+    """Normalizes an LLM-extracted mood to the vocabulary's canonical form.
+
+    Model proposes, code disposes: "edge of the seat", "Edge of Your Seat"
+    and "edge-of-your-seat" all map to "edge-of-your-seat" — the MOOD_GENRE_MAP
+    and funnel state machine key on canonical values. Unknown moods pass
+    through (open vocabulary, flavor-only per #25).
+    """
+    cleaned = strip_markup((mood or "")).strip().lower()
+    if not cleaned:
+        return ""
+    if cleaned in _MOOD_VOCAB:  # already a keyword
+        return _MOOD_VOCAB[cleaned]
+    if cleaned in set(_MOOD_VOCAB.values()):  # already canonical
+        return cleaned
+    return mood.strip()  # unknown — keep the LLM's wording as flavor
+
+
 def extract_probe_answers(query: str) -> UserSessionPreferences:
     """Exact-vocabulary keyword extraction of mood/audience from free text.
 
@@ -257,6 +295,18 @@ class FunnelOutcome(BaseModel):
     offered_genre_options: list[str] = Field(default_factory=list)  # #25 confirm_genres
 
 
+def _is_confirmation(query: str) -> bool:
+    lowered = query.lower().strip()
+    if any(phrase in lowered for phrase in RETRIEVE_CONFIRMATIONS):
+        return True
+    # #26-O: bare affirmations count ONLY as whole utterances — "yes" after
+    # "shall I pull the films now?" retrieves; "yes tell me more about the
+    # joker" (an affirmation + a request) must fall through to extraction.
+    return lowered in AFFIRMATIONS or lowered in (
+        f"{a}, please" for a in AFFIRMATIONS
+    )
+
+
 def is_fresh_start(query: str) -> bool:
     """True when the user asks to drop accumulated preferences (#26-E).
 
@@ -264,7 +314,13 @@ def is_fresh_start(query: str) -> bool:
     checked in the guard node, the single choke point every turn passes.
     """
     lowered = query.lower()
-    return any(phrase in lowered for phrase in FRESH_START_PHRASES)
+    if any(phrase in lowered for phrase in FRESH_START_PHRASES):
+        return True
+    # #26-L: "remove all the filters"-style verb+object patterns the fixed
+    # list can't cover ("clear those filters", "reset my filters", ...).
+    return bool(re.search(
+        r"\b(remove|clear|reset|drop|wipe)\b[^.!?]{0,24}\bfilters?\b", lowered
+    ))
 
 
 def build_filter_carryover_notice(prefs: UserSessionPreferences) -> str:
@@ -295,11 +351,6 @@ def preference_chips(prefs: UserSessionPreferences) -> list[str]:
         chips.append("genres: " + ", ".join(prefs.preferred_genres))
     chips.extend(f"dir. {d}" for d in prefs.preferred_directors)
     return chips
-
-
-def _is_confirmation(query: str) -> bool:
-    lowered = query.lower()
-    return any(phrase in lowered for phrase in RETRIEVE_CONFIRMATIONS)
 
 
 def build_confirm_response(prefs: UserSessionPreferences) -> str:

@@ -377,7 +377,10 @@ def test_zero_retrieval_trace_marks_deterministic_path():
 
 
 def test_cwa_verification_runs_on_empty_context():
-    """#21: bolded-title mentions with NO allowed set are flagged violations."""
+    """#21 + #26-G: bolded-title mentions with NO allowed set are violations
+    — and on a no-retrieval turn the flagged response is REPLACED by the
+    deterministic steer (the walkthrough shipped hallucinated cards four
+    turns in a row under the old 'logged, not censored' contract)."""
     synth = RecordingCwaSynthesizer(
         response="You might enjoy **Back to the Future (1985)**!"
     )
@@ -389,9 +392,13 @@ def test_cwa_verification_runs_on_empty_context():
         FakeEngine(movies=[]), synth, tracer,
     )
     result = _invoke(graph, "hello there")
-    assert "**Back to the Future (1985)**" in result["final_response"]  # logged, not censored
+    assert "Back to the Future" not in result["final_response"]  # enforced now
+    assert "movies" in result["final_response"].lower()          # steer invites a request
     spans = [t for t in tracer.traces() if t["node"] == "synthesize"]
-    assert spans and spans[0]["payload"]["cwa_violations"] == ["Back to the Future"]
+    gate_spans = [t for t in spans if t["payload"].get("cwa_gate")]
+    assert gate_spans and gate_spans[0]["payload"]["discarded_titles"] == [
+        "Back to the Future"
+    ]  # the violation stays on record — detection AND enforcement
 
 
 def test_empty_retrieval_text_inject_safe():

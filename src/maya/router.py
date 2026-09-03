@@ -24,7 +24,7 @@ from src.domain.routing import (
     MetadataFilterCriteria,
     QueryRoutingDecision,
 )
-from src.maya.probing import extract_probe_answers, strip_markup
+from src.maya.probing import canonical_mood, extract_probe_answers, strip_markup
 
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
@@ -248,9 +248,13 @@ class MayaRouter:
             mood = mood or vocab.preferred_mood
             audience = audience or vocab.audience
         # Markup sanitizer: these fields reach retrieval queries and
-        # deterministic responses downstream (#26-E notice).
+        # deterministic responses downstream (#26-E notice). Moods are also
+        # canonicalized to the vocabulary's values — the funnel state machine
+        # and MOOD_GENRE_MAP key on canonical forms ("edge of the seat" must
+        # become "edge-of-your-seat", or the genre confirmation never opens).
         mood = strip_markup(mood).strip()
         audience = strip_markup(audience).strip()
+        mood = canonical_mood(mood)
 
         filters = decision.filters
         if decision.intent not in FILTER_INTENTS:
