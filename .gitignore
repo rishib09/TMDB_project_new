@@ -38,3 +38,7 @@ Thumbs.db
 # Local scratch + agent runtime
 .scratch/
 .pi/
+
+# SQLite runtime sidecars (WAL mode)
+data/tmdb_movies.db-shm
+data/tmdb_movies.db-wal
