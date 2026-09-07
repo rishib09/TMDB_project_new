@@ -223,6 +223,32 @@ def test_low_confidence_triggers_fallback(config, state, monkeypatch):
 
     assert decision.intent == IntentType.GREETING
     assert "low router confidence" in decision.reasoning
+    # #12 Gate 1: raw confidence survives structurally, not just in prose
+    assert decision.fallback_reason == "low_confidence"
+    assert decision.fallback_raw_confidence == pytest.approx(0.3)
+
+
+@pytest.mark.unit
+def test_api_failure_fallback_records_reason(config, state, monkeypatch):
+    router = MayaRouter(config, api_key="test-key")
+    chain = MagicMock()
+    chain.invoke.side_effect = ConnectionError("openrouter unreachable")
+    monkeypatch.setattr(router, "_chain", chain)
+
+    decision = router.route("movies about heists", state)
+
+    assert decision.fallback_reason == "api_error"
+    assert decision.fallback_raw_confidence is None
+
+
+@pytest.mark.unit
+def test_threshold_defaults_from_config(config):
+    """ADR 0004: the threshold is a config knob; the ctor arg is an override."""
+    tuned = config.model_copy(update={"confidence_threshold": 0.7})
+    assert MayaRouter(tuned, api_key="test-key").confidence_threshold == 0.7
+    assert MayaRouter(
+        tuned, api_key="test-key", confidence_threshold=0.2
+    ).confidence_threshold == 0.2
 
 
 @pytest.mark.unit
