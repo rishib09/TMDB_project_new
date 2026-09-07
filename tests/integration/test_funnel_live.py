@@ -39,13 +39,18 @@ def test_exact_walkthrough_conversation(graph):
         "funnel_active": False,
     }
 
-    # Turn 1: broad scifi search → probe (mood)
+    # Turn 1: broad scifi search → probe. #29: with the genre extracted, the
+    # probe must NOT re-ask the mood/genre family — audience comes next.
     out = graph.invoke({"messages": [HumanMessage(content="show me scifi movies")], **state})
     state["probe_count"] = out["probe_count"]
     state["funnel_active"] = out["funnel_active"]
+    state["session_preferences"] = out["session_preferences"]
     assert out["probe_count"] == 1
     assert out["funnel_active"] is True
-    assert "mood" in out["final_response"].lower()
+    assert "narrow it down" in out["final_response"].lower()
+    if state["session_preferences"].preferred_genres:  # genre noted → no mood re-ask
+        assert "mood" not in out["final_response"].lower()
+        assert "watching" in out["final_response"].lower()
 
     # Turn 2: the ANSWER "edge of the seat" → funnel probes audience (never GREETING)
     out = graph.invoke({"messages": [HumanMessage(content="edge of the seat")], **state})

@@ -211,9 +211,10 @@ def _dec(intent=IntentType.GREETING, rag=False):
         intent=intent, confidence=0.9, standalone_query="hi",
         requires_rag=rag, reasoning="t",
     )
-    if rag:  # filters present → should_probe never fires → straight retrieval
+    if rag:  # specific filter → should_probe never fires → straight retrieval
+        # #29: a genre alone probes now; a year is still a specific ask.
         decision = decision.model_copy(update={
-            "filters": MetadataFilterCriteria(genres=["Drama"]),
+            "filters": MetadataFilterCriteria(genres=["Drama"], exact_year=1994),
         })
     return decision
 
@@ -260,7 +261,10 @@ def test_cwa_gate_never_fires_on_retrieval_turns():
         DualModeObservabilityManager(session_id="g3"),
         limiter=SessionTokenLimiter(),
     )
-    out = graph.invoke({"messages": [HumanMessage(content="best movie ever")]})
+    # >5 words: carries its own signal, bypasses the #29 genre-probe gate
+    out = graph.invoke({
+        "messages": [HumanMessage(content="the best prison drama movie ever made")]
+    })
     assert "Shawshank" in out["final_response"]  # grounded + retrieved → shown
 
 

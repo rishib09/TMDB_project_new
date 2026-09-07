@@ -42,6 +42,21 @@ def test_requires_rag_derived_from_intent_not_llm(router):
 
 
 @pytest.mark.unit
+def test_requires_rag_mismatch_flag_records_contradiction(router):
+    """#13 Option B: the override erases the LLM's claim — the flag keeps it."""
+    contradicting = QueryRoutingDecision(
+        intent=IntentType.SEMANTIC_SEARCH, confidence=0.8,
+        standalone_query="mystery thriller", requires_rag=False,
+    )
+    agreeing = QueryRoutingDecision(
+        intent=IntentType.SEMANTIC_SEARCH, confidence=0.8,
+        standalone_query="mystery thriller", requires_rag=True,
+    )
+    assert router._normalize_decision(contradicting).requires_rag_mismatch is True
+    assert router._normalize_decision(agreeing).requires_rag_mismatch is False
+
+
+@pytest.mark.unit
 def test_requires_rag_false_for_non_retrieval_intents(router):
     for intent in (IntentType.GREETING, IntentType.CAPABILITIES, IntentType.OUT_OF_SCOPE):
         decision = QueryRoutingDecision(

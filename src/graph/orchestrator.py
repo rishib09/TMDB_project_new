@@ -201,7 +201,17 @@ def build_maya_graph(
         answers are vocabulary-matched from it in the funnel node (#23),
         so no extra LLM call is needed to understand the reply.
         """
-        response_text = build_probe_response(state.session_preferences, state.current_query)
+        prefs = state.session_preferences
+        decision = state.routing_decision
+        # #29: explicit genre filters ride into prefs so the funnel's eventual
+        # retrieval keeps them ("sci-fi movies" probes for audience WITHOUT
+        # forgetting sci-fi). Explicit genres need no mood confirmation.
+        if decision is not None and decision.filters and decision.filters.genres:
+            prefs = merge_preferences(prefs, UserSessionPreferences(
+                preferred_genres=list(decision.filters.genres),
+                genre_confirmation_done=True,
+            ))
+        response_text = build_probe_response(prefs, state.current_query)
         tracer.record_local(
             "probe",
             {"probe_count": state.probe_count + 1, "query": state.current_query},
@@ -211,6 +221,7 @@ def build_maya_graph(
             "messages": [AIMessage(content=response_text)],
             "probe_count": state.probe_count + 1,  # session-persisted running total
             "funnel_active": True,  # next message belongs to the funnel (#23)
+            "session_preferences": prefs,  # #29 genre carry
             "turn_stage": "probe",  # #26-A: UI row stays complete without the router
             "rolling_summary": _update_summary(state, state.routing_decision),
         }
@@ -487,6 +498,10 @@ def build_maya_graph(
             return "pivot"
         if not decision.requires_rag:
             return "synthesize"
+        # #26-E/#29: a fresh-start turn just abandoned the funnel — probing
+        # would immediately re-arm it. Answer the clean-slate turn directly.
+        if is_fresh_start(state.current_query):
+            return "retrieve"
         if should_probe(decision, state.session_preferences, state.probe_count):
             return "probe"
         return "retrieve"
