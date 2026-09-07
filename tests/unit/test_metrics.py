@@ -204,3 +204,56 @@ def test_runner_full_mode_requires_graph_and_judge(tmp_path):
     runner = BenchmarkRunner(ExperimentConfig(), FakeEngine({}))  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="graph and judge"):
         runner.run_full([], "x")
+
+
+# --- routing mode (#29) ------------------------------------------------------
+
+class FakeIntentRouter:
+    """Scripted intent per query — mirrors MayaRouter's route() contract."""
+
+    def __init__(self, intent_by_query):
+        self.intent_by_query = intent_by_query
+
+    def route(self, query, state, feedback=None):
+        from src.domain.routing import IntentType, QueryRoutingDecision
+
+        intent = self.intent_by_query.get(query, IntentType.GREETING)
+        return QueryRoutingDecision(
+            intent=intent, confidence=0.9, standalone_query=query,
+            requires_rag=True,
+        )
+
+
+def test_routing_accuracy_metric():
+    from src.evals.metrics import QueryEvalResult, routing_accuracy
+
+    def _r(correct):
+        return QueryEvalResult(
+            query_id="q", tier="t", query="q", expected_path="rrf",
+            intent_correct=correct,
+        )
+
+    assert routing_accuracy([]) == 0.0
+    assert routing_accuracy([_r(None)]) == 0.0  # unrouted rows don't count
+    assert routing_accuracy([_r(True), _r(False)]) == pytest.approx(0.5)
+
+
+def test_runner_routing_mode_scores_against_expected_intent(tmp_path):
+    from src.domain.routing import IntentType
+
+    rows = load_dataset(_dataset(tmp_path))
+    router = FakeIntentRouter({
+        "dream heist": IntentType.SEMANTIC_SEARCH,   # correct
+        "best movie of 1962": IntentType.SEMANTIC_SEARCH,  # wrong (OUT_OF_SCOPE)
+        "time loop": IntentType.SEMANTIC_SEARCH,     # correct
+    })
+    runner = BenchmarkRunner(ExperimentConfig(), engine=None)
+    summary = runner.run_routing(rows, "routing-unit", router)
+
+    assert summary.mode == "routing"
+    assert summary.n_queries == 3
+    assert summary.routing_accuracy == pytest.approx(2 / 3)
+    assert summary.routing_per_intent["SEMANTIC_SEARCH"] == pytest.approx(1.0)
+    assert summary.routing_per_intent["OUT_OF_SCOPE"] == 0.0
+    assert summary.fallback_count == 0
+    assert summary.per_query[0].routed_intent == "SEMANTIC_SEARCH"

@@ -3,7 +3,7 @@
 import pytest
 
 from src.domain.memory import UserSessionPreferences
-from src.domain.routing import IntentType, QueryRoutingDecision
+from src.domain.routing import IntentType, MetadataFilterCriteria, QueryRoutingDecision
 from src.maya.probing import (
     MAX_PROBE_TURNS,
     PROBE_FUNNEL,
@@ -45,9 +45,23 @@ def test_specific_long_query_never_probes():
     assert not should_probe(specific, UserSessionPreferences(), probe_count=0)
 
 
-def test_filtered_query_never_probes():
+def test_specifically_filtered_query_never_probes():
+    """Director/year/person filters are specific — answer directly (#29)."""
+    for filters in (
+        MetadataFilterCriteria(director="Nolan"),
+        MetadataFilterCriteria(exact_year=2015),
+        MetadataFilterCriteria(person="Tom Hanks"),
+    ):
+        filtered = _decision(query="suggest something").model_copy(
+            update={"filters": filters}
+        )
+        assert not should_probe(filtered, UserSessionPreferences(), probe_count=0)
+
+
+def test_genre_only_filter_still_probes():
+    """#29 policy: a genre alone is a broad browse — the funnel engages."""
     filtered = _decision(query="suggest something", with_filters=True)
-    assert not should_probe(filtered, UserSessionPreferences(), probe_count=0)
+    assert should_probe(filtered, UserSessionPreferences(), probe_count=0)
 
 
 def test_superlative_never_probes():

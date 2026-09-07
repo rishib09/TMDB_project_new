@@ -173,6 +173,70 @@ def test_confirm_then_retrieve_uses_funnel_query_not_router():
     assert out["funnel_active"] is False
 
 
+# --- #29: probe gate under a strong extractor -------------------------------
+
+def test_person_filter_is_specific_no_probe():
+    """'movies of Christopher Nolan' (person filter) must retrieve, not probe."""
+    for update in (
+        MetadataFilterCriteria(person="Christopher Nolan"),
+        MetadataFilterCriteria(cast_member="Tom Hanks"),
+    ):
+        decision = _broad(query="movies of someone").model_copy(
+            update={"filters": update}
+        )
+        assert not should_probe(decision, UserSessionPreferences(), 0)
+
+
+def test_genre_only_filter_still_probes():
+    """A genre browse ('sci-fi movies') is still broad — the funnel engages."""
+    decision = _broad(query="sci-fi movies").model_copy(
+        update={"filters": MetadataFilterCriteria(genres=["Science Fiction"])}
+    )
+    assert should_probe(decision, UserSessionPreferences(), 0)
+
+
+def test_genre_answered_suppresses_mood_probe():
+    """Genre and mood are one axis family — never ask both."""
+    from src.maya.probing import next_probe_question
+
+    with_genre = UserSessionPreferences(
+        preferred_genres=["Science Fiction"], genre_confirmation_done=True
+    )
+    question = next_probe_question(with_genre)
+    assert question is not None and question.axis == "audience"
+
+    with_mood = UserSessionPreferences(
+        preferred_mood="funny", audience="kids", noted_donts=["clowns"]
+    )
+    question = next_probe_question(with_mood)
+    assert question is not None and question.axis == "directors"  # genres skipped
+
+
+def test_genre_browse_probe_carries_genre_into_prefs():
+    """Graph: 'sci-fi movies' → probe for audience, genre kept for retrieval."""
+    from src.domain.routing import IntentType, QueryRoutingDecision
+    from tests.unit.test_orchestrator import FakeEngine
+
+    decision = QueryRoutingDecision(
+        intent=IntentType.ATTRIBUTE_FILTER, confidence=0.95,
+        standalone_query="sci-fi movies", requires_rag=True,
+        filters=MetadataFilterCriteria(genres=["Science Fiction"]),
+    )
+    engine = FakeEngine(movies=[])
+    graph = _funnel_graph([decision], engine)
+    out = graph.invoke({
+        "messages": [HumanMessage(content="sci-fi movies")],
+        "session_preferences": UserSessionPreferences(),
+        "probe_count": 0,
+    })
+    assert out["probe_count"] == 1, "genre browse must engage the funnel"
+    assert not engine.calls, "no retrieval on the probe turn"
+    prefs = out["session_preferences"]
+    assert prefs.preferred_genres == ["Science Fiction"]
+    assert "mood" not in out["final_response"].lower()  # genre covers the family
+    assert "watching" in out["final_response"].lower()  # audience probe asked
+
+
 # --- #27-P: audience probe phrasings must extract deterministically ---------
 
 def test_audience_solo_phrasings_extract():

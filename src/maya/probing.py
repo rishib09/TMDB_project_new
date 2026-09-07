@@ -175,7 +175,10 @@ def should_probe(
     """True only for broad, filterless, non-superlative RAG requests.
 
     Deterministic guards, in order:
-    - superlative or filtered queries are specific — answer directly
+    - superlative or specifically-filtered queries answer directly; a genre
+      alone does NOT count as specific (#29: a strong extractor tags "sci-fi
+      movies" with a genre filter, but the query is still a broad browse —
+      the funnel probes for a second narrowing axis)
     - the probe cap is absolute (never an interrogation)
     - probing stops once enough narrowing signal exists
     - long queries carry their own signal — don't stall them
@@ -186,8 +189,9 @@ def should_probe(
         return False
     filters = decision.filters
     if filters and (
-        filters.genres
-        or filters.director
+        filters.director
+        or filters.person  # #29: a named person is a specific ask, never probe
+        or filters.cast_member
         or filters.excluded_genres
         or filters.exact_year
         or filters.year_min
@@ -202,8 +206,17 @@ def should_probe(
 
 
 def next_probe_question(prefs: UserSessionPreferences) -> ProbeQuestion | None:
-    """First unanswered funnel question, or None when the funnel is exhausted."""
+    """First unanswered funnel question, or None when the funnel is exhausted.
+
+    Mood and genres are one axis family (#29: MOOD_GENRE_MAP maps between
+    them) — answering either suppresses the other's question, so the user
+    is never asked the same thing twice in different words.
+    """
     answered = set(prefs.answered_axes())
+    if "genres" in answered:
+        answered.add("mood")
+    if "mood" in answered:
+        answered.add("genres")
     return next((q for q in PROBE_FUNNEL if q.axis not in answered), None)
 
 
