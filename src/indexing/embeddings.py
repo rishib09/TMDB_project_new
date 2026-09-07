@@ -293,7 +293,11 @@ class OpenRouterEmbeddingProvider:
         return int(match.group(1)), int(match.group(2))
 
     def _embed_batch(self, texts: list[str]) -> list[list[float]]:
-        response = self._client.embeddings.create(model=self.name, input=texts)
+        # Nvidia models reject the openai client's default base64 format;
+        # force float for every provider (universally accepted, #11).
+        response = self._client.embeddings.create(
+            model=self.name, input=texts, encoding_format="float"
+        )
         usage = getattr(response, "usage", None)
         if usage is not None and getattr(usage, "prompt_tokens", None):
             self.real_tokens_seen += usage.prompt_tokens
