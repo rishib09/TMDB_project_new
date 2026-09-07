@@ -257,8 +257,7 @@ def _fetched_trees(session, refresh: bool) -> tuple[dict[str, TraceTree], dict[s
     return trees, labels, pending
 
 
-def render_observations_table(session) -> None:
-    refresh = st.button("Refresh", key="refresh-table")
+def render_observations_table(session, refresh: bool = False) -> None:
     trees, labels, pending = _fetched_trees(session, refresh)
     if pending:
         st.caption(
@@ -270,17 +269,20 @@ def render_observations_table(session) -> None:
         return
 
     counts = name_counts(rows)
-    fcols = st.columns([1, 2, 2])
-    type_filter = fcols[0].segmented_control(
-        "Type", ["All", "GENERATION", "SPAN"], default="All", key="obs-type"
-    ) or "All"
-    names = fcols[1].multiselect(
+    fcols = st.columns([2, 2, 1.8], vertical_alignment="bottom", gap="small")
+    names = fcols[0].multiselect(
         "Name", list(counts),
         format_func=lambda n: f"{n} ({counts[n]})", key="obs-names",
     )
-    search = fcols[2].text_input(
+    search = fcols[1].text_input(
         "Search input/output", key="obs-search", placeholder="e.g. retrieved_movies"
     )
+    # Types come from the data — LangChain spans arrive as CHAIN, not SPAN.
+    type_options = ["All", *sorted({r["type"] for r in rows})]
+    type_filter = fcols[2].segmented_control(
+        "Type", type_options, default="All", key="obs-type",
+        width="stretch",
+    ) or "All"
     filtered = apply_filters(rows, type_filter, names, search)
 
     timed = [r for r in filtered if r["start"] is not None]
@@ -318,8 +320,7 @@ def render_observations_table(session) -> None:
         st.caption("Select a row to inspect full prompts and outputs.")
 
 
-def render_cloud_trace(session, trace_id: str) -> None:
-    refresh = st.button("Refresh", key=f"refresh-{trace_id}")
+def render_cloud_trace(session, trace_id: str, refresh: bool = False) -> None:
     tree = _cached_tree(session, trace_id, refresh)
     if tree is None:
         st.info(
@@ -353,7 +354,7 @@ def render_traces(session) -> None:
     )
     if cloud:
         st.caption(
-            "Full-fidelity traces fetched back from Langfuse (#31): prompts, "
+            "Full-fidelity traces fetched back from Langfuse: prompts, "
             "completions, tokens, cost, real durations. "
             "[Hosted dashboard](https://cloud.langfuse.com)."
         )
@@ -361,18 +362,27 @@ def render_traces(session) -> None:
         if not options:
             st.info("No turns yet — send a message in the Chat tab first.")
             return
-        view = st.segmented_control(
-            "View", ["Table", "Tree"], default="Table", key="traces-view"
+        # Header row: last user query (always visible) · Refresh · far-right view toggle
+        last_query = session.turn_log[-1]["query"] if session.turn_log else ""
+        hcols = st.columns([6, 1, 1.6], vertical_alignment="center", gap="small")
+        hcols[0].markdown(
+            "<div style='background:#f0f2f6;padding:6px 14px;border-radius:8px;"
+            "font-style:italic'><b>Last turn:</b> "
+            f"{last_query}</div>",
+            unsafe_allow_html=True,
+        )
+        refresh = hcols[1].button("Refresh", type="primary", key="traces-refresh",
+                                  width="stretch")
+        view = hcols[2].segmented_control(
+            "View", ["Table", "Tree"], default="Table", key="traces-view",
+            label_visibility="collapsed", width="stretch",
         ) or "Table"
         if view == "Table":
-            render_observations_table(session)
+            render_observations_table(session, refresh)
             return
-        labels = {tid: label for tid, label in options}
-        trace_id = st.selectbox(
-            "Turn", [tid for tid, _ in options],
-            format_func=lambda tid: labels[tid],
-        )
-        render_cloud_trace(session, trace_id)
+        # Tree view mirrors the header's last-turn context — newest trace,
+        # no duplicate turn selector (older turns live in the Table view).
+        render_cloud_trace(session, options[0][0], refresh)
         return
 
     st.caption(
