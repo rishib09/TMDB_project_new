@@ -39,6 +39,24 @@ Every defect fix ships with a test that fails on the old code.
   `npx @dotenvx/dotenvx run --` for anything needing env. Windows bash.
 - Scratch scripts live in `.scratch/` and are deleted before commit.
 
+## Git workflow — branch + PR, never direct to main (mandatory)
+
+- **One branch per ticket**, branched from latest `main`: `git checkout -b <issue#>-<short-slug>`.
+- **Never commit directly to `main`. Never push to `main`.** All work lands via PR.
+- **Open a PR against `main`** referencing the ticket number, with a summary of
+  what changed and what to verify.
+- **Never merge the PR — not automatically, not "while I'm at it".** Wait for
+  the user to explicitly approve and merge. The agent's job ends at
+  "PR is ready for your review: <link>".
+- **`git add` only files you yourself changed — never `git add -A`/`git add .`**
+  while other sessions may be active. Concurrent sessions share this working
+  tree; sweeping staging areas has already swept foreign work into a foreign
+  commit once (2026-09-04, see #12/#13 attribution comments).
+- **Pull/merge latest `main` before starting** a ticket — multiple sessions
+  work this repo concurrently.
+- (Bootstrap exception, 2026-09-04: this very section was committed to `main`
+  directly at the user's instruction. Every ticket after it uses the flow above.)
+
 ## Standing rule
 
 **Before creating anything — verify it doesn't already exist, then take
