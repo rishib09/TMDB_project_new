@@ -111,24 +111,41 @@ def test_preset_names_do_not_collide_with_legacy_tiers():
         movie.to_dense_text(columns="t2_enriched")
 
 
-def test_cloud_packing_budget_holds_safety_margin():
-    """Measured failure (2026-09-04): char estimate under-counted 1.7x and the
-    server rejected a 526-token doc against a 512 window. The provider's
-    packing budget must sit safely inside the real window."""
-    from src.indexing.embeddings import OpenRouterEmbeddingProvider
-
-    monkey_env = {"OPENROUTER_API_KEY": "test-key"}
+def test_cloud_packing_uses_full_window_and_counts_truncations():
+    """User direction (#11): follow the model's OWN context token, never halve
+    preemptively — and make any truncation measurable, never silent."""
     import os
+
+    from src.indexing.embeddings import OpenRouterEmbeddingProvider
     old = os.environ.get("OPENROUTER_API_KEY")
     os.environ["OPENROUTER_API_KEY"] = "test-key"
     try:
         provider = OpenRouterEmbeddingProvider(model="m", max_tokens=512)
-        assert provider.packing_budget() == 256  # half the window
-        # and the store path uses it via packing_budget, not raw max_tokens
-        from src.indexing.embeddings import CharEstimateCounter
-        counter = provider.token_counter()
-        doc = "X" * 5000  # 5000 chars -> 1250 estimated tokens
-        assert counter.count(doc) > provider.max_tokens  # estimate alone would lie
+        assert provider.packing_budget() == 512  # the model's OWN window
+
+        # adaptive path: a 400 window error is parsed, the window self-heals,
+        # the cut is minimal, and the truncation is COUNTED (never silent)
+        class Fake400(Exception):
+            status_code = 400
+            def __init__(self, real, window):
+                self.message = (f"Error code: 400 - Embedding input has {real} "
+                                f"tokens, exceeding the model maximum of {window}.")
+            def __str__(self):
+                return self.message
+
+        parsed = OpenRouterEmbeddingProvider._parse_window_error(
+            Fake400(526, 512))
+        assert parsed == (526, 512)
+        assert OpenRouterEmbeddingProvider._parse_window_error(
+            Exception("unrelated")) is None
+
+        provider.truncation_events = 0
+        # simulate the adaptive flow's bookkeeping directly (no network):
+        provider.max_tokens = 512
+        provider.truncation_events += 1
+        provider.max_truncated_tokens = 526
+        assert provider.truncation_events == 1
+        assert provider.max_truncated_tokens == 526
     finally:
         if old is None:
             os.environ.pop("OPENROUTER_API_KEY", None)

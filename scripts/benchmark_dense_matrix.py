@@ -24,7 +24,11 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.domain.movie import MovieRecord  # noqa: E402
-from src.indexing.embeddings import MODEL_PROFILES, provider_from_profile  # noqa: E402
+from src.indexing.embeddings import (  # noqa: E402
+    BENCHMARK_PROFILES,
+    MODEL_PROFILES,
+    provider_from_profile,
+)
 from src.indexing.vector_store import MovieVectorStore  # noqa: E402
 from src.storage.database import MovieDatabase  # noqa: E402
 from tests.integration.test_vector_store import GOLDEN_QUERIES  # noqa: E402
@@ -41,13 +45,15 @@ def cell_name(preset: str, profile: str) -> str:
 
 
 def build_cell(store: MovieVectorStore, movies: list[MovieRecord],
-               preset: str, profile: str, progress: Any = None) -> None:
-    """Indexes one (preset, model) collection from scratch."""
+               preset: str, profile: str, progress: Any = None) -> Any:
+    """Indexes one (preset, model) collection from scratch; returns the provider
+    (carrying truncation telemetry for the build report)."""
     provider = provider_from_profile(profile)
     store.index_movies(
         cell_name(preset, profile), movies,
         provider=provider, columns=preset, progress=progress,
     )
+    return provider
 
 
 def measure_cell(store: MovieVectorStore, preset: str, profile: str,
@@ -80,7 +86,7 @@ def measure_cell(store: MovieVectorStore, preset: str, profile: str,
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--presets", nargs="*", default=PRESETS, choices=PRESETS)
-    parser.add_argument("--models", nargs="*", default=sorted(MODEL_PROFILES),
+    parser.add_argument("--models", nargs="*", default=BENCHMARK_PROFILES,
                         choices=sorted(MODEL_PROFILES))
     parser.add_argument("--cells", nargs="*",
                         help="full cell names (preset_model) — overrides presets/models")
@@ -107,13 +113,19 @@ def main() -> None:
     for preset, profile in cells:
         t0 = time.time()
         print(f"building {cell_name(preset, profile)} ...", flush=True)
-        build_cell(store, movies, preset, profile,
-                   progress=lambda done, total: print(f"\r  {done}/{total}", end="", flush=True))
+        provider = build_cell(store, movies, preset, profile,
+                              progress=lambda done, total: print(f"\r  {done}/{total}", end="", flush=True))
         build_s = time.time() - t0
         row = measure_cell(store, preset, profile)
         row["build_s"] = build_s
         results.append(row)
         print(f"\r  hit@5={row['hit@5']:.0%}  mrr@5={row['mrr@5']:.3f}  ({build_s:.0f}s build)")
+        # truncation telemetry: a build must be able to SAY whether any doc
+        # was cut, and by how much (#11 — silent truncation is forbidden)
+        if hasattr(provider, "truncation_events"):
+            print(f"  truncation: {provider.truncation_events} doc(s) cut, "
+                  f"worst {provider.max_truncated_tokens} tok, "
+                  f"window settled at {provider.max_tokens} tok")
 
     print("\n=== RESULTS (golden Hit@5 / MRR@5) ===")
     print(f"{'cell':<32} {'hit@5':>7} {'mrr@5':>8} {'build':>8}")

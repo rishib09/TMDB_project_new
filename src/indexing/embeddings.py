@@ -143,9 +143,13 @@ class FastembedTokenCounter:
 # --- cloud backend -----------------------------------------------------------
 
 #: Model registry for the #11 benchmark matrix. ``max_tokens`` is the packing
-#: window granted to the preset serializer (conservative where unverified).
+#: window granted to the preset serializer (conservative where unverified —
+#: the adaptive cloud path self-corrects from the server's own 400 report).
+#: LOCAL cells are excluded from benchmark defaults per user direction
+#: (2026-09-04): the matrix is cloud-only; fastembed stays the offline
+#: default for the app's existing collections, not for matrix cells.
 MODEL_PROFILES: dict[str, dict[str, str | int]] = {
-    # local (offline default)
+    # local (offline default for the APP — not benchmark cells)
     "minilm_local": {"backend": "fastembed", "model": "sentence-transformers/all-MiniLM-L6-v2"},
     "bge_small_local": {"backend": "fastembed", "model": "BAAI/bge-small-en-v1.5"},
     "jina_v2_local": {"backend": "fastembed", "model": "jinaai/jina-embeddings-v2-base-en"},
@@ -156,6 +160,11 @@ MODEL_PROFILES: dict[str, dict[str, str | int]] = {
     "bge_m3": {"backend": "openrouter", "model": "baai/bge-m3", "max_tokens": 2048},
     "voyage_4_lite": {"backend": "openrouter", "model": "voyageai/voyage-4-lite", "max_tokens": 2048},
 }
+
+#: Benchmark default = cloud-only (user direction: no local model runs).
+BENCHMARK_PROFILES: list[str] = [
+    "lfm_free", "nemotron_free", "gemini_embedding_2", "bge_m3", "voyage_4_lite",
+]
 
 
 def provider_from_profile(profile_name: str) -> EmbeddingProvider:
@@ -205,36 +214,105 @@ class OpenRouterEmbeddingProvider:
         self.max_tokens = max_tokens
         self.max_retries = max_retries
         self.dimensions = 0  # learned from the first embedding response
+        # Truncation telemetry (#11): a build must be able to SAY whether any
+        # document was cut, and by how much — silent truncation is forbidden.
+        self.truncation_events = 0
+        self.max_truncated_tokens = 0
+        self.real_tokens_seen = 0  # from response.usage, when the API reports it
 
     def packing_budget(self) -> int:
-        """Budget actually granted to the packer: window ÷ SAFETY_FACTOR.
+        """Budget granted to the packer: the model's REAL window, no halving.
 
-        The char estimate under-counts dense tokenizers up to ~1.7x (measured
-        on the lfm free tier, 2026-09-04); packing to half the real window
-        guarantees the server never sees an over-budget document. Costs some
-        synopsis length; correctness beats coverage.
+        The window itself is self-healing: the first 400 window-error reports
+        the model's true maximum and ``max_tokens`` is corrected in place.
+        Documents that genuinely exceed the window are truncated minimally,
+        adaptively, and LOUDLY (truncation_events) — never silently, never
+        preemptively halved (user direction, #11: follow the model's own
+        context token and measure truncation rather than guess it).
         """
-        return max(64, int(self.max_tokens / CharEstimateCounter.SAFETY_FACTOR))
+        return self.max_tokens
 
     def embed(self, texts: list[str]) -> list[list[float]]:
-        """Embeds with rate-limit-aware retry (429 honors the reset header).
+        """Embeds with rate-limit retry + adaptive window handling.
 
-        Retrying a documented rate limit is the remedy the API itself names
-        (``remedy_hint``) — not silent degradation. Retries are exhausted
-        after ``max_retries`` backoff windows; then the error propagates
-        (fail-closed).
+        Strategy (user direction, #11): always attempt the FULL document —
+        never preemptively shrink. On a window error (400 with the server's
+        token report), fall back to per-document embedding for that batch:
+        the error's real token count calibrates the true density, the cut is
+        minimal (keep ~98% of the window), and every cut increments
+        ``truncation_events`` — measurable, never silent.
         """
+        try:
+            return self._with_rate_retry(lambda: self._embed_batch(texts))
+        except Exception as exc:
+            if self._parse_window_error(exc) is None:
+                raise
+            print(f"  [window] batch exceeds the model window ({self.max_tokens} tok) "
+                  f"— per-document adaptive embedding for this batch", flush=True)
+            return [self._embed_one_adaptive(text) for text in texts]
+
+    def _embed_one_adaptive(self, text: str) -> list[float]:
+        """Embeds one document, truncating minimally using the server's own
+        token-count report. Never silent: every cut is counted and bounded."""
+        for _ in range(3):
+            try:
+                return self._with_rate_retry(lambda: self._embed_batch([text]))[0]
+            except Exception as exc:
+                parsed = self._parse_window_error(exc)
+                if parsed is None:
+                    raise
+                real_tokens, model_max = parsed
+                # The server's numbers are ground truth: correct the window,
+                # measure this document's true density, cut just enough.
+                self.max_tokens = model_max
+                density = real_tokens / max(1, len(text))
+                keep_chars = int(len(text) * (model_max * 0.98) / real_tokens)
+                self.truncation_events += 1
+                self.max_truncated_tokens = max(self.max_truncated_tokens, real_tokens)
+                print(f"  [truncate] doc {real_tokens} tok > {model_max} window "
+                      f"(density {density:.2f}x) — cut to {model_max * 0.98:.0f} tok",
+                      flush=True)
+                text = text[:keep_chars]
+        raise RuntimeError(
+            f"document could not be packed inside the {self.max_tokens}-token "
+            f"window after adaptive truncation"
+        )
+
+    @staticmethod
+    def _parse_window_error(exc: Exception) -> tuple[int, int] | None:
+        """Extracts (real_tokens, model_max) from a 400 window error, if present."""
+        import re
+
+        status = getattr(exc, "status_code", None)
+        if status is not None and status != 400:
+            return None
+        match = re.search(r"has (\d+) tokens, exceeding the model maximum of (\d+)",
+                          str(exc))
+        if not match:
+            return None
+        return int(match.group(1)), int(match.group(2))
+
+    def _embed_batch(self, texts: list[str]) -> list[list[float]]:
+        response = self._client.embeddings.create(model=self.name, input=texts)
+        usage = getattr(response, "usage", None)
+        if usage is not None and getattr(usage, "prompt_tokens", None):
+            self.real_tokens_seen += usage.prompt_tokens
+        vectors = [item.embedding for item in response.data]
+        if vectors and self.dimensions == 0:
+            self.dimensions = len(vectors[0])
+        return vectors
+
+    def _with_rate_retry(self, attempt_fn):
+        """Runs one embedding attempt with rate-limit-aware retry (429 honors
+        the documented remedy — never silent degradation; after max_retries
+        backoff windows the error propagates, fail-closed)."""
         import time
 
         last_error: Exception | None = None
         for attempt in range(self.max_retries + 1):
             try:
-                response = self._client.embeddings.create(model=self.name, input=texts)
-                vectors = [item.embedding for item in response.data]
-                if vectors and self.dimensions == 0:
-                    self.dimensions = len(vectors[0])
-                return vectors
-            except Exception as exc:  # noqa: BLE001 — narrow via status check below
+                return attempt_fn()
+            except Exception as exc:  # noqa: BLE001 — narrowed by status check
                 status = getattr(exc, "status_code", None)
                 retryable = status == 429 or status is None  # transport errors too
                 last_error = exc
