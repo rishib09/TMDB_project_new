@@ -171,3 +171,83 @@ def test_confirm_then_retrieve_uses_funnel_query_not_router():
     # retrieval happened (empty world → #21 deterministic text, no LLM)
     assert "couldn't find" in out["final_response"]
     assert out["funnel_active"] is False
+
+
+# --- #27-P: audience probe phrasings must extract deterministically ---------
+
+def test_audience_solo_phrasings_extract():
+    """Every solo phrasing Maya's own probe invites must map to 'solo'."""
+    for phrase in ("alone", "just me", "just for me", "by myself", "on my own",
+                   "watching alone tonight", "alone just for me"):
+        assert extract_probe_answers(phrase).audience == "solo", phrase
+
+
+def test_negated_solo_phrasings_do_not_extract():
+    """'not alone' must not record audience=solo (negation inversion)."""
+    assert extract_probe_answers("not alone").audience == ""
+
+
+# --- #27-Q: stated years must survive into the funnel synthetic decision ----
+
+def _funnel_graph(router_decisions, engine):
+    from src.graph.orchestrator import build_maya_graph
+    from src.maya.guardrails import SessionTokenLimiter
+    from src.observability.tracer import DualModeObservabilityManager
+    from tests.unit.test_orchestrator import FakeRouter, FakeSynthesizer
+
+    return build_maya_graph(
+        ExperimentConfig(), FakeRouter(router_decisions), engine,
+        FakeSynthesizer(), DualModeObservabilityManager(session_id="t"),
+        SessionTokenLimiter(),
+    )
+
+
+def test_funnel_retrieve_carries_stated_years():
+    """'sad ... years from 2000 - 2026' → synthetic decision keeps the range."""
+    from src.domain.routing import IntentType, QueryRoutingDecision
+    from tests.unit.test_orchestrator import FakeEngine
+
+    extractor_decision = QueryRoutingDecision(
+        intent=IntentType.SEMANTIC_SEARCH, confidence=0.9,
+        standalone_query="sad movies", requires_rag=True, mood="sad",
+        filters=MetadataFilterCriteria(year_min=2000, year_max=2026),
+    )
+    engine = FakeEngine(movies=[])
+    graph = _funnel_graph([extractor_decision], engine)
+    graph.invoke({
+        "messages": [HumanMessage(content="sad, years from 2000 - 2026")],
+        "session_preferences": UserSessionPreferences(),
+        "funnel_active": True,
+        "probe_count": MAX_PROBE_TURNS,  # funnel exhausted → retrieve now
+    })
+    assert engine.calls, "funnel retrieve never reached the engine"
+    routing = engine.calls[0][1]
+    assert routing.filters is not None
+    assert routing.filters.year_min == 2000
+    assert routing.filters.year_max == 2026
+
+
+def test_funnel_retrieve_without_stated_years_adds_no_filter():
+    """No stated year → the synthetic decision must not invent one."""
+    from src.domain.routing import IntentType, QueryRoutingDecision
+    from tests.unit.test_orchestrator import FakeEngine
+
+    extractor_decision = QueryRoutingDecision(
+        intent=IntentType.SEMANTIC_SEARCH, confidence=0.9,
+        standalone_query="sad movies", requires_rag=True, mood="sad",
+    )
+    engine = FakeEngine(movies=[])
+    graph = _funnel_graph([extractor_decision], engine)
+    graph.invoke({
+        "messages": [HumanMessage(content="something sad")],
+        "session_preferences": UserSessionPreferences(),
+        "funnel_active": True,
+        "probe_count": MAX_PROBE_TURNS,
+    })
+    assert engine.calls
+    routing = engine.calls[0][1]
+    assert routing.filters is None or (
+        routing.filters.year_min is None
+        and routing.filters.year_max is None
+        and routing.filters.exact_year is None
+    )
