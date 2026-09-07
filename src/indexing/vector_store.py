@@ -148,7 +148,7 @@ class MovieVectorStore:
         embedding_model: str | None = None,
         tier: str | None = None,
         token_budget: int | None = None,
-        batch_size: int = 128,
+        batch_size: int = 100,  # google's endpoint caps batches at 100 (#11)
         progress: Any = None,
         provider: EmbeddingProvider | None = None,
         columns: str | None = None,
