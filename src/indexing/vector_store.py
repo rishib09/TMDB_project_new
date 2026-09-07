@@ -45,6 +45,14 @@ from fastembed import TextEmbedding
 from pydantic import BaseModel, Field
 
 from src.domain.movie import MovieRecord
+from src.indexing.embeddings import (  # noqa: F401 — re-exported for compat
+    CharEstimateCounter,
+    EmbeddingProvider,
+    FastembedProvider,
+    FastembedTokenCounter,
+    OpenRouterEmbeddingProvider,
+    provider_from_profile,
+)
 
 
 class SearchResult(BaseModel):
@@ -53,36 +61,6 @@ class SearchResult(BaseModel):
     score: float = Field(..., description="Cosine similarity score (0.0 to 1.0)")
     movie: MovieRecord
     document_text: str
-
-
-class FastembedTokenCounter:
-    """TokenCounter backed by the target embedding model's real tokenizer.
-
-    Truncation cuts on token boundaries using encoder offsets, preserving the
-    original text (casing/punctuation) instead of round-tripping through
-    decode — no silent truncation, no character estimates (issue #14).
-
-    Padding matters: some fastembed tokenizers (e.g. MiniLM) pad every
-    encoding to a fixed sequence length, so raw ``len(ids)`` is a constant,
-    not a content length. Always count via the attention mask.
-    """
-
-    def __init__(self, tokenizer: Any):
-        self._tokenizer = tokenizer
-
-    def count(self, text: str) -> int:
-        encoded = self._tokenizer.encode(text)
-        return sum(encoded.attention_mask)
-
-    def truncate(self, text: str, max_tokens: int) -> str:
-        encoded = self._tokenizer.encode(text)
-        real_length = sum(encoded.attention_mask)
-        if real_length <= max_tokens:
-            return text
-        cut = encoded.offsets[max_tokens - 1][1]
-        prefix = text[:cut]
-        # Trim to a clean word boundary.
-        return prefix.rsplit(" ", 1)[0] if " " in prefix else prefix
 
 
 class MovieVectorStore:
@@ -172,24 +150,42 @@ class MovieVectorStore:
         token_budget: int | None = None,
         batch_size: int = 128,
         progress: Any = None,
+        provider: EmbeddingProvider | None = None,
+        columns: str | None = None,
     ) -> int:
         """Embeds and indexes movie records using the version's tier profile.
 
-        All parameters default from TIER_PROFILES[version_name]; explicit
+        Two paths (#11 Phase 1):
+        - ``provider`` given: the decoupled-axes path. Documents come from the
+          ``columns`` preset (default ``full``), packed to the provider's
+          window, embedded by the provider (local fastembed or cloud). The
+          provider's model id is recorded as the collection's embedding model,
+          so search pairing stays enforced.
+        - ``provider`` omitted: the legacy fastembed tier path, unchanged.
+
+        All other parameters default from TIER_PROFILES[version_name]; explicit
         arguments override (for factorial experiments via ExperimentConfig).
-        Documents are packed with the target model's real tokenizer — stored
-        text is guaranteed ≤ token_budget model tokens.
+        Documents are packed with the target model's real tokenizer where
+        available — stored text is guaranteed ≤ token_budget model tokens.
 
         ``progress(done, total)`` is invoked after each batch (for build logs).
         """
-        profile = self.TIER_PROFILES.get(version_name, {})
-        model_name = embedding_model or profile.get("embedding_model")
-        if not model_name:
-            raise ValueError(f"No embedding model for unknown version '{version_name}'")
-        tier = tier or profile.get("tier", "t2_enriched")
-        token_budget = token_budget or profile.get(
-            "token_budget", MovieRecord.DEFAULT_TIER_BUDGETS.get(tier, 512)
-        )
+        if provider is not None:
+            columns = columns or "full"
+            budget = token_budget or provider.max_tokens
+            counter = provider.token_counter()
+            # Validate the preset BEFORE any embedding spend (fail fast).
+            movies[0].to_dense_text(columns=columns, token_budget=budget,
+                                    token_counter=counter)
+        else:
+            profile = self.TIER_PROFILES.get(version_name, {})
+            model_name = embedding_model or profile.get("embedding_model")
+            if not model_name:
+                raise ValueError(f"No embedding model for unknown version '{version_name}'")
+            tier = tier or profile.get("tier", "t2_enriched")
+            budget = token_budget or profile.get(
+                "token_budget", MovieRecord.DEFAULT_TIER_BUDGETS.get(tier, 512)
+            )
 
         # Recreate cleanly so collection metadata always reflects this build.
         self.delete_collection(version_name)
@@ -197,15 +193,42 @@ class MovieVectorStore:
             name=version_name,
             metadata={
                 "hnsw:space": "cosine",
-                "embedding_model": model_name,
-                "tier": tier,
-                "token_budget": token_budget,
+                "embedding_model": provider.name if provider else model_name,
+                "tier": tier if provider is None else "",
+                "columns": columns if provider else "",
+                "token_budget": budget,
             },
         )
-        embedder = self.get_embedder(model_name)
-        counter = self.get_token_counter(model_name)
 
         total_indexed = 0
+
+        if provider is not None:
+            counter = provider.token_counter()
+            doc_data = [
+                (str(m.id),
+                 m.to_dense_text(columns=columns, token_budget=budget, token_counter=counter),
+                 {"id": m.id, "title": m.title, "release_year": m.release_year,
+                  "director": m.director or "", "vote_average": float(m.vote_average),
+                  "revenue": int(m.revenue), "genres_str": " ".join(m.genres),
+                  "poster_path": m.poster_path or "", "raw_json": m.model_dump_json()})
+                for m in movies
+            ]
+            doc_data.sort(key=lambda item: len(item[1]))
+            for i in range(0, len(doc_data), batch_size):
+                batch = doc_data[i:i + batch_size]
+                collection.upsert(
+                    ids=[item[0] for item in batch],
+                    embeddings=provider.embed([item[1] for item in batch]),
+                    documents=[item[1] for item in batch],
+                    metadatas=[item[2] for item in batch],
+                )
+                total_indexed += len(batch)
+                if progress:
+                    progress(total_indexed, len(doc_data))
+            return total_indexed
+
+        embedder = self.get_embedder(model_name)
+        counter = self.get_token_counter(model_name)
 
         # 1. Tier-shaped, tokenizer-exact text for all movies (front-loaded so
         #    documents can be length-sorted before embedding).
@@ -262,13 +285,16 @@ class MovieVectorStore:
         version_name: str = DEFAULT_VERSION,
         embedding_model: str | None = None,
         top_k: int = 10,
-        where_filter: dict[str, Any] | None = None
+        where_filter: dict[str, Any] | None = None,
+        provider: EmbeddingProvider | None = None,
     ) -> list[SearchResult]:
         """Performs vector similarity search with enforced model↔collection pairing.
 
         The query is embedded with the collection's stored embedding model.
         Passing an explicit ``embedding_model`` that differs from the stored
         one raises (previously this silently produced cross-space garbage).
+        With ``provider`` (#11), the query is embedded by that provider — the
+        provider's name must still match the collection's stored model.
         """
         clean_query = query.strip()
         if not clean_query:
@@ -276,6 +302,12 @@ class MovieVectorStore:
 
         collection = self.get_collection_checked(version_name)
         stored_model = collection.metadata["embedding_model"]
+        if provider is not None and provider.name != stored_model:
+            raise ValueError(
+                f"Embedding model mismatch: '{version_name}' was built with "
+                f"'{stored_model}' but searched with '{provider.name}'. "
+                f"Cross-space queries silently return garbage and are refused."
+            )
         if embedding_model and embedding_model != stored_model:
             raise ValueError(
                 f"Embedding model mismatch: '{version_name}' was built with "
@@ -287,9 +319,13 @@ class MovieVectorStore:
         if collection.count() == 0:
             return []
 
-        # 1. Embed query vector on CPU with the paired model
-        embedder = self.get_embedder(model_name)
-        query_embedding = list(embedder.embed([clean_query]))[0].tolist()
+        # 1. Embed query vector — via the injected provider (#11) or the
+        #    paired local fastembed model (legacy path).
+        if provider is not None:
+            query_embedding = provider.embed([clean_query])[0]
+        else:
+            embedder = self.get_embedder(model_name)
+            query_embedding = list(embedder.embed([clean_query]))[0].tolist()
 
         # 2. Query ChromaDB HNSW index. chroma 1.5.9 intermittently raises
         #    InternalError ("Error finding id") on where-filtered queries

@@ -76,17 +76,32 @@ class MovieRecord(BaseModel):
             return f"https://image.tmdb.org/t/p/w1280{self.backdrop_path}"
         return None
 
-    # --- tiered dense-text serialization (issue #14) -------------------------
+    # --- column presets & tiered dense-text serialization (#14, #11) ---------
 
-    #: Default per-tier token budgets; each tier also carries its own input
-    #: set. Budgets chosen against the 1970-2026 corpus: content tops out
-    #: below 1024 tokens, so larger budgets would pad, not enrich.
+    #: Legacy per-tier token budgets (#14). Each tier also carries its own
+    #: input set. Budgets chosen against the 1970-2026 corpus: content tops
+    #: out below 1024 tokens, so larger budgets would pad, not enrich.
     DEFAULT_TIER_BUDGETS: ClassVar[dict] = {
         "t1_identity": 128,   # MiniLM's REAL fastembed window is 128 tokens,
                               # not the model-card 256 (measured 2026-08-31)
         "t2_enriched": 512,
         "t3_exhaustive": 1024,
     }
+
+    #: Column presets (#11 Phase 1): what enters the embedding text, decoupled
+    #: from the embedding model. SQL-filter material (year ranges, runtime,
+    #: votes, popularity, financials) is deliberately absent — the Router's
+    #: MetadataFilterCriteria path owns it. Cast top-N = TMDB billing order.
+    COLUMN_PRESETS: ClassVar[dict[str, str]] = {
+        "minimal": "overview + keywords + genres + title + director — the pure "
+                   "vibe/theme document (no person noise)",
+        "full": "minimal + all top-10 cast + tagline (+ year, always in the "
+                "title line) — the complete semantic signal",
+    }
+
+    #: Offline default packing budget for presets when no provider window is
+    #: given (cloud providers pass their real window via the store).
+    DEFAULT_PRESET_BUDGET: ClassVar[int] = 512
 
     #: Synopsis never gets fewer tokens than this, else it is omitted whole.
     _MIN_SYNOPSIS_TOKENS: ClassVar[int] = 24
@@ -157,22 +172,73 @@ class MovieRecord(BaseModel):
 
         return parts, self.overview
 
+    def _preset_parts(self, columns: str) -> tuple[list[str], str]:
+        """Ordered (priority, highest first) parts for a column preset (#11).
+
+        - minimal: title+year, director, genres, keywords — no cast, no
+          tagline: the pure vibe/theme document.
+        - full: + top-10 cast in TMDB billing order, tagline when present.
+
+        Financials / ratings / runtime never appear (SQL material, verified
+        in the amendment to issue #11). Raises ValueError on unknown presets.
+        """
+        if columns not in self.COLUMN_PRESETS:
+            raise ValueError(
+                f"unknown column preset '{columns}'. Valid: {sorted(self.COLUMN_PRESETS)}"
+            )
+
+        parts = [f"Title: {self.title} ({self.release_year})"]
+        if self.director:
+            parts.append(f"Director: {self.director}")
+        genres_str = ", ".join(self.genres)
+        if genres_str:
+            parts.append(f"Genres: {genres_str}")
+
+        if columns == "full":
+            cast_details = [
+                f"{c.name} as {c.character}" if c.character else c.name
+                for c in sorted(self.cast, key=lambda c: c.order)[:10]
+            ]
+            if cast_details:
+                parts.append(f"Cast: {', '.join(cast_details)}")
+
+        if self.keywords:
+            parts.append(f"Themes: {', '.join(self.keywords[:12])}")
+
+        if columns == "full" and self.tagline:
+            parts.append(f"Tagline: {self.tagline}")
+
+        return parts, self.overview
+
     def to_dense_text(
         self,
-        tier: str = "t2_enriched",
+        tier: str | None = None,
+        columns: str | None = None,
         token_budget: int | None = None,
         token_counter: TokenCounter | None = None,
     ) -> str:
-        """Serializes movie metadata into a tier-shaped document within a token budget.
+        """Serializes movie metadata into a packed document within a budget.
+
+        Two mutually compatible entry points:
+        - ``columns`` (#11): a COLUMN_PRESETS key — the decoupled axes path;
+          the budget should come from the chosen embedding model's window.
+        - ``tier`` (#14, legacy): the original three-tier path, preserved
+          bit-for-bit for already-built collections.
 
         With ``token_counter`` (the target model's real tokenizer) packing is
         exact: the stored text never exceeds ``token_budget`` model tokens and
         the synopsis is cut on token boundaries via offsets — no silent
-        truncation, no character estimates. Without one, a chars/3.8 estimate
-        is used (offline convenience only; never for index builds).
+        truncation, no character estimates. Without one, a chars-based
+        estimate is used (offline convenience or cloud providers without
+        exposed tokenizers).
         """
-        budget = token_budget or self.DEFAULT_TIER_BUDGETS[tier]
-        parts, overview = self._tier_parts(tier)
+        if tier is not None:
+            budget = token_budget or self.DEFAULT_TIER_BUDGETS[tier]
+            parts, overview = self._tier_parts(tier)
+        else:
+            columns = columns or "full"
+            budget = token_budget or self.DEFAULT_PRESET_BUDGET
+            parts, overview = self._preset_parts(columns)
 
         if token_counter is None:
             return self._pack_by_char_estimate(parts, overview, budget)
