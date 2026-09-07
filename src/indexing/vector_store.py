@@ -172,7 +172,11 @@ class MovieVectorStore:
         """
         if provider is not None:
             columns = columns or "full"
-            budget = token_budget or provider.max_tokens
+            # Cloud providers lack real tokenizers; their char-estimate
+            # under-counts dense tokenizers (measured 1.7x on lfm free).
+            # packing_budget() halves the window so the server never sees
+            # an over-budget document (#11, measured failure 2026-09-04).
+            budget = token_budget or getattr(provider, "packing_budget", lambda: provider.max_tokens)()
             counter = provider.token_counter()
             # Validate the preset BEFORE any embedding spend (fail fast).
             movies[0].to_dense_text(columns=columns, token_budget=budget,

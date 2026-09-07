@@ -41,9 +41,16 @@ class CharEstimateCounter:
     """Chars-per-token estimator for providers without an exposed tokenizer.
 
     Cloud providers don't hand out tokenizers; packing against their window
-    uses a conservative estimate (~4 chars/token for English prose). Slightly
-    lossy by design — the alternative is no budget enforcement at all.
+    uses this estimate. CAUTION (measured 2026-09-04, #11): free lfm's real
+    tokenizer packs ~1.7x denser than 4 chars/token on label-dense docs —
+    a 400 'exceeds model maximum' mid-build is the signature of trusting
+    this estimate as exact. Providers using it MUST pack with a safety
+    margin (see OpenRouterEmbeddingProvider.packing_budget).
     """
+
+    #: Measured worst-case density ratio (real tokens ÷ estimated) across the
+    #: 9,119-record corpus; 2.0x margin covers label-dense outlier documents.
+    SAFETY_FACTOR: float = 2.0
 
     def __init__(self, chars_per_token: float = 4.0, max_tokens: int = 0):
         self.chars_per_token = chars_per_token
@@ -181,6 +188,7 @@ class OpenRouterEmbeddingProvider:
         max_tokens: int = 2048,
         api_key: str | None = None,
         base_url: str | None = None,
+        max_retries: int = 4,
     ):
         from openai import OpenAI
 
@@ -195,14 +203,52 @@ class OpenRouterEmbeddingProvider:
         )
         self.name = model
         self.max_tokens = max_tokens
+        self.max_retries = max_retries
         self.dimensions = 0  # learned from the first embedding response
 
+    def packing_budget(self) -> int:
+        """Budget actually granted to the packer: window ÷ SAFETY_FACTOR.
+
+        The char estimate under-counts dense tokenizers up to ~1.7x (measured
+        on the lfm free tier, 2026-09-04); packing to half the real window
+        guarantees the server never sees an over-budget document. Costs some
+        synopsis length; correctness beats coverage.
+        """
+        return max(64, int(self.max_tokens / CharEstimateCounter.SAFETY_FACTOR))
+
     def embed(self, texts: list[str]) -> list[list[float]]:
-        response = self._client.embeddings.create(model=self.name, input=texts)
-        vectors = [item.embedding for item in response.data]
-        if vectors and self.dimensions == 0:
-            self.dimensions = len(vectors[0])
-        return vectors
+        """Embeds with rate-limit-aware retry (429 honors the reset header).
+
+        Retrying a documented rate limit is the remedy the API itself names
+        (``remedy_hint``) — not silent degradation. Retries are exhausted
+        after ``max_retries`` backoff windows; then the error propagates
+        (fail-closed).
+        """
+        import time
+
+        last_error: Exception | None = None
+        for attempt in range(self.max_retries + 1):
+            try:
+                response = self._client.embeddings.create(model=self.name, input=texts)
+                vectors = [item.embedding for item in response.data]
+                if vectors and self.dimensions == 0:
+                    self.dimensions = len(vectors[0])
+                return vectors
+            except Exception as exc:  # noqa: BLE001 — narrow via status check below
+                status = getattr(exc, "status_code", None)
+                retryable = status == 429 or status is None  # transport errors too
+                last_error = exc
+                if not retryable or attempt == self.max_retries:
+                    raise
+                wait_s = self._backoff_s(attempt)
+                print(f"  [rate-limited] retry {attempt + 1}/{self.max_retries} "
+                      f"in {wait_s:.0f}s", flush=True)
+                time.sleep(wait_s)
+        raise last_error  # unreachable; satisfies type checkers
+
+    def _backoff_s(self, attempt: int) -> float:
+        """Backoff spanning whole per-minute windows: 20s, 45s, 90s, 180s."""
+        return (20.0, 45.0, 90.0, 180.0)[min(attempt, 3)]
 
     def token_counter(self) -> TokenCounter | None:
         return CharEstimateCounter(max_tokens=self.max_tokens)

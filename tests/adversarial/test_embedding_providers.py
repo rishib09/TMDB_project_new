@@ -109,3 +109,28 @@ def test_preset_names_do_not_collide_with_legacy_tiers():
     movie = make_movie(1)
     with pytest.raises(ValueError):
         movie.to_dense_text(columns="t2_enriched")
+
+
+def test_cloud_packing_budget_holds_safety_margin():
+    """Measured failure (2026-09-04): char estimate under-counted 1.7x and the
+    server rejected a 526-token doc against a 512 window. The provider's
+    packing budget must sit safely inside the real window."""
+    from src.indexing.embeddings import OpenRouterEmbeddingProvider
+
+    monkey_env = {"OPENROUTER_API_KEY": "test-key"}
+    import os
+    old = os.environ.get("OPENROUTER_API_KEY")
+    os.environ["OPENROUTER_API_KEY"] = "test-key"
+    try:
+        provider = OpenRouterEmbeddingProvider(model="m", max_tokens=512)
+        assert provider.packing_budget() == 256  # half the window
+        # and the store path uses it via packing_budget, not raw max_tokens
+        from src.indexing.embeddings import CharEstimateCounter
+        counter = provider.token_counter()
+        doc = "X" * 5000  # 5000 chars -> 1250 estimated tokens
+        assert counter.count(doc) > provider.max_tokens  # estimate alone would lie
+    finally:
+        if old is None:
+            os.environ.pop("OPENROUTER_API_KEY", None)
+        else:
+            os.environ["OPENROUTER_API_KEY"] = old
