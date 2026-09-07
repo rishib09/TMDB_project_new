@@ -16,7 +16,11 @@ class PresetType(str, Enum):
 class ExperimentConfig(BaseModel):
     """Configuration state for live experimentation control plane and evaluation runs."""
     # Model Selection & Inference
-    router_model: str = Field(default="meta-llama/llama-3.2-3b-instruct", description="Router LLM model ID")
+    router_model: str = Field(
+        default="~google/gemini-flash-latest",
+        description="Router LLM model ID (#29: measured 91% vs 3B's 66% routing accuracy; "
+        "the ~ alias always resolves to the newest Flash on OpenRouter)",
+    )
     synthesis_model: str = Field(default="meta-llama/llama-3.3-70b-instruct", description="Synthesis LLM model ID")
     reasoning_effort: str = Field(default="low", description="Reasoning effort: none, low, medium, high")
     temperature: float = Field(default=0.0, ge=0.0, le=1.0, description="Sampling temperature")
@@ -50,6 +54,13 @@ class ExperimentConfig(BaseModel):
         "measured: iterative re-routing resolves a share of routing failures (#12)",
     )
     memory_strategy: str = Field(default="sliding_window_with_entity", description="Memory retention strategy")
+    confidence_threshold: float = Field(
+        default=0.5,
+        ge=0.0,
+        le=1.0,
+        description="Router low-confidence fallback threshold (#12): decisions "
+        "below this confidence degrade to the heuristic fallback",
+    )
     cwa_guardrail_enabled: bool = Field(default=True, description="Enforce Closed-World Assumption XML grounding")
     judge_model: str = Field(
         default="meta-llama/llama-3.3-70b-instruct",
@@ -86,7 +97,7 @@ class ExperimentConfig(BaseModel):
             self.reranker_enabled = False
             self.retrieval_top_k = 3
         elif preset == PresetType.PRODUCTION_HYBRID:
-            self.router_model = "meta-llama/llama-3.2-3b-instruct"
+            self.router_model = "~google/gemini-flash-latest"  # #29 upgrade (91% vs 66%)
             self.synthesis_model = "meta-llama/llama-3.3-70b-instruct"
             self.embedding_model = "BAAI/bge-small-en-v1.5"
             self.token_budget = 512

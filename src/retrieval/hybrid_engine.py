@@ -36,10 +36,11 @@ class HybridRetrievalEngine:
         self,
         db: MovieDatabase,
         vector_store: MovieVectorStore,
-        rag_version: str = "v1_1_enriched",
+        rag_version: str = "full_gemini_embedding_2",
         hybrid_alpha: float = 0.5,
         reranker_enabled: bool = False,
         reranker_model: str = "ms-marco-TinyBERT-L-2-v2",
+        search_provider: Any | None = None,
     ):
         # reranker_enabled defaults to OFF deliberately (live measurement
         # 2026-08-31): on the golden query both tiny cross-encoders ranked
@@ -49,6 +50,7 @@ class HybridRetrievalEngine:
         self.db = db
         self.vector_store = vector_store
         self.rag_version = rag_version
+        self.search_provider = search_provider  # #11: cloud provider for the default collection
         self.hybrid_alpha = hybrid_alpha
         self.reranker_enabled = reranker_enabled
         self.reranker_model = reranker_model
@@ -149,7 +151,8 @@ class HybridRetrievalEngine:
     def _retrieve_dense(self, query: str, top_k: int) -> list[SearchResult]:
         try:
             return self.vector_store.search(
-                query=query, version_name=self.rag_version, top_k=top_k
+                query=query, version_name=self.rag_version, top_k=top_k,
+                provider=self.search_provider,
             )
         except Exception:
             # Missing/legacy collection must not kill retrieval — BM25 carries on.

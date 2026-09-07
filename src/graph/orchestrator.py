@@ -28,7 +28,7 @@ from langgraph.graph.state import CompiledStateGraph
 
 from src.domain.config import ExperimentConfig
 from src.domain.memory import ConversationState, UserSessionPreferences, merge_preferences
-from src.domain.routing import IntentType, QueryRoutingDecision
+from src.domain.routing import IntentType, MetadataFilterCriteria, QueryRoutingDecision
 from src.graph.state import MayaGraphState
 from src.maya.agent import MayaSynthesizer
 from src.maya.guardrails import (
@@ -168,7 +168,24 @@ def build_maya_graph(
                 "confidence": decision.confidence,
                 "requires_rag": decision.requires_rag,
                 "is_fallback": decision.is_fallback,
+                # #12 Gate 1 / #13 Option B routing telemetry
+                "fallback_reason": decision.fallback_reason,
+                "fallback_raw_confidence": decision.fallback_raw_confidence,
+                "requires_rag_mismatch": decision.requires_rag_mismatch,
                 "probe_answers": signals.answered_axes(),
+            },
+        )
+        # #12 Gate 1: confidence distribution in cloud telemetry (fail-open).
+        tracer.push_score(
+            "router_confidence",
+            decision.fallback_raw_confidence
+            if decision.fallback_raw_confidence is not None
+            else decision.confidence,
+            metadata={
+                "intent": decision.intent.value,
+                "attempt": attempts,
+                "is_fallback": decision.is_fallback,
+                "requires_rag_mismatch": decision.requires_rag_mismatch,
             },
         )
         return {
@@ -231,11 +248,22 @@ def build_maya_graph(
 
         if outcome.action == "retrieve":
             merged = outcome.prefs_update or prefs
+            # #27-Q: years stated during the funnel become deterministic filters.
+            year_filters = (
+                MetadataFilterCriteria(
+                    exact_year=merged.exact_year,
+                    year_min=merged.year_min,
+                    year_max=merged.year_max,
+                )
+                if (merged.exact_year or merged.year_min or merged.year_max)
+                else None
+            )
             synthetic = QueryRoutingDecision(
                 intent=IntentType.SEMANTIC_SEARCH,
                 confidence=1.0,
                 standalone_query=build_funnel_query(merged),
                 requires_rag=True,
+                filters=year_filters,
                 reasoning="funnel confirmed retrieval (#23)",
             )
             tracer.record_local(
@@ -515,9 +543,14 @@ def _extract_signals(state: "MayaGraphState", router) -> "UserSessionPreferences
         return None
     if not (decision.mood or decision.audience):
         return None
+    filters = decision.filters
     return UserSessionPreferences(
         preferred_mood=decision.mood.strip(),
         audience=decision.audience.strip(),
+        # #27-Q: years stated during funnel turns must not be discarded.
+        exact_year=filters.exact_year if filters else None,
+        year_min=filters.year_min if filters else None,
+        year_max=filters.year_max if filters else None,
     )
 
 

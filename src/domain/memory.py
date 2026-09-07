@@ -52,6 +52,12 @@ class UserSessionPreferences(BaseModel):
     audience: str = ""
     preferred_directors: list[str] = Field(default_factory=list)
     noted_donts: list[str] = Field(default_factory=list)
+    #: #27-Q: year constraints stated during funnel turns — persisted so the
+    #: funnel's synthetic decision can carry them into retrieval. Constraints,
+    #: not narrowing axes: deliberately absent from answered_axes().
+    exact_year: int | None = None
+    year_min: int | None = None
+    year_max: int | None = None
     #: #25: mood→genre confirmation settled (never re-asked for this mood).
     genre_confirmation_done: bool = False
     #: #26-E: one-shot signal to WIPE accumulated preferences. Must ride the
@@ -112,6 +118,10 @@ def merge_preferences(
             dict.fromkeys(current.preferred_directors + incoming.preferred_directors)
         ),
         noted_donts=list(dict.fromkeys(current.noted_donts + incoming.noted_donts)),
+        # #27-Q: scalar year constraints are last-wins, like preferred_mood.
+        exact_year=incoming.exact_year if incoming.exact_year is not None else current.exact_year,
+        year_min=incoming.year_min if incoming.year_min is not None else current.year_min,
+        year_max=incoming.year_max if incoming.year_max is not None else current.year_max,
         # Mood change reopens genre confirmation (#25/#26-M): the new mood may
         # map to different candidate genres. Same mood → confirmation stays.
         genre_confirmation_done=(

@@ -117,6 +117,28 @@ class DualModeObservabilityManager:
             }
         )
 
+    def push_score(self, name: str, value: float, metadata: dict | None = None) -> None:
+        """Best-effort Langfuse score on the current turn's trace (#12 Gate 1).
+
+        Fail-open by contract (AGENTS.md telemetry rule): cloud problems must
+        never break a turn. Local-only mode — or a turn without a minted
+        trace id (tests, benchmark runs) — is a silent no-op; the local
+        ring already carries the same payload via record_local.
+        """
+        if not (self.cloud_enabled and self.current_trace_id):
+            return
+        try:
+            from langfuse import get_client
+
+            get_client().create_score(
+                name=name,
+                value=value,
+                trace_id=self.current_trace_id,
+                metadata=metadata or {},
+            )
+        except Exception:
+            pass  # fail-open: scoring is telemetry, not behavior
+
     def traces(self) -> list[dict]:
         """Readout of local traces (oldest first) for tests and the trace UI."""
         return list(self._local_traces)

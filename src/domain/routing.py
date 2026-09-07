@@ -75,3 +75,18 @@ class QueryRoutingDecision(BaseModel):
         "(low confidence or API error) — deterministic loop trigger for #5's "
         "bounded re-route cycle",
     )
+    #: #12 Gate 1 telemetry: when the fallback fired on low confidence, the
+    #: model's RAW confidence survives here (previously only in the reasoning
+    #: string) so the distribution can be measured.
+    fallback_raw_confidence: float | None = Field(
+        default=None, description="Raw LLM confidence when the fallback replaced it"
+    )
+    fallback_reason: Literal["api_error", "low_confidence"] | None = Field(
+        default=None, description="Which trigger fired the heuristic fallback"
+    )
+    #: #13 Option B: the LLM's requires_rag disagreed with the intent-derived
+    #: truth — normalization overrides it, this flag records the confusion.
+    requires_rag_mismatch: bool = Field(
+        default=False,
+        description="LLM-declared requires_rag contradicted the intent derivation",
+    )

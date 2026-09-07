@@ -154,11 +154,12 @@ MODEL_PROFILES: dict[str, dict[str, str | int]] = {
     "bge_small_local": {"backend": "fastembed", "model": "BAAI/bge-small-en-v1.5"},
     "jina_v2_local": {"backend": "fastembed", "model": "jinaai/jina-embeddings-v2-base-en"},
     # cloud via OpenRouter (verified live 2026-09-04; free tiers first)
+    # cloud via OpenRouter (windows verified against the live catalog 2026-09-04)
     "lfm_free": {"backend": "openrouter", "model": "liquid/lfm-2.5-embedding-350m:free", "max_tokens": 512},
-    "nemotron_free": {"backend": "openrouter", "model": "nvidia/nemotron-3-embed-1b:free", "max_tokens": 2048},
-    "gemini_embedding_2": {"backend": "openrouter", "model": "google/gemini-embedding-2", "max_tokens": 2048},
-    "bge_m3": {"backend": "openrouter", "model": "baai/bge-m3", "max_tokens": 2048},
-    "voyage_4_lite": {"backend": "openrouter", "model": "voyageai/voyage-4-lite", "max_tokens": 2048},
+    "nemotron_free": {"backend": "openrouter", "model": "nvidia/nemotron-3-embed-1b:free", "max_tokens": 32768},
+    "gemini_embedding_2": {"backend": "openrouter", "model": "google/gemini-embedding-2", "max_tokens": 8192},
+    "bge_m3": {"backend": "openrouter", "model": "baai/bge-m3", "max_tokens": 8194},
+    "voyage_4_lite": {"backend": "openrouter", "model": "voyageai/voyage-4-lite", "max_tokens": 32000},
 }
 
 #: Benchmark default = cloud-only (user direction: no local model runs).

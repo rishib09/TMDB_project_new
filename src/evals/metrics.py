@@ -49,6 +49,18 @@ def aggregate(metrics: list[float]) -> float:
     return sum(metrics) / len(metrics) if metrics else 0.0
 
 
+def routing_accuracy(results: list["QueryEvalResult"]) -> float:
+    """Share of queries whose routed intent matched the expected intent.
+
+    Only rows that were actually routed count (intent_correct is not None);
+    an empty run returns 0.0 like every other metric here.
+    """
+    scored = [r for r in results if r.intent_correct is not None]
+    if not scored:
+        return 0.0
+    return sum(1.0 for r in scored if r.intent_correct) / len(scored)
+
+
 class QueryEvalResult(BaseModel):
     """Outcome of one benchmark query."""
 
@@ -67,6 +79,11 @@ class QueryEvalResult(BaseModel):
     relevancy: float | None = None
     tokens: int = 0
     cost_usd: float = 0.0
+    # routing-mode extras (#29): live router vs expected_intent
+    routed_intent: str = ""
+    intent_correct: bool | None = None
+    confidence: float | None = None
+    is_fallback: bool = False
 
 
 class BenchmarkSummary(BaseModel):
@@ -83,5 +100,9 @@ class BenchmarkSummary(BaseModel):
     relevancy: float | None = None
     total_tokens: int = 0
     total_cost_usd: float = 0.0
+    # routing-mode aggregates (#29)
+    routing_accuracy: float | None = None
+    routing_per_intent: dict[str, float] | None = None
+    fallback_count: int = 0
     per_query: list[QueryEvalResult] = Field(default_factory=list)
     delta: dict | None = None

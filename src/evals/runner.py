@@ -31,6 +31,7 @@ from src.evals.metrics import (
     context_precision_at_k,
     hit_rate_at_k,
     mrr_at_k,
+    routing_accuracy,
 )
 from src.indexing.vector_store import MovieVectorStore
 from src.retrieval.hybrid_engine import HybridRetrievalEngine
@@ -128,6 +129,41 @@ class BenchmarkRunner:
             results.append(result)
         return self._summarize(results, label, mode="full")
 
+    def run_routing(self, queries: list[dict], label: str, router) -> BenchmarkSummary:
+        """Routing mode (#29): live router call per query vs expected_intent.
+
+        Cheap by design — no retrieval, no synthesis, no judge. Records
+        per-row confidence and fallback so the #12 Gate 1 distribution and
+        the model before/after comparison come from the same run.
+        """
+        from src.domain.memory import ConversationState
+
+        results = []
+        for row in queries:
+            decision = router.route(row["query"], ConversationState())
+            results.append(
+                QueryEvalResult(
+                    query_id=row["id"], tier=row["tier"], query=row["query"],
+                    expected_path=row["expected_path"],
+                    routed_intent=decision.intent.value,
+                    intent_correct=decision.intent.value == row["expected_intent"],
+                    confidence=decision.confidence,
+                    is_fallback=decision.is_fallback,
+                )
+            )
+        summary = self._summarize(results, label, mode="routing")
+        per_intent: dict[str, list[bool]] = {}
+        for row, result in zip(queries, results, strict=True):
+            per_intent.setdefault(row["expected_intent"], []).append(
+                bool(result.intent_correct)
+            )
+        summary.routing_accuracy = routing_accuracy(results)
+        summary.routing_per_intent = {
+            intent: sum(hits) / len(hits) for intent, hits in sorted(per_intent.items())
+        }
+        summary.fallback_count = sum(1 for r in results if r.is_fallback)
+        return summary
+
     def _ir_result(self, row: dict, ranked_ids: list[int]) -> QueryEvalResult:
         relevant = row["relevant_movie_ids"]
         return QueryEvalResult(
@@ -170,7 +206,7 @@ class BenchmarkRunner:
             previous = json.loads(out_path.read_text(encoding="utf-8"))
             summary.delta = {
                 metric: round(payload[metric] - previous.get(metric, 0.0), 4)
-                for metric in ("hit_rate", "mrr", "context_precision", "faithfulness", "relevancy")
+                for metric in ("hit_rate", "mrr", "context_precision", "faithfulness", "relevancy", "routing_accuracy")
                 if payload.get(metric) is not None and previous.get(metric) is not None
             }
             payload["delta"] = summary.delta
@@ -203,12 +239,16 @@ def _push_langfuse(summary: BenchmarkSummary, dataset_name: str = "maya-benchmar
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Maya benchmark runner (#6)")
-    parser.add_argument("--mode", choices=["retrieval", "full"], default="retrieval")
+    parser.add_argument("--mode", choices=["retrieval", "full", "routing"], default="retrieval")
     parser.add_argument("--label", default=None, help="results file label (default: rag_version)")
     parser.add_argument("--versions", default=None, help="comma-separated rag_versions (retrieval mode)")
     parser.add_argument("--dataset", type=Path, default=DEFAULT_DATASET)
     parser.add_argument("--limit", type=int, default=None, help="first N queries (smoke runs)")
     parser.add_argument("--push-langfuse", action="store_true")
+    parser.add_argument(
+        "--router-model", default=None,
+        help="override config.router_model (routing-mode A/B sweeps, #29)",
+    )
     args = parser.parse_args(argv)
 
     queries = load_dataset(args.dataset)
@@ -216,6 +256,31 @@ def main(argv: list[str] | None = None) -> int:
         queries = queries[: args.limit]
 
     config = ExperimentConfig()
+    if args.router_model:
+        config = config.model_copy(update={"router_model": args.router_model})
+
+    if args.mode == "routing":
+        # Routing mode needs no retrieval stack — router + dataset only (#29).
+        from src.maya.router import MayaRouter
+
+        label = args.label or f"routing_{config.router_model.split('/')[-1]}"
+        runner = BenchmarkRunner(config, engine=None)
+        summary = runner.run_routing(queries, label, MayaRouter(config))
+        path = runner.save(summary)
+        print(
+            f"[{label}] routing n={summary.n_queries} "
+            f"accuracy={summary.routing_accuracy:.2f} "
+            f"fallbacks={summary.fallback_count}"
+        )
+        for intent, acc in (summary.routing_per_intent or {}).items():
+            print(f"[{label}]   {intent}: {acc:.2f}")
+        if summary.delta:
+            print(f"[{label}] delta vs prior: {summary.delta}")
+        print(f"[{label}] results: {path}")
+        if args.push_langfuse:
+            _push_langfuse(summary)
+        return 0
+
     labels = args.versions.split(",") if args.versions else [None]
     for version in labels:
         engine = HybridRetrievalEngine(

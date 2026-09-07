@@ -14,6 +14,7 @@ _ROUTER_MODELS = [
     "meta-llama/llama-3.2-3b-instruct",
     "meta-llama/llama-3.3-70b-instruct",
     "google/gemini-2.0-flash-lite",
+    "~google/gemini-flash-latest",  # #29 upgrade (~ = OpenRouter newest-Flash alias)
 ]
 _SYNTH_MODELS = [
     "meta-llama/llama-3.3-70b-instruct",
@@ -90,16 +91,23 @@ def knob_editor(config: ExperimentConfig, version: int) -> ExperimentConfig | No
             "Route max attempts (bounded re-route cycle)", 1, 5, config.route_max_attempts,
             key=f"attempts_{v}",
         )
+        threshold = st.slider(
+            "Router confidence threshold (below → heuristic fallback, #12)",
+            0.0, 1.0, config.confidence_threshold, 0.05,
+            key=f"conf_threshold_{v}",
+        )
         cwa = st.checkbox(
             "Closed-world-assumption grounding enforcement", config.cwa_guardrail_enabled,
             key=f"cwa_{v}",
         )
         for old, new in [
-            (config.route_max_attempts, attempts), (config.cwa_guardrail_enabled, cwa)
+            (config.route_max_attempts, attempts), (config.cwa_guardrail_enabled, cwa),
+            (config.confidence_threshold, threshold),
         ]:
             if old != new:
                 changed = True
         edited.route_max_attempts, edited.cwa_guardrail_enabled = attempts, cwa
+        edited.confidence_threshold = threshold
 
     return edited if changed else None
 
@@ -146,7 +154,7 @@ def render_lab(session) -> None:
 
     st.caption(
         "Fast Budget: 3B router + Flash-Lite synthesis, dense-only, small context. "
-        "Production: 3B router + 70B synthesis, 50/50 dense-lexical RRF. "
+        "Production: Gemini Flash router (#29) + 70B synthesis, 50/50 dense-lexical RRF. "
         "Naive Baseline: 3B end-to-end, dense-only."
     )
 

@@ -133,22 +133,27 @@ class MayaRouter:
         self,
         config: ExperimentConfig,
         api_key: str | None = None,
-        confidence_threshold: float = 0.5,
+        confidence_threshold: float | None = None,
         genre_vocabulary: Collection[str] = (),
     ) -> None:
         """Builds the bound structured-output chain once.
 
         Args:
-            config: Active experiment config (router model, temperature).
+            config: Active experiment config (router model, temperature,
+                confidence threshold).
             api_key: OpenRouter key; defaults to ``OPENROUTER_API_KEY`` env var.
-            confidence_threshold: Decisions below this confidence trigger the
-                heuristic fallback.
+            confidence_threshold: Explicit override (tests); by default the
+                threshold comes from ``config.confidence_threshold`` (ADR 0004).
             genre_vocabulary: Genre names present in the dataset (#26 genre
                 guard). Fed from ``MovieDatabase.distinct_genres()`` — the
                 data is the vocabulary. Empty set simply disables the guard.
         """
         self.config = config
-        self.confidence_threshold = confidence_threshold
+        self.confidence_threshold = (
+            confidence_threshold
+            if confidence_threshold is not None
+            else config.confidence_threshold
+        )
         self.genre_vocabulary = frozenset(
             g.lower().strip() for g in genre_vocabulary if g.strip()
         )
@@ -182,14 +187,17 @@ class MayaRouter:
             decision = self._chain.invoke(messages)
         except Exception as exc:  # noqa: BLE001 — any API/schema failure degrades gracefully
             fallback = self._heuristic_fallback(
-                query, state, reason=f"router API error: {exc}"
+                query, state, reason=f"router API error: {exc}",
+                fallback_reason="api_error",
             )
             return self._apply_session_exclusions(fallback, state)
 
         decision = self._normalize_decision(decision, query)
         if decision.confidence < self.confidence_threshold:
             fallback = self._heuristic_fallback(
-                query, state, reason=f"low router confidence: {decision.confidence:.2f}"
+                query, state, reason=f"low router confidence: {decision.confidence:.2f}",
+                fallback_reason="low_confidence",
+                raw_confidence=decision.confidence,
             )
             return self._apply_session_exclusions(fallback, state)
         return self._apply_session_exclusions(decision, state)
@@ -268,9 +276,13 @@ class MayaRouter:
             if updates:
                 filters = filters.model_copy(update=updates)
 
+        derived_requires_rag = decision.intent in RETRIEVAL_INTENTS
         return decision.model_copy(
             update={
-                "requires_rag": decision.intent in RETRIEVAL_INTENTS,
+                "requires_rag": derived_requires_rag,
+                # #13 Option B: record the contradiction as a confusion signal
+                # before the override erases the evidence.
+                "requires_rag_mismatch": decision.requires_rag != derived_requires_rag,
                 "filters": filters,
                 "mood": mood,
                 "audience": audience,
@@ -336,7 +348,12 @@ class MayaRouter:
         return messages
 
     def _heuristic_fallback(
-        self, query: str, state: ConversationState, reason: str
+        self,
+        query: str,
+        state: ConversationState,
+        reason: str,
+        fallback_reason: str = "api_error",
+        raw_confidence: float | None = None,
     ) -> QueryRoutingDecision:
         """Keyword-regex safety net used when the API fails or is unsure.
 
@@ -365,6 +382,8 @@ class MayaRouter:
             requires_rag=intent in RETRIEVAL_INTENTS,
             reasoning=f"Heuristic fallback: {reason}",
             is_fallback=True,
+            fallback_reason=fallback_reason,  # type: ignore[arg-type]
+            fallback_raw_confidence=raw_confidence,  # #12 Gate 1 telemetry
         )
 
     def _apply_session_exclusions(

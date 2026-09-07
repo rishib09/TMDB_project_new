@@ -16,6 +16,7 @@ from src.domain.memory import ConversationState
 from src.feedback.langfuse_score import push_feedback_score
 from src.feedback.store import FeedbackStore
 from src.graph.orchestrator import build_maya_graph
+from src.indexing.embeddings import provider_from_profile
 from src.indexing.vector_store import MovieVectorStore
 from src.maya.agent import MayaSynthesizer
 from src.maya.guardrails import SessionTokenLimiter, WeeklyBudgetTracker
@@ -61,7 +62,13 @@ class MayaSession:
         self.view = "Chat"  # sidebar navigation: Chat | Evals | Traces
         self.feedback_log: dict[int, int] = {}  # assistant-turn index → ±1 (thumbs)
         self.feedback_store = FeedbackStore()  # SQLite persistence (#9)
-        self.rag_version = "v1_1_enriched"  # matches _build_graph engine wiring
+        # #11 Phase 1 verdict (ADR 0008): gemini-embedding-2 via OpenRouter is
+        # the production dense path — 100% golden hit@5 / MRR 0.964 on the
+        # `full` preset, vs 71% for the best free model. Fail-closed: without
+        # OPENROUTER_API_KEY the app refuses to start rather than silently
+        # degrading to a weaker collection.
+        self.rag_version = "full_gemini_embedding_2"
+        self.search_provider = provider_from_profile("gemini_embedding_2")
         self.admin_mode = False
         self.config_version = 0  # bumped on preset apply → knob widgets remount
         self.turn_log: list[dict] = []  # one row per turn for badges/trace
@@ -79,6 +86,7 @@ class MayaSession:
             hybrid_alpha=self.config.hybrid_alpha,
             reranker_enabled=self.config.reranker_enabled,
             reranker_model=self.config.reranker_model,
+            search_provider=self.search_provider,
         )
         return build_maya_graph(
             self.config,

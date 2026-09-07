@@ -158,6 +158,12 @@ _AUDIENCE_VOCAB: ClassVar[dict[str, str]] = {
     "adults": "adults",
     "grown-ups": "adults",
     "solo": "solo",
+    # #27-P: every phrasing the audience probe itself invites must extract
+    "alone": "solo",
+    "just me": "solo",
+    "just for me": "solo",
+    "by myself": "solo",
+    "on my own": "solo",
 }
 
 
@@ -350,6 +356,13 @@ def preference_chips(prefs: UserSessionPreferences) -> list[str]:
     if prefs.preferred_genres:
         chips.append("genres: " + ", ".join(prefs.preferred_genres))
     chips.extend(f"dir. {d}" for d in prefs.preferred_directors)
+    # #27-Q: carried year constraints are visible like any other filter.
+    if prefs.exact_year:
+        chips.append(f"year: {prefs.exact_year}")
+    elif prefs.year_min or prefs.year_max:
+        lo = prefs.year_min or "…"
+        hi = prefs.year_max or "…"
+        chips.append(f"years: {lo}-{hi}")
     return chips
 
 
