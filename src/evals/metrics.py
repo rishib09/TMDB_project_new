@@ -92,6 +92,14 @@ class BenchmarkSummary(BaseModel):
     label: str
     mode: str
     config_snapshot: dict = Field(default_factory=dict)
+    # #59 run identity + staleness stamps (#54 grill D1/D7)
+    config_hash: str = ""
+    preset: str = "custom"
+    dataset_version: str = ""
+    collection: str = ""
+    # #59 sweep attribution (#54 grill D3): set when this run is one point of
+    # a one-factor-at-a-time sweep against the Production baseline.
+    sweep: dict | None = None
     n_queries: int = 0
     hit_rate: float = 0.0
     mrr: float = 0.0
