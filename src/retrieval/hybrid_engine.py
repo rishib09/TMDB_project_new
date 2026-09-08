@@ -77,7 +77,9 @@ class HybridRetrievalEngine:
             return self._retrieve_sql(routing, top_k)
 
         dense = self._retrieve_dense(query, candidate_pool)
-        sparse = self._retrieve_bm25(self.sparse_query(query, routing.filters), candidate_pool)
+        sparse = self._retrieve_bm25(
+            self.sparse_query(query, routing.filters, mood=routing.mood), candidate_pool
+        )
         fused = self._rrf_fuse(dense, sparse)
 
         # Uniform post-filtering: positive filters + exclusions on the small
@@ -162,19 +164,25 @@ class HybridRetrievalEngine:
         return self.db.search_bm25(query, limit=top_k)
 
     @staticmethod
-    def sparse_query(query: str, filters: MetadataFilterCriteria | None) -> str:
-        """Deliberate BM25 query construction (#32).
+    def sparse_query(
+        query: str,
+        filters: MetadataFilterCriteria | None,
+        mood: str = "",
+    ) -> str:
+        """Deliberate BM25 query construction (#32/#34).
 
         Excluded-entity tokens (actors, genres) must never enter FTS5 as
         positive keywords — BM25 rewards title matches on them (e.g. 'no Tom
         Cruise' retrieving 'Speed 2: Cruise Control'). Exclusions act only as
-        post-retrieval filters; unrelated tokens pass through untouched.
+        post-retrieval filters. Mood vocabulary is likewise stripped (#34):
+        'funny' as a keyword rewarded pure title matches (Funny People) over
+        comedic fit — mood flavors the dense side only. Unrelated tokens pass
+        through untouched.
         """
-        if not filters:
-            return query
-        banned: set[str] = set()
-        for entity in (*filters.excluded_actors, *filters.excluded_genres):
-            banned.update(token.lower() for token in entity.split())
+        banned: set[str] = {token.lower() for token in mood.split()}
+        if filters:
+            for entity in (*filters.excluded_actors, *filters.excluded_genres):
+                banned.update(token.lower() for token in entity.split())
         if not banned:
             return query
         kept = [token for token in query.split() if token.lower() not in banned]

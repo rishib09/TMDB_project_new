@@ -55,3 +55,23 @@ def test_dense_text_token_budget_compliance(db: MovieDatabase):
         # Approximate word count check (256 tokens is roughly ~180-220 words)
         words = dense_text.split()
         assert len(words) < 500, f"Dense text too long ({len(words)} words) for movie {movie.title}"
+
+
+@pytest.mark.adversarial
+def test_dataset_claim_matches_tv_movie_content(db: MovieDatabase):
+    """#34 (O3): the dataset contains TV movies (400 rows audited 2026-09-08),
+    so no project doc may claim 'theatrical' releases. If the rows are ever
+    filtered out at ingestion, this guard can be inverted to assert 0."""
+    from pathlib import Path
+
+    with db._get_connection() as conn:
+        tv_rows = conn.execute(
+            "select count(*) from movies where genres_json like '%TV Movie%'"
+        ).fetchone()[0]
+    if tv_rows == 0:
+        return  # ingestion filter landed — claim wording is free again
+    for doc in ("README.md", "CONTEXT.md", "docs/specs/spec.md"):
+        text = Path(doc).read_text(encoding="utf-8")
+        assert "theatrical releases" not in text, (
+            f"{doc} claims theatrical releases but {tv_rows} TV-movie rows exist"
+        )

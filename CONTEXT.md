@@ -1,6 +1,6 @@
 # TMDB RAG & Evaluation Harness (Maya)
 
-An observable, multi-version RAG pipeline and evaluation harness for US theatrical releases (1970–2026), fronted by the "Maya" conversational agent with deterministic intent classification, multi-turn entity memory, and Langfuse-compatible telemetry, hosted on Hugging Face Spaces.
+An observable, multi-version RAG pipeline and evaluation harness for US releases (1970–2026), fronted by the "Maya" conversational agent with deterministic intent classification, multi-turn entity memory, and Langfuse-compatible telemetry, hosted on Hugging Face Spaces.
 
 ## Language
 

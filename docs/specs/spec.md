@@ -13,7 +13,7 @@ Building reliable Retrieval-Augmented Generation (RAG) systems on cheap, cost-ef
 
 ## Solution
 
-A modular, observable RAG application and Evaluation Harness specialized in US theatrical releases from **1970 to 2026**, powered by cost-effective OpenRouter models, orchestrated via **LangGraph**, and deployed on **Hugging Face Spaces (Streamlit)**:
+A modular, observable RAG application and Evaluation Harness specialized in US releases from **1970 to 2026**, powered by cost-effective OpenRouter models, orchestrated via **LangGraph**, and deployed on **Hugging Face Spaces (Streamlit)**:
 - **"Maya" Conversational Film Curator**: Features deterministic intent routing (`GREETING`, `CAPABILITIES`, `SEMANTIC_SEARCH`, `ATTRIBUTE_FILTER`, `SUPERLATIVE_RANKING`, `NEGATION_EXCLUSION`, `OUT_OF_SCOPE`), multi-turn memory state, an **8-pillar transparent meta-system prompt**, and zero-hallucination Closed-World Assumption (CWA) grounding with dynamic movie poster rendering.
 - **Security & Budget Protection Layer**: Sanitizes prompt injection attempts, deflects off-topic queries with graceful persona pivots, enforces a 15,000 session token cap, and tracks a persistent $5.00/week budget ceiling in SQLite with friendly throttling.
 - **In-App User Feedback**: Native Streamlit `st.feedback("thumbs")` linked to `trace_id` and RAG version, mirrored to Langfuse via `langfuse.score()` and tracked in SQLite.

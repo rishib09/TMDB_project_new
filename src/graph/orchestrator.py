@@ -276,6 +276,9 @@ def build_maya_graph(
                 requires_rag=True,
                 filters=year_filters,
                 reasoning="funnel confirmed retrieval (#23)",
+                # #34: the mood rides the decision so the engine can keep it
+                # out of the sparse BM25 query (dense-side flavor only).
+                mood=merged.preferred_mood,
             )
             tracer.record_local(
                 "probe",
