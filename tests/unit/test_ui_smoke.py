@@ -85,3 +85,12 @@ def test_scroll_to_newest_renders_without_runtime():
     from src.ui.chat_tab import scroll_to_newest
 
     scroll_to_newest()  # smoke: import-time wiring correct
+
+
+def test_shared_resources_cached_across_calls():
+    """Issue #17: DB and vector store are one instance per process, so every
+    browser session and every knob-change graph rebuild reuses them."""
+    from src.ui.session import shared_database, shared_vector_store
+
+    assert shared_database() is shared_database()
+    assert shared_vector_store() is shared_vector_store()

@@ -6,6 +6,7 @@ tracer, and the ExperimentConfig. Knob changes rebuild the graph once
 Pure logic lives here so it is testable without a Streamlit runtime.
 """
 
+import logging
 from datetime import UTC, datetime
 
 import streamlit as st
@@ -16,7 +17,7 @@ from src.domain.memory import ConversationState
 from src.feedback.langfuse_score import push_feedback_score
 from src.feedback.store import FeedbackStore
 from src.graph.orchestrator import build_maya_graph
-from src.indexing.embeddings import provider_from_profile
+from src.indexing.embeddings import EmbeddingProvider, provider_from_profile
 from src.indexing.vector_store import MovieVectorStore
 from src.maya.agent import MayaSynthesizer
 from src.maya.guardrails import SessionTokenLimiter, WeeklyBudgetTracker
@@ -27,6 +28,37 @@ from src.retrieval.hybrid_engine import HybridRetrievalEngine
 from src.storage.database import MovieDatabase
 
 ADMIN_COMMAND = "/admin"
+
+logger = logging.getLogger(__name__)
+
+
+# --- shared read-only resources (issue #17) ---------------------------------
+# One instance per process, shared by every browser session and every graph
+# rebuild. Safe to share: MovieDatabase opens a fresh SQLite connection per
+# operation, MovieVectorStore wraps a thread-safe ChromaDB PersistentClient,
+# and the embedding provider is a stateless API client. Per-session state
+# (memory, tracer, limiter, config) stays on MayaSession.
+
+
+@st.cache_resource(show_spinner=False)
+def shared_database(db_path: str = "data/tmdb_movies.db") -> MovieDatabase:
+    """Process-wide SQLite handle (also the budget sink)."""
+    logger.info("building shared MovieDatabase path=%s", db_path)
+    return MovieDatabase(db_path)
+
+
+@st.cache_resource(show_spinner=False)
+def shared_vector_store(persist_dir: str = "data/chroma_db") -> MovieVectorStore:
+    """Process-wide ChromaDB client + embedder caches."""
+    logger.info("building shared MovieVectorStore path=%s", persist_dir)
+    return MovieVectorStore(persist_dir)
+
+
+@st.cache_resource(show_spinner=False)
+def shared_search_provider(profile: str) -> EmbeddingProvider:
+    """Process-wide query-embedding provider, cached per profile."""
+    logger.info("building shared search provider profile=%s", profile)
+    return provider_from_profile(profile)
 
 
 def _to_lc_messages(history) -> list[BaseMessage]:
@@ -57,7 +89,7 @@ class MayaSession:
         self.conversation = ConversationState()
         self.tracer = DualModeObservabilityManager(session_id=f"ui-{datetime.now(UTC):%H%M%S}")
         self.limiter = SessionTokenLimiter()
-        self.db = MovieDatabase("data/tmdb_movies.db")  # shared: engine + budget sink
+        self.db = shared_database()  # process-wide shared handle (#17): engine + budget sink
         self.budget_tracker = WeeklyBudgetTracker(self.db)  # weekly $ ceiling (#8)
         self.view = "Chat"  # sidebar navigation: Chat | Evals | Traces
         self.feedback_log: dict[int, int] = {}  # assistant-turn index → ±1 (thumbs)
@@ -68,7 +100,7 @@ class MayaSession:
         # OPENROUTER_API_KEY the app refuses to start rather than silently
         # degrading to a weaker collection.
         self.rag_version = "full_gemini_embedding_2"
-        self.search_provider = provider_from_profile("gemini_embedding_2")
+        self.search_provider = shared_search_provider("gemini_embedding_2")
         self.admin_mode = False
         self.config_version = 0  # bumped on preset apply → knob widgets remount
         self.turn_log: list[dict] = []  # one row per turn for badges/trace
@@ -81,7 +113,7 @@ class MayaSession:
     def _build_graph(self):
         engine = HybridRetrievalEngine(
             db=self.db,
-            vector_store=MovieVectorStore("data/chroma_db"),
+            vector_store=shared_vector_store(),
             rag_version=self.rag_version,
             hybrid_alpha=self.config.hybrid_alpha,
             reranker_enabled=self.config.reranker_enabled,
