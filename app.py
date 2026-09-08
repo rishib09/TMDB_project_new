@@ -43,6 +43,6 @@ with st.sidebar:
 if session.view == "Chat":
     render_chat(session)
 elif session.view == "Evals":
-    render_evals()
+    render_evals(session)
 else:
     render_traces(session)
