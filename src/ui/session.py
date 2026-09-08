@@ -181,7 +181,7 @@ class MayaSession:
 
     # --- conversation turn ---
 
-    def turn(self, query: str) -> None:
+    def turn(self, query: str, *, recalled: bool = False) -> None:
         """One full Maya turn: guard → route/funnel → retrieve → synthesize.
 
         The turn_log row is built ATOMICALLY by ``_build_turn_row`` from the
@@ -192,6 +192,10 @@ class MayaSession:
         graph = self.ensure_graph()
         ring_before = len(self.tracer.traces())
         trace_id = self.tracer.new_turn_trace()  # per-turn id for feedback (#9)
+        if recalled:
+            # #48 telemetry: recall usage must be observable (ADR 0009) — the
+            # evidence base for ever revisiting a latency cache.
+            self.tracer.record_local("recall", {"query": query})
         history = _to_lc_messages(self.conversation.messages)
         out = graph.invoke(
             {
@@ -217,6 +221,7 @@ class MayaSession:
             new_traces=slice_new_traces(ring_before, self.tracer.traces()),
             prev_tokens=self.conversation.session_tokens,
         )
+        row["recalled"] = recalled  # #48: replayed input, evaluated fresh
         movies = out.get("retrieved_movies", [])
         self.last_movies = movies
         # Guided narrowing (#22): probe answers extracted this turn persist
