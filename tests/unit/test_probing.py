@@ -365,3 +365,95 @@ class TestEraFunnelOwnership:
         assert has_year_constraint(UserSessionPreferences(exact_year=1999))
         assert has_year_constraint(UserSessionPreferences(year_min=1980))
         assert has_year_constraint(UserSessionPreferences(year_max=2000))
+
+
+class TestYearConflictGuard:
+    """#56-F3: merges must never produce an impossible year range."""
+
+    def _merge(self, current, incoming):
+        from src.domain.memory import merge_preferences
+        return merge_preferences(current, incoming)
+
+    def test_recent_after_old_drops_old_ceiling(self):
+        merged = self._merge(
+            UserSessionPreferences(year_max=2000),
+            UserSessionPreferences(year_min=2015),
+        )
+        assert merged.year_min == 2015 and merged.year_max is None
+
+    def test_old_after_recent_drops_recent_floor(self):
+        merged = self._merge(
+            UserSessionPreferences(year_min=2015),
+            UserSessionPreferences(year_max=2000),
+        )
+        assert merged.year_max == 2000 and merged.year_min is None
+
+    def test_compatible_bounds_combine(self):
+        """'from 1990 onwards' then 'old' = 1990-2000, a valid refinement."""
+        merged = self._merge(
+            UserSessionPreferences(year_min=1990),
+            UserSessionPreferences(year_max=2000),
+        )
+        assert (merged.year_min, merged.year_max) == (1990, 2000)
+
+    def test_new_range_retires_old_exact_year(self):
+        merged = self._merge(
+            UserSessionPreferences(exact_year=2005),
+            UserSessionPreferences(year_min=1980, year_max=1989),
+        )
+        assert merged.exact_year is None
+        assert (merged.year_min, merged.year_max) == (1980, 1989)
+
+    def test_new_exact_year_retires_old_range(self):
+        merged = self._merge(
+            UserSessionPreferences(year_min=1980, year_max=1989),
+            UserSessionPreferences(exact_year=2005),
+        )
+        assert merged.exact_year == 2005
+        assert merged.year_min is None and merged.year_max is None
+
+    def test_no_year_update_keeps_current(self):
+        merged = self._merge(
+            UserSessionPreferences(year_max=2000, preferred_mood="funny"),
+            UserSessionPreferences(audience="kids"),
+        )
+        assert merged.year_max == 2000
+
+
+class TestGenresFromCandidates:
+    """#56-F2: union-intent flag lifecycle."""
+
+    def test_flag_survives_ordinary_merge(self):
+        from src.domain.memory import merge_preferences
+        current = UserSessionPreferences(
+            preferred_genres=["Comedy", "Drama"], genres_from_candidates=True,
+        )
+        merged = merge_preferences(current, UserSessionPreferences(audience="solo"))
+        assert merged.genres_from_candidates is True
+
+    def test_flag_retired_with_genre_pivot(self):
+        from src.domain.memory import merge_preferences
+        current = UserSessionPreferences(
+            preferred_mood="feel-good",
+            preferred_genres=["Comedy", "Drama"], genres_from_candidates=True,
+        )
+        merged = merge_preferences(current, UserSessionPreferences(genre_pivot=True))
+        assert merged.genres_from_candidates is False
+
+    def test_single_candidate_auto_accept_sets_flag(self):
+        from src.maya.probing import next_funnel_step
+        outcome = next_funnel_step(
+            UserSessionPreferences(preferred_mood="funny"), probe_count=0,
+        )
+        assert outcome.prefs_update.preferred_genres == ["Comedy"]
+        assert outcome.prefs_update.genres_from_candidates is True
+
+    def test_auto_accept_with_explicit_base_keeps_intersection(self):
+        from src.maya.probing import next_funnel_step
+        outcome = next_funnel_step(
+            UserSessionPreferences(
+                preferred_mood="funny", preferred_genres=["Romance"],
+            ),
+            probe_count=0,
+        )
+        assert outcome.prefs_update.genres_from_candidates is False

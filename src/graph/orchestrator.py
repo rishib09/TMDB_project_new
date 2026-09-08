@@ -163,6 +163,17 @@ def build_maya_graph(
                 preferred_mood=signals.preferred_mood or vocab.preferred_mood,
                 audience=signals.audience or vocab.audience,
             )
+        # #56-F1: era words in a ROUTED query ("show me old classic") must not
+        # be lost while the funnel probes other axes. Gated on requires_rag so
+        # non-film turns ("how old are you") never pollute preferences.
+        if decision.requires_rag:
+            era = extract_era(
+                state.current_query, config.era_old_year_max, config.era_recent_year_min
+            )
+            if has_year_constraint(era):
+                signals.exact_year = era.exact_year
+                signals.year_min = era.year_min
+                signals.year_max = era.year_max
         # #33: an explicit genre pivot ("other suggestion ... action movies"
         # against a funny/Comedy session) retires the stale mood + derived
         # genres via the merge reducer; exclusions and constraints survive.
@@ -258,6 +269,9 @@ def build_maya_graph(
             if picks is not None:
                 outcome = next_funnel_step(merge_preferences(prefs, UserSessionPreferences(
                     preferred_genres=picks, genre_confirmation_done=True,
+                    # #56-F2: picked from OUR candidate list with no explicit
+                    # base genres = union intent ("any of these is fine").
+                    genres_from_candidates=not prefs.preferred_genres,
                 )), state.probe_count, query, config.funnel_retrieve_axes)
                 tracer.record_local("probe", {"stage": "genre_pick", "picked": picks})
 
@@ -369,9 +383,15 @@ def build_maya_graph(
             from src.domain.routing import MetadataFilterCriteria
 
             filters = decision.filters or MetadataFilterCriteria()
+            # #56-F2: candidate-list genres are a union ("any of these"), only
+            # explicitly conjoined genres keep intersection semantics.
             decision = decision.model_copy(update={"filters": filters.model_copy(update={
                 "genres": prefs.preferred_genres,
-                "genre_match": "all" if len(prefs.preferred_genres) > 1 else "any",
+                "genre_match": (
+                    "any"
+                    if prefs.genres_from_candidates or len(prefs.preferred_genres) == 1
+                    else "all"
+                ),
             })})
         results = engine.retrieve(
             query=query,
