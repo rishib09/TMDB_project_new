@@ -46,6 +46,7 @@ from src.maya.probing import (
     extract_probe_answers,
     handle_probe_answer,
     is_fresh_start,
+    is_narrowing_pivot,
     match_genre_pick,
     next_funnel_step,
     should_probe,
@@ -160,6 +161,14 @@ def build_maya_graph(
                 preferred_mood=signals.preferred_mood or vocab.preferred_mood,
                 audience=signals.audience or vocab.audience,
             )
+        # #33: an explicit genre pivot ("other suggestion ... action movies"
+        # against a funny/Comedy session) retires the stale mood + derived
+        # genres via the merge reducer; exclusions and constraints survive.
+        signals.genre_pivot = is_narrowing_pivot(
+            state.current_query,
+            list(decision.filters.genres) if decision.filters else [],
+            state.session_preferences,
+        )
         tracer.record_local(
             "route",
             {

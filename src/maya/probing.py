@@ -62,6 +62,17 @@ FRESH_START_PHRASES: ClassVar[tuple[str, ...]] = (
     "no filters",
 )
 
+#: Narrowing-pivot vocabulary (#33): softer than FRESH_START (which wipes
+#: everything) — combined with a stated genre it retires only the stale
+#: mood + derived-genre narrowing; exclusions and constraints survive.
+NARROWING_PIVOT_PHRASES: ClassVar[tuple[str, ...]] = (
+    "other suggestion",
+    "other suggestions",
+    "other recommendation",
+    "other recommendations",
+    "something else",
+)
+
 #: Bare affirmations (#26-O): after a confirm/genre stage, a bare "yes" must
 #: RETRIEVE — it fell through to the router and became an ungrounded answer.
 AFFIRMATIONS: ClassVar[tuple[str, ...]] = (
@@ -253,7 +264,7 @@ def canonical_mood(mood: str) -> str:
     and funnel state machine key on canonical values. Unknown moods pass
     through (open vocabulary, flavor-only per #25).
     """
-    cleaned = strip_markup((mood or "")).strip().lower()
+    cleaned = strip_markup(mood or "").strip().lower()
     if not cleaned:
         return ""
     if cleaned in _MOOD_VOCAB:  # already a keyword
@@ -340,6 +351,31 @@ def is_fresh_start(query: str) -> bool:
     return bool(re.search(
         r"\b(remove|clear|reset|drop|wipe)\b[^.!?]{0,24}\bfilters?\b", lowered
     ))
+
+
+def is_narrowing_pivot(
+    query: str,
+    explicit_genres: list[str],
+    prefs: UserSessionPreferences,
+) -> bool:
+    """True when this turn pivots away from the accumulated narrowing (#33).
+
+    Fires only when the router extracted an explicit genre this turn, AND
+    either (a) it is disjoint from the current narrowing genres (stated-genre
+    conflict: 'action' against a funny/Comedy session), or (b) the utterance
+    carries pivot vocabulary while narrowing exists. Overlapping genres are a
+    refinement, never a pivot.
+    """
+    stated = {g.lower() for g in explicit_genres}
+    if not stated:
+        return False
+    current = {g.lower() for g in prefs.preferred_genres}
+    if current and not (stated & current):
+        return True
+    lowered = query.lower()
+    if any(phrase in lowered for phrase in NARROWING_PIVOT_PHRASES):
+        return bool(prefs.preferred_mood or current)
+    return False
 
 
 def build_filter_carryover_notice(prefs: UserSessionPreferences) -> str:
