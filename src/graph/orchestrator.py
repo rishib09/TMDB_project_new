@@ -258,7 +258,7 @@ def build_maya_graph(
             if picks is not None:
                 outcome = next_funnel_step(merge_preferences(prefs, UserSessionPreferences(
                     preferred_genres=picks, genre_confirmation_done=True,
-                )), state.probe_count, query)
+                )), state.probe_count, query, config.funnel_retrieve_axes)
                 tracer.record_local("probe", {"stage": "genre_pick", "picked": picks})
 
         # 2. Explicit confirmation → retrieve now; otherwise extract + progress.
@@ -279,6 +279,7 @@ def build_maya_graph(
                 )
             outcome = handle_probe_answer(
                 query, prefs, state.probe_count, prefs_update=signals,
+                retrieve_axes=config.funnel_retrieve_axes,
             )
 
         if outcome.action == "retrieve":

@@ -340,6 +340,41 @@ def test_genre_pivot_clears_stale_mood_and_derived_genres():
     assert merged.genre_confirmation_done is False
 
 
+# --- #53: two answered axes retrieve immediately — no confirm turn -----------
+
+
+def test_two_axes_retrieve_immediately_no_confirm_question():
+    """#53 repro: 'Show me a romantic movie.' → 'Just for me and my girlfriend'
+    must retrieve on the second turn. The old confirm stage ('shall I pull the
+    films now?') stalled retrieval behind a vocabulary-gated extra turn —
+    'all of them' then fell through to OUT_OF_SCOPE with 0 movies."""
+    from src.domain.routing import IntentType, QueryRoutingDecision
+    from tests.unit.test_orchestrator import FakeEngine
+
+    extractor_decision = QueryRoutingDecision(
+        intent=IntentType.SEMANTIC_SEARCH, confidence=0.9,
+        standalone_query="just for me and my girlfriend", requires_rag=True,
+        audience="me and my girlfriend",
+    )
+    engine = FakeEngine(movies=[])
+    graph = _funnel_graph([extractor_decision], engine)
+    out = graph.invoke({
+        "messages": [HumanMessage(content="Just for me and my girlfriend")],
+        "session_preferences": UserSessionPreferences(
+            preferred_mood="romantic", preferred_genres=["Romance"],
+            genre_confirmation_done=True,
+        ),
+        "funnel_active": True,
+        "probe_count": 1,
+    })
+    assert engine.calls, "two answered axes must retrieve, not ask to confirm"
+    assert out["funnel_active"] is False
+    assert "shall I pull the films now" not in out["final_response"]
+    prefs = out["session_preferences"]
+    assert prefs.audience == "me and my girlfriend"
+    assert prefs.preferred_mood == "romantic"
+
+
 # --- #42: mid-funnel era refinement must not escape the funnel ---------------
 
 

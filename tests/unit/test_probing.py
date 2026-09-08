@@ -7,7 +7,6 @@ from src.domain.routing import IntentType, MetadataFilterCriteria, QueryRoutingD
 from src.maya.probing import (
     MAX_PROBE_TURNS,
     PROBE_FUNNEL,
-    build_confirm_response,
     build_funnel_query,
     build_probe_response,
     extract_probe_answers,
@@ -172,14 +171,22 @@ def test_probe_answer_fragments_update_prefs_and_continue_funnel():
     assert "Which of those" in outcome.response
 
 
-def test_two_answers_trigger_confirm_stage():
+def test_two_answers_retrieve_immediately():
+    """#53: at the axis threshold the funnel retrieves — no confirm turn."""
     first = handle_probe_answer("something funny", UserSessionPreferences(), 0)
     assert first.action == "probe"
     merged = UserSessionPreferences(preferred_mood="funny")
     second = handle_probe_answer("for the kids", merged, 1)
-    assert second.action == "confirm"
-    assert "shall I pull the films" in second.response
-    assert "for kids" in second.response  # trail echoes both axes
+    assert second.action == "retrieve"
+    assert second.prefs_update.preferred_mood == "funny"
+    assert second.prefs_update.audience == "kids"
+
+
+def test_retrieve_axes_threshold_is_tunable():
+    """#53: retrieve_axes=3 keeps probing at 2 answered axes."""
+    merged = UserSessionPreferences(preferred_mood="funny")
+    outcome = handle_probe_answer("for the kids", merged, 1, retrieve_axes=3)
+    assert outcome.action == "probe"
 
 
 def test_confirmation_phrase_retrieves_immediately():
@@ -204,13 +211,6 @@ def test_unmatched_answer_at_cap_falls_through():
 def test_unrecognized_fallback_falls_through_to_router():
     outcome = handle_probe_answer("what about the physics of it all", UserSessionPreferences(), 0)
     assert outcome.action == "fallthrough"
-
-
-def test_confirm_response_lists_trail_and_options():
-    prefs = UserSessionPreferences(preferred_mood="funny", audience="kids")
-    text = build_confirm_response(prefs)
-    assert "a funny mood" in text and "for kids" in text
-    assert "year" in text and "director" in text  # user's requested add-more axes
 
 
 def test_funnel_query_natural_language_from_prefs():
@@ -336,7 +336,7 @@ class TestEraFunnelOwnership:
             "may be an old movie", self._prefs(), probe_count=2,
             prefs_update=UserSessionPreferences(year_max=2000),
         )
-        assert outcome.action == "confirm"
+        assert outcome.action == "retrieve"  # #53: threshold met → retrieve
         assert outcome.prefs_update.year_max == 2000
         assert outcome.prefs_update.preferred_mood == "feel-good"
 
@@ -349,14 +349,13 @@ class TestEraFunnelOwnership:
         )
         assert outcome.action == "fallthrough"
 
-    def test_confirm_trail_shows_years(self):
+    def test_preference_chips_show_years(self):
         from src.domain.memory import UserSessionPreferences, merge_preferences
-        from src.maya.probing import build_confirm_response
+        from src.maya.probing import preference_chips
         merged = merge_preferences(
             self._prefs(), UserSessionPreferences(year_max=2000)
         )
-        response = build_confirm_response(merged)
-        assert "2000" in response
+        assert any("2000" in chip for chip in preference_chips(merged))
 
     def test_has_year_constraint(self):
         from src.domain.memory import UserSessionPreferences

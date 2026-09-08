@@ -80,6 +80,13 @@ class ExperimentConfig(BaseModel):
         "below this confidence degrade to the heuristic fallback",
     )
     cwa_guardrail_enabled: bool = Field(default=True, description="Enforce Closed-World Assumption XML grounding")
+    funnel_retrieve_axes: int = Field(
+        default=2,
+        ge=1,
+        le=5,
+        description="#53: answered narrowing axes at which the funnel retrieves "
+        "immediately (no confirm-before-retrieve turn)",
+    )
     era_old_year_max: int = Field(
         default=2000,
         ge=1970,

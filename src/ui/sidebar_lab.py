@@ -243,14 +243,34 @@ def knob_editor(
             "Closed-world-assumption grounding enforcement", config.cwa_guardrail_enabled,
             key=f"cwa_{v}",
         )
+        retrieve_axes = st.slider(
+            "Funnel retrieve threshold (answered axes → retrieve, #53)",
+            1, 5, config.funnel_retrieve_axes,
+            key=f"retrieve_axes_{v}",
+        )
+        era_old = st.number_input(
+            "'Old/classic movie' year cutoff (year_max, #42)",
+            1970, 2026, config.era_old_year_max,
+            key=f"era_old_{v}",
+        )
+        era_recent = st.number_input(
+            "'Recent/latest movie' year cutoff (year_min, #42)",
+            1970, 2026, config.era_recent_year_min,
+            key=f"era_recent_{v}",
+        )
         for old, new in [
             (config.route_max_attempts, attempts), (config.cwa_guardrail_enabled, cwa),
             (config.confidence_threshold, threshold),
+            (config.funnel_retrieve_axes, retrieve_axes),
+            (config.era_old_year_max, era_old),
+            (config.era_recent_year_min, era_recent),
         ]:
             if old != new:
                 changed = True
         edited.route_max_attempts, edited.cwa_guardrail_enabled = attempts, cwa
         edited.confidence_threshold = threshold
+        edited.funnel_retrieve_axes = retrieve_axes
+        edited.era_old_year_max, edited.era_recent_year_min = era_old, era_recent
 
     return edited if changed else None
 
