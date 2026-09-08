@@ -296,6 +296,15 @@ def render_lab(session) -> None:
     st.caption("Live architecture knobs — applied from the next message.")
 
     active = matching_preset(session.config)
+    if active is not None:
+        # Neutral highlight matching the nav's selected-segment look — the
+        # theme primary (red) is reserved for accents, not selection state.
+        st.markdown(
+            f"<style>.st-key-preset_{active.value} button {{"
+            "background-color: #F3F4F6; border-color: #1B1B24; font-weight: 600;"
+            "}</style>",
+            unsafe_allow_html=True,
+        )
     preset_cols = st.columns(3)
     preset_map = [
         (preset_cols[0], PresetType.FAST_BUDGET, "Fast Budget"),
@@ -306,7 +315,7 @@ def render_lab(session) -> None:
         if col.button(
             label,
             use_container_width=True,
-            type="primary" if active == preset else "secondary",
+            key=f"preset_{preset.value}",
             help=_PRESET_HELP[preset],
         ):
             session.apply_preset(preset)
