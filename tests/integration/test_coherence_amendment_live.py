@@ -9,7 +9,6 @@ from langchain_core.messages import HumanMessage
 
 from src.domain.config import ExperimentConfig
 from src.domain.memory import UserSessionPreferences
-from src.domain.routing import IntentType
 from src.graph.orchestrator import build_maya_graph
 from src.indexing.vector_store import MovieVectorStore
 from src.maya.agent import MayaSynthesizer

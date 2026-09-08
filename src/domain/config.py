@@ -1,12 +1,11 @@
 """Dynamic Architecture Experimentation Control Plane Configuration."""
 
-from enum import Enum
-from typing import Literal
+from enum import StrEnum
 
 from pydantic import BaseModel, Field, model_validator
 
 
-class PresetType(str, Enum):
+class PresetType(StrEnum):
     """Predefined Architecture Presets."""
     FAST_BUDGET = "FAST_BUDGET"
     PRODUCTION_HYBRID = "PRODUCTION_HYBRID"
