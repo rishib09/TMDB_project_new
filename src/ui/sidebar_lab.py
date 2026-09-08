@@ -16,7 +16,7 @@ from functools import lru_cache
 
 import streamlit as st
 
-from src.domain.config import ExperimentConfig, PresetType
+from src.domain.config import ExperimentConfig, PresetType, matching_preset
 from src.indexing.embeddings import MODEL_PROFILES, collection_name
 from src.maya.guardrails import SessionTokenLimiter
 
@@ -90,23 +90,6 @@ def usable_models(candidates: list[str], current: str) -> list[str]:
     if available is None:
         return candidates
     return [m for m in candidates if m in available or m == current]
-
-
-def matching_preset(config: ExperimentConfig) -> PresetType | None:
-    """The preset the config matches EXACTLY, else None (custom state).
-
-    A highlighted preset button must never lie (#30 grilling Q3): the match
-    is against a PRISTINE baseline (defaults + preset), so ANY manual knob
-    edit — preset-owned or not — clears the highlight.
-    """
-    for preset in (
-        PresetType.PRODUCTION_HYBRID,
-        PresetType.FAST_BUDGET,
-        PresetType.NAIVE_BASELINE,
-    ):
-        if ExperimentConfig().apply_preset(preset) == config:
-            return preset
-    return None
 
 
 def resolve_combo(

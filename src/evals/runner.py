@@ -21,8 +21,9 @@ from pathlib import Path
 
 from langchain_core.messages import HumanMessage
 
-from src.domain.config import ExperimentConfig
+from src.domain.config import ExperimentConfig, PresetType
 from src.domain.routing import IntentType, QueryRoutingDecision, SuperlativeCriteria
+from src.evals.identity import config_hash, preset_slug
 from src.evals.judge import MayaJudge, strip_formatting
 from src.evals.metrics import (
     BenchmarkSummary,
@@ -33,6 +34,7 @@ from src.evals.metrics import (
     mrr_at_k,
     routing_accuracy,
 )
+from src.indexing.embeddings import collection_name, provider_from_profile
 from src.indexing.vector_store import MovieVectorStore
 from src.retrieval.hybrid_engine import HybridRetrievalEngine
 from src.storage.database import MovieDatabase
@@ -40,6 +42,55 @@ from src.storage.database import MovieDatabase
 DEFAULT_DATASET = Path("data/eval_benchmark_dataset.json")
 RESULTS_DIR = Path("evals/results")
 K = 5  # benchmark reports @5 throughout (matches the #4 close-out numbers)
+
+#: #59 curated OFAT sweeps (#54 grill D3) — every point is Production + ONE
+#: knob changed. Synthesis-side knobs are deliberately absent (on-demand only).
+ADR_0008_COMBOS: list[tuple[str, str]] = [
+    ("full", "gemini_embedding_2"), ("minimal", "gemini_embedding_2"),
+    ("full", "nemotron_free"), ("minimal", "nemotron_free"),
+    ("full", "lfm_free"), ("minimal", "lfm_free"),
+]
+SWEEPS: dict[str, list] = {
+    "reranker": ["off", "ms-marco-MiniLM-L-12-v2", "ms-marco-TinyBERT-L-2-v2", "ce-esci-MiniLM-L12-v2"],
+    "hybrid_alpha": [0.0, 0.25, 0.5, 0.75, 1.0],
+    "retrieval_top_k": [3, 5, 10],
+    "embedding_combo": ADR_0008_COMBOS,
+    "router_model": [
+        "~google/gemini-flash-latest",
+        "meta-llama/llama-3.3-70b-instruct",
+        "meta-llama/llama-3.2-3b-instruct",
+    ],
+}
+
+
+def sweep_configs(knob: str) -> list[tuple[str, ExperimentConfig]]:
+    """(value-label, config) points for a knob sweep — pure, unit-tested.
+
+    Baseline = pristine Production preset; exactly one knob varies per point.
+    """
+    if knob not in SWEEPS:
+        raise ValueError(f"unknown sweep knob: {knob} (have: {sorted(SWEEPS)})")
+    points = []
+    for value in SWEEPS[knob]:
+        config = ExperimentConfig().apply_preset(PresetType.PRODUCTION_HYBRID)
+        if knob == "reranker":
+            config.reranker_enabled = value != "off"
+            if value != "off":
+                config.reranker_model = value
+            label = str(value)
+        elif knob == "embedding_combo":
+            config.column_preset, config.embedding_profile = value
+            label = f"{value[0]}_{value[1]}"
+        else:
+            setattr(config, knob, value)
+            label = str(value)
+        points.append((label, config))
+    return points
+
+
+def load_dataset_version(path: Path = DEFAULT_DATASET) -> str:
+    """Dataset build stamp for staleness flags (#54 grill D7)."""
+    return str(json.loads(path.read_text(encoding="utf-8")).get("version", ""))
 
 
 def load_dataset(path: Path = DEFAULT_DATASET) -> list[dict]:
@@ -80,11 +131,30 @@ class BenchmarkRunner:
         engine: HybridRetrievalEngine,
         judge: MayaJudge | None = None,
         graph=None,  # CompiledStateGraph — required for full mode
+        budget_tracker=None,  # WeeklyBudgetTracker — gates live modes (#59)
+        dataset_version: str = "",
     ) -> None:
         self.config = config
         self.engine = engine
         self.judge = judge
         self.graph = graph
+        self.budget_tracker = budget_tracker
+        self.dataset_version = dataset_version
+
+    def _budget_check(self) -> None:
+        """Aborts a live run when the weekly cap is exhausted (#54 grill D6).
+
+        Same guardrail chat turns get — an eval sweep must not silently burn
+        the $10/week budget. Checked before the run and between queries.
+        """
+        if self.budget_tracker is None:
+            return
+        spend = self.budget_tracker.weekly_spend()
+        if self.budget_tracker.verdict_for(spend).value == "blocked":
+            raise RuntimeError(
+                f"weekly API budget exhausted (${spend:.2f}) — eval run aborted; "
+                "spend resets on Monday"
+            )
 
     def run_retrieval(self, queries: list[dict], label: str) -> BenchmarkSummary:
         """Offline mode: IR metrics from deterministic retrieval replay.
@@ -110,6 +180,7 @@ class BenchmarkRunner:
             raise ValueError("full mode requires both graph and judge")
         results = []
         for row in queries:
+            self._budget_check()
             turn = self.graph.invoke({"messages": [HumanMessage(content=row["query"])]})
             movies = turn.get("retrieved_movies", [])
             response = turn.get("final_response", "")
@@ -140,6 +211,7 @@ class BenchmarkRunner:
 
         results = []
         for row in queries:
+            self._budget_check()
             decision = router.route(row["query"], ConversationState())
             results.append(
                 QueryEvalResult(
@@ -185,6 +257,10 @@ class BenchmarkRunner:
         return BenchmarkSummary(
             label=label, mode=mode,
             config_snapshot=snapshot,
+            config_hash=config_hash(self.config),
+            preset=preset_slug(self.config),
+            dataset_version=self.dataset_version,
+            collection=str(getattr(self.engine, "rag_version", "")),
             n_queries=len(results),
             hit_rate=aggregate([r.hit_rate for r in results]),
             mrr=aggregate([r.mrr for r in results]),
@@ -197,17 +273,30 @@ class BenchmarkRunner:
         )
 
     def save(self, summary: BenchmarkSummary, out_dir: Path = RESULTS_DIR) -> Path:
-        """Writes <label>.json with a delta block vs. the previous same-label run."""
+        """Writes `{preset}_{confighash8}_{timestamp}.json` (#59 run identity).
+
+        Delta is computed vs the most recent prior run with the SAME config
+        hash and mode — never vs a different architecture wearing the same
+        label. Legacy `<label>.json` artifacts don't match the glob and are
+        left untouched (history, #54 grill D2).
+        """
         out_dir.mkdir(parents=True, exist_ok=True)
-        out_path = out_dir / f"{summary.label}.json"
+        now = datetime.now(UTC)
+        out_path = out_dir / f"{summary.preset}_{summary.config_hash}_{now:%Y%m%dT%H%M%SZ}.json"
         payload = summary.model_dump()
-        payload["timestamp"] = datetime.now(UTC).isoformat()
-        if out_path.exists():
-            previous = json.loads(out_path.read_text(encoding="utf-8"))
+        payload["timestamp"] = now.isoformat()
+        prior = sorted(out_dir.glob(f"*_{summary.config_hash}_*.json"))
+        prior_same_mode = None
+        for path in reversed(prior):
+            candidate = json.loads(path.read_text(encoding="utf-8"))
+            if candidate.get("mode") == summary.mode:
+                prior_same_mode = candidate
+                break
+        if prior_same_mode is not None:
             summary.delta = {
-                metric: round(payload[metric] - previous.get(metric, 0.0), 4)
+                metric: round(payload[metric] - prior_same_mode.get(metric, 0.0), 4)
                 for metric in ("hit_rate", "mrr", "context_precision", "faithfulness", "relevancy", "routing_accuracy")
-                if payload.get(metric) is not None and previous.get(metric) is not None
+                if payload.get(metric) is not None and prior_same_mode.get(metric) is not None
             }
             payload["delta"] = summary.delta
         out_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -237,80 +326,29 @@ def _push_langfuse(summary: BenchmarkSummary, dataset_name: str = "maya-benchmar
         print(f"[langfuse] skipped: {exc}", file=sys.stderr)
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Maya benchmark runner (#6)")
-    parser.add_argument("--mode", choices=["retrieval", "full", "routing"], default="retrieval")
-    parser.add_argument("--label", default=None, help="results file label (default: rag_version)")
-    parser.add_argument("--versions", default=None, help="comma-separated rag_versions (retrieval mode)")
-    parser.add_argument("--dataset", type=Path, default=DEFAULT_DATASET)
-    parser.add_argument("--limit", type=int, default=None, help="first N queries (smoke runs)")
-    parser.add_argument("--push-langfuse", action="store_true")
-    parser.add_argument(
-        "--router-model", default=None,
-        help="override config.router_model (routing-mode A/B sweeps, #29)",
+def _engine_for(config: ExperimentConfig, db: MovieDatabase, store: MovieVectorStore) -> HybridRetrievalEngine:
+    """#59: the dense pair derives from config — collection AND query embedder."""
+    return HybridRetrievalEngine(
+        db=db,
+        vector_store=store,
+        rag_version=collection_name(config.column_preset, config.embedding_profile),
+        hybrid_alpha=config.hybrid_alpha,
+        reranker_enabled=config.reranker_enabled,
+        reranker_model=config.reranker_model,
+        search_provider=provider_from_profile(config.embedding_profile),
     )
-    args = parser.parse_args(argv)
 
-    queries = load_dataset(args.dataset)
-    if args.limit:
-        queries = queries[: args.limit]
 
-    config = ExperimentConfig()
-    if args.router_model:
-        config = config.model_copy(update={"router_model": args.router_model})
-
-    if args.mode == "routing":
-        # Routing mode needs no retrieval stack — router + dataset only (#29).
-        from src.maya.router import MayaRouter
-
-        label = args.label or f"routing_{config.router_model.split('/')[-1]}"
-        runner = BenchmarkRunner(config, engine=None)
-        summary = runner.run_routing(queries, label, MayaRouter(config))
-        path = runner.save(summary)
+def _report(summary: BenchmarkSummary, path: Path) -> None:
+    label = summary.label
+    if summary.mode == "routing":
         print(
             f"[{label}] routing n={summary.n_queries} "
-            f"accuracy={summary.routing_accuracy:.2f} "
-            f"fallbacks={summary.fallback_count}"
+            f"accuracy={summary.routing_accuracy:.2f} fallbacks={summary.fallback_count}"
         )
         for intent, acc in (summary.routing_per_intent or {}).items():
             print(f"[{label}]   {intent}: {acc:.2f}")
-        if summary.delta:
-            print(f"[{label}] delta vs prior: {summary.delta}")
-        print(f"[{label}] results: {path}")
-        if args.push_langfuse:
-            _push_langfuse(summary)
-        return 0
-
-    labels = args.versions.split(",") if args.versions else [None]
-    for version in labels:
-        engine = HybridRetrievalEngine(
-            db=MovieDatabase("data/tmdb_movies.db"),
-            vector_store=MovieVectorStore("data/chroma_db"),
-            rag_version=version or "v1_1_enriched",
-            hybrid_alpha=config.hybrid_alpha,
-            reranker_enabled=config.reranker_enabled,
-            reranker_model=config.reranker_model,
-        )
-        label = args.label or version or "default"
-        runner = BenchmarkRunner(config, engine)
-        if args.mode == "retrieval":
-            summary = runner.run_retrieval(queries, label)
-        else:
-            from src.graph.orchestrator import build_maya_graph
-            from src.maya.agent import MayaSynthesizer
-            from src.maya.guardrails import SessionTokenLimiter
-            from src.maya.router import MayaRouter
-            from src.observability.tracer import DualModeObservabilityManager
-
-            graph = build_maya_graph(
-                config, MayaRouter(config), engine, MayaSynthesizer(config),
-                DualModeObservabilityManager(session_id="benchmark"),
-                limiter=SessionTokenLimiter(),
-            )
-            runner.graph = graph
-            runner.judge = MayaJudge(config)
-            summary = runner.run_full(queries, label)
-        path = runner.save(summary)
+    else:
         print(
             f"[{label}] {summary.mode} n={summary.n_queries} "
             f"hit@5={summary.hit_rate:.2f} mrr@5={summary.mrr:.2f} "
@@ -319,11 +357,119 @@ def main(argv: list[str] | None = None) -> int:
             + (f" rel={summary.relevancy:.2f}" if summary.relevancy is not None else "")
             + (f" tokens={summary.total_tokens}" if summary.total_tokens else "")
         )
-        if summary.delta:
-            print(f"[{label}] delta vs prior: {summary.delta}")
-        print(f"[{label}] results: {path}")
-        if args.push_langfuse:
-            _push_langfuse(summary)
+    if summary.delta:
+        print(f"[{label}] delta vs prior: {summary.delta}")
+    print(f"[{label}] results: {path}")
+
+
+def _run_one(
+    config: ExperimentConfig, mode: str, queries: list[dict], label: str,
+    dataset_version: str, db: MovieDatabase, store: MovieVectorStore,
+) -> BenchmarkSummary | None:
+    """One run of one config. Returns None when the collection isn't built.
+
+    Availability guard (#30 rule): a combo without a built Chroma collection
+    is skipped with a warning, never silently searched against nothing.
+    """
+    from src.maya.guardrails import WeeklyBudgetTracker
+
+    tracker = WeeklyBudgetTracker(db) if mode in ("routing", "full") else None
+    if mode == "routing":
+        # Routing mode needs no retrieval stack — router + dataset only (#29).
+        from src.maya.router import MayaRouter
+
+        runner = BenchmarkRunner(
+            config, engine=None, budget_tracker=tracker, dataset_version=dataset_version
+        )
+        return runner.run_routing(queries, label, MayaRouter(config))
+
+    target = collection_name(config.column_preset, config.embedding_profile)
+    if not store.has_collection(target):
+        print(f"[{label}] skipped — collection `{target}` is not built", file=sys.stderr)
+        return None
+    engine = _engine_for(config, db, store)
+    runner = BenchmarkRunner(
+        config, engine, budget_tracker=tracker, dataset_version=dataset_version
+    )
+    if mode == "retrieval":
+        return runner.run_retrieval(queries, label)
+
+    from src.graph.orchestrator import build_maya_graph
+    from src.maya.agent import MayaSynthesizer
+    from src.maya.guardrails import SessionTokenLimiter
+    from src.maya.router import MayaRouter
+    from src.observability.tracer import DualModeObservabilityManager
+
+    runner.graph = build_maya_graph(
+        config, MayaRouter(config), engine, MayaSynthesizer(config),
+        DualModeObservabilityManager(session_id="benchmark"),
+        limiter=SessionTokenLimiter(),
+    )
+    runner.judge = MayaJudge(config)
+    return runner.run_full(queries, label)
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Maya benchmark runner (#6, #59)")
+    parser.add_argument("--mode", choices=["retrieval", "full", "routing"], default="retrieval")
+    parser.add_argument("--label", default=None, help="display label (default: preset slug)")
+    parser.add_argument("--dataset", type=Path, default=DEFAULT_DATASET)
+    parser.add_argument("--limit", type=int, default=None, help="first N queries (smoke runs)")
+    parser.add_argument("--push-langfuse", action="store_true")
+    parser.add_argument(
+        "--router-model", default=None,
+        help="override config.router_model (routing-mode A/B, #29)",
+    )
+    parser.add_argument(
+        "--sweep", choices=sorted(SWEEPS), default=None,
+        help="OFAT sweep of one knob against the Production baseline (#59)",
+    )
+    parser.add_argument(
+        "--combos", action="store_true",
+        help="run the 6 ADR 0008 column×profile cells (= --sweep embedding_combo)",
+    )
+    args = parser.parse_args(argv)
+
+    queries = load_dataset(args.dataset)
+    if args.limit:
+        queries = queries[: args.limit]
+    dataset_version = load_dataset_version(args.dataset)
+    db = MovieDatabase("data/tmdb_movies.db")
+    store = MovieVectorStore("data/chroma_db")
+
+    sweep = "embedding_combo" if args.combos else args.sweep
+    if sweep:
+        # Router-model sweeps are live routing runs; everything else is free
+        # retrieval replay (#54 grill D3).
+        mode = "routing" if sweep == "router_model" else "retrieval"
+        for value_label, config in sweep_configs(sweep):
+            label = f"{sweep}={value_label}"
+            summary = _run_one(config, mode, queries, label, dataset_version, db, store)
+            if summary is None:
+                continue
+            summary.sweep = {"knob": sweep, "value": value_label, "baseline": "production"}
+            runner = BenchmarkRunner(config, engine=None)
+            path = runner.save(summary)
+            _report(summary, path)
+            if args.push_langfuse:
+                _push_langfuse(summary)
+        return 0
+
+    config = ExperimentConfig()
+    if args.router_model:
+        config = config.model_copy(update={"router_model": args.router_model})
+    label = args.label or (
+        f"routing_{config.router_model.split('/')[-1]}" if args.mode == "routing"
+        else preset_slug(config)
+    )
+    summary = _run_one(config, args.mode, queries, label, dataset_version, db, store)
+    if summary is None:
+        return 1
+    runner = BenchmarkRunner(config, engine=None)
+    path = runner.save(summary)
+    _report(summary, path)
+    if args.push_langfuse:
+        _push_langfuse(summary)
     return 0
 
 

@@ -146,3 +146,20 @@ class ExperimentConfig(BaseModel):
             self.reranker_enabled = False
             self.retrieval_top_k = 5
         return self
+
+
+def matching_preset(config: ExperimentConfig) -> PresetType | None:
+    """The preset the config matches EXACTLY, else None (custom state).
+
+    A preset attribution must never lie (#30 grilling Q3, reused by #59 run
+    identity): the match is against a PRISTINE baseline (defaults + preset),
+    so ANY manual knob edit clears it.
+    """
+    for preset in (
+        PresetType.PRODUCTION_HYBRID,
+        PresetType.FAST_BUDGET,
+        PresetType.NAIVE_BASELINE,
+    ):
+        if ExperimentConfig().apply_preset(preset) == config:
+            return preset
+    return None
