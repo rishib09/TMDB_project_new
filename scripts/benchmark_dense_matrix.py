@@ -27,8 +27,10 @@ from src.domain.movie import MovieRecord  # noqa: E402
 from src.indexing.embeddings import (  # noqa: E402
     BENCHMARK_PROFILES,
     MODEL_PROFILES,
-    collection_name as cell_name,  # promoted to the seam (#30) — same rule
     provider_from_profile,
+)
+from src.indexing.embeddings import (  # noqa: E402
+    collection_name as cell_name,  # promoted to the seam (#30) — same rule
 )
 from src.indexing.vector_store import MovieVectorStore  # noqa: E402
 from src.storage.database import MovieDatabase  # noqa: E402
