@@ -439,3 +439,7 @@ class MovieVectorStore:
     def list_collections(self) -> list[str]:
         """Lists all existing collection names."""
         return [c.name for c in self.client.list_collections()]
+
+    def has_collection(self, name: str) -> bool:
+        """True when a non-empty collection exists (#30 Lab availability guard)."""
+        return self.count(name) > 0

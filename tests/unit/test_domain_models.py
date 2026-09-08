@@ -176,12 +176,14 @@ def test_experiment_config_presets_and_budget_clamping():
     assert config.reranker_enabled is False  # measured off beats on (issue #4 A/B)
     assert config.reranker_model == "ms-marco-MiniLM-L-12-v2"
 
-    # Switch to Fast Budget (MiniLM with 256 tokens)
+    # #30: presets own the embedding combo + retrieval shape ONLY — the
+    # router/synthesis models are independent knobs and must NOT change.
+    router_before, synth_before = config.router_model, config.synthesis_model
     config.apply_preset(PresetType.FAST_BUDGET)
-    assert config.router_model == "meta-llama/llama-3.2-3b-instruct"
-    assert config.synthesis_model == "google/gemini-2.0-flash-lite"
-    assert config.embedding_model == "sentence-transformers/all-MiniLM-L6-v2"
-    assert config.token_budget == 256
+    assert config.embedding_profile == "nemotron_free"
+    assert config.column_preset == "full"
+    assert config.retrieval_top_k == 3
+    assert (config.router_model, config.synthesis_model) == (router_before, synth_before)
 
     # Test auto-clamping on MiniLM (cannot exceed 256 tokens)
     config_invalid = ExperimentConfig(
