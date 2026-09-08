@@ -340,6 +340,54 @@ def test_genre_pivot_clears_stale_mood_and_derived_genres():
     assert merged.genre_confirmation_done is False
 
 
+# --- #42: mid-funnel era refinement must not escape the funnel ---------------
+
+
+def test_mid_funnel_era_refinement_stays_in_funnel():
+    """#42 repro: after mood + audience are answered, 'may be an old movie'
+    must update the narrowing state (era constraint), not fall through to the
+    router as a fresh SEMANTIC_SEARCH that drops the era preference."""
+    from src.domain.routing import IntentType, QueryRoutingDecision
+    from tests.unit.test_orchestrator import FakeEngine
+
+    # Router-as-extractor finds no mood/audience/years in "may be an old movie";
+    # a second scripted decision covers the current-code fallthrough path.
+    extractor_decision = QueryRoutingDecision(
+        intent=IntentType.SEMANTIC_SEARCH, confidence=0.8,
+        standalone_query="may be an old movie", requires_rag=True,
+    )
+    engine = FakeEngine(movies=[])
+    graph = _funnel_graph([extractor_decision, extractor_decision], engine)
+    out = graph.invoke({
+        "messages": [HumanMessage(content="may be an old movie")],
+        "session_preferences": UserSessionPreferences(
+            preferred_mood="feel-good", audience="solo",
+            genre_confirmation_done=True,
+        ),
+        "funnel_active": True,
+        "probe_count": 2,
+    })
+    prefs = out["session_preferences"]
+    assert prefs.year_max is not None and prefs.year_max <= 2000, (
+        "era preference dropped: 'old movie' must set a year_max constraint"
+    )
+    assert prefs.preferred_mood == "feel-good"  # narrowing survives
+    for query, _, _ in engine.calls:
+        assert query != "may be an old movie", (
+            "funnel escaped: raw era refinement reached retrieval un-narrowed"
+        )
+
+
+def test_era_words_extract_no_false_positives():
+    """Era vocabulary must not fire on near-misses or negations."""
+    from src.maya.probing import extract_era
+
+    for miss in ("goldfinger", "a bold movie", "an oldsmobile chase",
+                 "not too old", "nothing old please"):
+        prefs = extract_era(miss, old_year_max=2000, recent_year_min=2015)
+        assert prefs.year_min is None and prefs.year_max is None, miss
+
+
 @pytest.mark.adversarial
 def test_genre_refinement_is_not_a_pivot():
     """Adding a genre that overlaps the current narrowing is refinement —

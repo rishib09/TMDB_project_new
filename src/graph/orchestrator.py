@@ -43,8 +43,10 @@ from src.maya.probing import (
     build_filter_carryover_notice,
     build_funnel_query,
     build_probe_response,
+    extract_era,
     extract_probe_answers,
     handle_probe_answer,
+    has_year_constraint,
     is_fresh_start,
     is_narrowing_pivot,
     match_genre_pick,
@@ -261,9 +263,22 @@ def build_maya_graph(
 
         # 2. Explicit confirmation → retrieve now; otherwise extract + progress.
         if outcome is None:
+            signals = _extract_signals(state, router)
+            # #42: deterministic era vocabulary ("old", "recent", "80s") as
+            # fallback; LLM-grounded years win at the merge (incoming=signals).
+            era = extract_era(
+                query, config.era_old_year_max, config.era_recent_year_min
+            )
+            if has_year_constraint(era):
+                signals = merge_preferences(era, signals) if signals else era
+                tracer.record_local(
+                    "probe",
+                    {"stage": "era_extracted",
+                     "year_min": signals.year_min, "year_max": signals.year_max,
+                     "exact_year": signals.exact_year},
+                )
             outcome = handle_probe_answer(
-                query, prefs, state.probe_count,
-                prefs_update=_extract_signals(state, router),
+                query, prefs, state.probe_count, prefs_update=signals,
             )
 
         if outcome.action == "retrieve":
@@ -565,9 +580,14 @@ def _extract_signals(state: "MayaGraphState", router) -> "UserSessionPreferences
         decision = router.route(state.current_query, _to_conversation_state(state))
     except Exception:  # noqa: BLE001 — extraction must never break the funnel
         return None
-    if not (decision.mood or decision.audience):
-        return None
     filters = decision.filters
+    # #42 gate fix: LLM-grounded year filters survive even without a
+    # mood/audience — "before 1995" mid-funnel is a refinement too.
+    has_years = filters is not None and (
+        filters.exact_year or filters.year_min or filters.year_max
+    )
+    if not (decision.mood or decision.audience or has_years):
+        return None
     return UserSessionPreferences(
         preferred_mood=decision.mood.strip(),
         audience=decision.audience.strip(),

@@ -80,6 +80,20 @@ class ExperimentConfig(BaseModel):
         "below this confidence degrade to the heuristic fallback",
     )
     cwa_guardrail_enabled: bool = Field(default=True, description="Enforce Closed-World Assumption XML grounding")
+    era_old_year_max: int = Field(
+        default=2000,
+        ge=1970,
+        le=2026,
+        description="#42: what a vague 'old/classic movie' means — deterministic "
+        "year_max applied when the era vocabulary fires mid-funnel",
+    )
+    era_recent_year_min: int = Field(
+        default=2015,
+        ge=1970,
+        le=2026,
+        description="#42: what a vague 'recent/latest movie' means — deterministic "
+        "year_min applied when the era vocabulary fires mid-funnel",
+    )
     judge_model: str = Field(
         default="meta-llama/llama-3.3-70b-instruct",
         description="LLM-as-a-judge model for eval faithfulness/relevancy (#6)",

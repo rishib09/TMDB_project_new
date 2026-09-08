@@ -269,3 +269,100 @@ class TestNarrowingPivot:
         assert merged.genre_confirmation_done is False
         assert merged.excluded_actors == ["Tom Cruise"]
         assert merged.audience == "alone"
+
+
+class TestEraExtraction:
+    """#42: deterministic era vocabulary → year constraints."""
+
+    def _era(self, query):
+        from src.maya.probing import extract_era
+        return extract_era(query, old_year_max=2000, recent_year_min=2015)
+
+    def test_old_words_set_year_max(self):
+        for query in ("may be an old movie", "something older", "a classic",
+                      "vintage films", "classics please"):
+            prefs = self._era(query)
+            assert prefs.year_max == 2000, query
+            assert prefs.year_min is None, query
+
+    def test_recent_words_set_year_min(self):
+        for query in ("something recent", "the latest ones", "modern movies",
+                      "newer stuff"):
+            prefs = self._era(query)
+            assert prefs.year_min == 2015, query
+            assert prefs.year_max is None, query
+
+    def test_decade_tokens_set_exact_range(self):
+        assert (self._era("from the 80s").year_min, self._era("from the 80s").year_max) == (1980, 1989)
+        assert (self._era("1970s vibes").year_min, self._era("1970s vibes").year_max) == (1970, 1979)
+        assert (self._era("the 2010s").year_min, self._era("the 2010s").year_max) == (2010, 2019)
+
+    def test_decade_beats_vague_words(self):
+        prefs = self._era("old movies from the 90s")
+        assert (prefs.year_min, prefs.year_max) == (1990, 1999)
+
+    def test_negations_do_not_extract(self):
+        for query in ("not too old", "nothing old please", "no classics",
+                      "never the latest", "not the 80s"):
+            prefs = self._era(query)
+            assert prefs.year_min is None and prefs.year_max is None, query
+
+    def test_near_misses_do_not_extract(self):
+        for query in ("goldfinger", "a bold movie", "oldsmobile chase",
+                      "newest-adjacent nonsense words", ""):
+            prefs = self._era(query)
+            assert prefs.year_min is None and prefs.year_max is None, query
+
+    def test_thresholds_come_from_arguments(self):
+        from src.maya.probing import extract_era
+        assert extract_era("old movie", 1990, 2015).year_max == 1990
+        assert extract_era("recent movie", 1990, 2020).year_min == 2020
+
+
+class TestEraFunnelOwnership:
+    """#42: a year-only update is a funnel refinement, never a fallthrough."""
+
+    def _prefs(self):
+        from src.domain.memory import UserSessionPreferences
+        return UserSessionPreferences(
+            preferred_mood="feel-good", audience="solo",
+            genre_confirmation_done=True,
+        )
+
+    def test_year_only_update_progresses_funnel(self):
+        from src.domain.memory import UserSessionPreferences
+        from src.maya.probing import handle_probe_answer
+        outcome = handle_probe_answer(
+            "may be an old movie", self._prefs(), probe_count=2,
+            prefs_update=UserSessionPreferences(year_max=2000),
+        )
+        assert outcome.action == "confirm"
+        assert outcome.prefs_update.year_max == 2000
+        assert outcome.prefs_update.preferred_mood == "feel-good"
+
+    def test_no_signal_still_falls_through(self):
+        from src.domain.memory import UserSessionPreferences
+        from src.maya.probing import handle_probe_answer
+        outcome = handle_probe_answer(
+            "tell me about quantum physics", self._prefs(), probe_count=2,
+            prefs_update=UserSessionPreferences(),
+        )
+        assert outcome.action == "fallthrough"
+
+    def test_confirm_trail_shows_years(self):
+        from src.domain.memory import UserSessionPreferences, merge_preferences
+        from src.maya.probing import build_confirm_response
+        merged = merge_preferences(
+            self._prefs(), UserSessionPreferences(year_max=2000)
+        )
+        response = build_confirm_response(merged)
+        assert "2000" in response
+
+    def test_has_year_constraint(self):
+        from src.domain.memory import UserSessionPreferences
+        from src.maya.probing import has_year_constraint
+        assert not has_year_constraint(None)
+        assert not has_year_constraint(UserSessionPreferences())
+        assert has_year_constraint(UserSessionPreferences(exact_year=1999))
+        assert has_year_constraint(UserSessionPreferences(year_min=1980))
+        assert has_year_constraint(UserSessionPreferences(year_max=2000))
