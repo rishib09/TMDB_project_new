@@ -60,6 +60,10 @@ class UserSessionPreferences(BaseModel):
     year_max: int | None = None
     #: #25: mood→genre confirmation settled (never re-asked for this mood).
     genre_confirmation_done: bool = False
+    #: #56: genres accepted from an offered mood-candidate list (union intent —
+    #: "any of these is fine") vs explicitly conjoined genres (intersection).
+    #: Drives genre_match at retrieval; retired with the genres themselves.
+    genres_from_candidates: bool = False
     #: #26-E: one-shot signal to WIPE accumulated preferences. Must ride the
     #: reducer (an empty update would otherwise be a no-op merge).
     reset_requested: bool = False
@@ -115,6 +119,21 @@ def merge_preferences(
     # On retirement the OLD genres are dropped: merged genres come only
     # from the incoming update (the new mood's picks), never accumulated.
     current_genres = [] if retired else current.preferred_genres
+    # #56-F3: year constraints must never merge into an impossible range —
+    # the NEWER era statement retires the older conflicting constraint.
+    year_min = incoming.year_min if incoming.year_min is not None else current.year_min
+    year_max = incoming.year_max if incoming.year_max is not None else current.year_max
+    exact_year = incoming.exact_year if incoming.exact_year is not None else current.exact_year
+    incoming_range = incoming.year_min is not None or incoming.year_max is not None
+    if incoming_range and incoming.exact_year is None:
+        exact_year = None  # a new range retires an old exact year
+    if incoming.exact_year is not None and not incoming_range:
+        year_min = year_max = None  # a new exact year retires an old range
+    if year_min is not None and year_max is not None and year_min > year_max:
+        if incoming.year_min is not None and incoming.year_max is None:
+            year_max = None  # "recent" after "old": the old ceiling goes
+        elif incoming.year_max is not None and incoming.year_min is None:
+            year_min = None  # "old" after "recent": the recent floor goes
     return UserSessionPreferences(
         excluded_genres=list(dict.fromkeys(current.excluded_genres + incoming.excluded_genres)),
         excluded_actors=list(dict.fromkeys(current.excluded_actors + incoming.excluded_actors)),
@@ -129,16 +148,22 @@ def merge_preferences(
             dict.fromkeys(current.preferred_directors + incoming.preferred_directors)
         ),
         noted_donts=list(dict.fromkeys(current.noted_donts + incoming.noted_donts)),
-        # #27-Q: scalar year constraints are last-wins, like preferred_mood.
-        exact_year=incoming.exact_year if incoming.exact_year is not None else current.exact_year,
-        year_min=incoming.year_min if incoming.year_min is not None else current.year_min,
-        year_max=incoming.year_max if incoming.year_max is not None else current.year_max,
+        # #27-Q/#56-F3: scalar year constraints are last-wins, guarded above.
+        exact_year=exact_year,
+        year_min=year_min,
+        year_max=year_max,
         # Mood change or genre pivot reopens genre confirmation (#25/#26-M/#33):
         # the new mood/genre may map differently. Otherwise confirmation stays.
         genre_confirmation_done=(
             incoming.genre_confirmation_done or current.genre_confirmation_done
             if not retired
             else False
+        ),
+        # #56: union-intent flag travels with the genres; retirement drops it.
+        genres_from_candidates=(
+            incoming.genres_from_candidates or current.genres_from_candidates
+            if not retired
+            else incoming.genres_from_candidates
         ),
     )
 

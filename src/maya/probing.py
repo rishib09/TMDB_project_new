@@ -551,7 +551,9 @@ def next_funnel_step(
         remaining = [g for g in candidates if g.casefold() not in have]
         if len(remaining) == 1:
             pending = UserSessionPreferences(
-                preferred_genres=remaining, genre_confirmation_done=True
+                preferred_genres=remaining, genre_confirmation_done=True,
+                # #56: map-derived genre with no explicit base = union intent
+                genres_from_candidates=not prefs.preferred_genres,
             )
             merged = merge_preferences(prefs, pending)
         elif remaining:
