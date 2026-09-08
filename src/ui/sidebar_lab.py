@@ -297,11 +297,12 @@ def render_lab(session) -> None:
 
     active = matching_preset(session.config)
     if active is not None:
-        # Neutral highlight matching the nav's selected-segment look — the
-        # theme primary (red) is reserved for accents, not selection state.
+        # Highlight matching the nav's selected-segment look: light primary
+        # fill, primary border and text (see Pages control in app.py).
         st.markdown(
             f"<style>.st-key-preset_{active.value} button {{"
-            "background-color: #F3F4F6; border-color: #1B1B24; font-weight: 600;"
+            "background-color: rgba(215, 38, 61, 0.1);"
+            "border-color: #D7263D; color: #D7263D;"
             "}</style>",
             unsafe_allow_html=True,
         )
