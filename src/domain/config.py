@@ -1,6 +1,7 @@
 """Dynamic Architecture Experimentation Control Plane Configuration."""
 
 from enum import Enum
+from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -21,12 +22,29 @@ class ExperimentConfig(BaseModel):
         description="Router LLM model ID (#29: measured 91% vs 3B's 66% routing accuracy; "
         "the ~ alias always resolves to the newest Flash on OpenRouter)",
     )
-    synthesis_model: str = Field(default="meta-llama/llama-3.3-70b-instruct", description="Synthesis LLM model ID")
+    synthesis_model: str = Field(
+        default="~google/gemini-flash-latest",
+        description="Synthesis LLM model ID (#30: Flash default — cheap, strong, "
+        "same always-newest alias as the router)",
+    )
     reasoning_effort: str = Field(default="low", description="Reasoning effort: none, low, medium, high")
     temperature: float = Field(default=0.0, ge=0.0, le=1.0, description="Sampling temperature")
 
     # Retrieval & Indexing Knobs
-    embedding_model: str = Field(default="BAAI/bge-small-en-v1.5", description="Embedding model name")
+    #: #11/#30: the two decoupled dense axes. Together they name the Chroma
+    #: collection ({column_preset}_{embedding_profile}) AND the provider that
+    #: embeds user queries — one knob pair, structurally consistent.
+    embedding_profile: str = Field(
+        default="gemini_embedding_2",
+        description="Cloud embedding profile (#11): lfm_free | nemotron_free | "
+        "gemini_embedding_2 (ADR 0008 production winner)",
+    )
+    column_preset: Literal["minimal", "full"] = Field(
+        default="full",
+        description="Serialized column set for dense documents (#11): minimal = "
+        "overview+keywords+genres+title+director; full = minimal + cast + tagline",
+    )
+    embedding_model: str = Field(default="BAAI/bge-small-en-v1.5", description="Legacy local embedding model (v1_* eval collections)")
     token_budget: int = Field(
         default=256,
         description="Max token budget for dense text serialization (256, 512, 1024, 2048, 4096)"
@@ -86,33 +104,30 @@ class ExperimentConfig(BaseModel):
         return self
 
     def apply_preset(self, preset: PresetType) -> "ExperimentConfig":
-        """Reconfigures parameters to standard predefined benchmark baselines."""
+        """Reconfigures the embedding combo + retrieval knobs (#30 grilling).
+
+        Presets own the embedding axis and retrieval shape ONLY — router and
+        synthesis models are independent knobs (no vendor coupling; the user
+        picks chat models freely). Mapping per ADR 0008: each model's best
+        measured column preset.
+        """
         if preset == PresetType.FAST_BUDGET:
-            self.router_model = "meta-llama/llama-3.2-3b-instruct"
-            self.synthesis_model = "google/gemini-2.0-flash-lite"
-            self.embedding_model = "sentence-transformers/all-MiniLM-L6-v2"
-            self.token_budget = 256
-            self.chunking_strategy = "baseline"
+            self.embedding_profile = "nemotron_free"  # free, 71% hit@5
+            self.column_preset = "full"  # nemotron's best cell (MRR .631 vs .560)
             self.hybrid_alpha = 1.0  # Dense only
             self.reranker_enabled = False
             self.retrieval_top_k = 3
         elif preset == PresetType.PRODUCTION_HYBRID:
-            self.router_model = "~google/gemini-flash-latest"  # #29 upgrade (91% vs 66%)
-            self.synthesis_model = "meta-llama/llama-3.3-70b-instruct"
-            self.embedding_model = "BAAI/bge-small-en-v1.5"
-            self.token_budget = 512
-            self.chunking_strategy = "enriched_metadata"
+            self.embedding_profile = "gemini_embedding_2"  # 100% hit@5, MRR .964
+            self.column_preset = "full"
             self.hybrid_alpha = 0.5  # 50/50 Dense + Sparse RRF
             # Reranker stays OFF even in the quality preset: measured 71% vs
             # pure-RRF 86% hit@5 on golden queries (2026-08-31 A/B, issue #4).
             self.reranker_enabled = False
             self.retrieval_top_k = 5
         elif preset == PresetType.NAIVE_BASELINE:
-            self.router_model = "meta-llama/llama-3.2-3b-instruct"
-            self.synthesis_model = "meta-llama/llama-3.2-3b-instruct"
-            self.embedding_model = "sentence-transformers/all-MiniLM-L6-v2"
-            self.token_budget = 256
-            self.chunking_strategy = "baseline"
+            self.embedding_profile = "lfm_free"  # the measured floor (43%)
+            self.column_preset = "minimal"  # lfm's best cell (full collapses to .262)
             self.hybrid_alpha = 1.0
             self.reranker_enabled = False
             self.retrieval_top_k = 5
