@@ -340,6 +340,109 @@ def test_genre_pivot_clears_stale_mood_and_derived_genres():
     assert merged.genre_confirmation_done is False
 
 
+# --- #53: two answered axes retrieve immediately — no confirm turn -----------
+
+
+def test_two_axes_retrieve_immediately_no_confirm_question():
+    """#53 repro: 'Show me a romantic movie.' → 'Just for me and my girlfriend'
+    must retrieve on the second turn. The old confirm stage ('shall I pull the
+    films now?') stalled retrieval behind a vocabulary-gated extra turn —
+    'all of them' then fell through to OUT_OF_SCOPE with 0 movies."""
+    from src.domain.routing import IntentType, QueryRoutingDecision
+    from tests.unit.test_orchestrator import FakeEngine
+
+    extractor_decision = QueryRoutingDecision(
+        intent=IntentType.SEMANTIC_SEARCH, confidence=0.9,
+        standalone_query="just for me and my girlfriend", requires_rag=True,
+        audience="me and my girlfriend",
+    )
+    engine = FakeEngine(movies=[])
+    graph = _funnel_graph([extractor_decision], engine)
+    out = graph.invoke({
+        "messages": [HumanMessage(content="Just for me and my girlfriend")],
+        "session_preferences": UserSessionPreferences(
+            preferred_mood="romantic", preferred_genres=["Romance"],
+            genre_confirmation_done=True,
+        ),
+        "funnel_active": True,
+        "probe_count": 1,
+    })
+    assert engine.calls, "two answered axes must retrieve, not ask to confirm"
+    assert out["funnel_active"] is False
+    assert "shall I pull the films now" not in out["final_response"]
+    prefs = out["session_preferences"]
+    assert prefs.audience == "me and my girlfriend"
+    assert prefs.preferred_mood == "romantic"
+
+
+# --- #56: era captured on the funnel ENTRY turn; candidate genres are a union
+
+
+def test_era_in_initial_query_survives_into_preferences():
+    """#56-F1 repro: 'show me old classic' probed for mood but dropped the era
+    — Hannah Montana (2009) shipped for an 'old classic' request."""
+    from src.domain.routing import IntentType, QueryRoutingDecision
+    from tests.unit.test_orchestrator import FakeEngine
+
+    broad = QueryRoutingDecision(
+        intent=IntentType.SEMANTIC_SEARCH, confidence=0.85,
+        standalone_query="show me old classic", requires_rag=True,
+    )
+    graph = _funnel_graph([broad], FakeEngine(movies=[]))
+    out = graph.invoke({
+        "messages": [HumanMessage(content="show me old classic")],
+        "session_preferences": UserSessionPreferences(),
+    })
+    prefs = out["session_preferences"]
+    assert prefs.year_max is not None and prefs.year_max <= 2000, (
+        "era in the initial query must persist into session preferences"
+    )
+
+
+def test_non_rag_turns_do_not_capture_era():
+    """'how old are you' (CAPABILITIES) must not record a year constraint."""
+    from src.domain.routing import IntentType, QueryRoutingDecision
+    from tests.unit.test_orchestrator import FakeEngine
+
+    caps = QueryRoutingDecision(
+        intent=IntentType.CAPABILITIES, confidence=0.95,
+        standalone_query="how old are you", requires_rag=False,
+    )
+    graph = _funnel_graph([caps], FakeEngine(movies=[]))
+    out = graph.invoke({
+        "messages": [HumanMessage(content="how old are you")],
+        "session_preferences": UserSessionPreferences(),
+    })
+    prefs = out["session_preferences"]
+    assert prefs.year_max is None and prefs.year_min is None
+
+
+def test_accepted_candidate_genres_retrieve_as_union():
+    """#56-F2 repro: 'all of them' on the 4-candidate feel-good list must
+    retrieve genre_match=any — the intersection matched exactly one movie."""
+    from tests.unit.test_orchestrator import FakeEngine
+
+    engine = FakeEngine(movies=[])
+    graph = _funnel_graph([], engine)  # deterministic pick: router never runs
+    out = graph.invoke({
+        "messages": [HumanMessage(content="all of them")],
+        "session_preferences": UserSessionPreferences(
+            preferred_mood="feel-good", audience="solo",
+        ),
+        "funnel_active": True,
+        "offered_genre_options": ["Comedy", "Drama", "Family", "Romance"],
+        "probe_count": 2,
+    })
+    assert engine.calls, "accepting the candidate list must retrieve"
+    routing = engine.calls[0][1]
+    assert routing.filters is not None
+    assert list(routing.filters.genres) == ["Comedy", "Drama", "Family", "Romance"]
+    assert routing.filters.genre_match == "any", (
+        "candidate-list acceptance means ANY of these genres, not ALL at once"
+    )
+    assert out["session_preferences"].genres_from_candidates is True
+
+
 # --- #42: mid-funnel era refinement must not escape the funnel ---------------
 
 

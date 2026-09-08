@@ -21,8 +21,9 @@ BROAD_QUERY_WORD_LIMIT: ClassVar[int] = 5
 MAX_PROBE_TURNS: ClassVar[int] = 2
 #: Probing only makes sense while at least this many axes are unanswered.
 MIN_UNANSWERED_AXES: ClassVar[int] = 2
-#: Once this many axes are answered, confirm before retrieving (#23).
-CONFIRM_THRESHOLD: ClassVar[int] = 2
+#: Once this many axes are answered, retrieve immediately (#53). Default for
+#: the ExperimentConfig.funnel_retrieve_axes tunable (ADR 0004).
+DEFAULT_RETRIEVE_AXES: ClassVar[int] = 2
 #: Phrases that end the funnel and trigger retrieval immediately (#23).
 RETRIEVE_CONFIRMATIONS: ClassVar[tuple[str, ...]] = (
     "go ahead",
@@ -466,29 +467,6 @@ def preference_chips(prefs: UserSessionPreferences) -> list[str]:
     return chips
 
 
-def build_confirm_response(prefs: UserSessionPreferences) -> str:
-    """Deterministic confirm-before-retrieve turn (#23)."""
-    trail_items = [
-        f"a {prefs.preferred_mood} mood" if prefs.preferred_mood else "",
-        f"for {prefs.audience}" if prefs.audience else "",
-        *(f"no {d}" for d in prefs.noted_donts),
-        *(prefs.preferred_genres or []),
-        *(f"{d}'s films" for d in prefs.preferred_directors),
-    ]
-    # #42: carried year constraints are visible in the confirm trail too.
-    if prefs.exact_year:
-        trail_items.append(f"year {prefs.exact_year}")
-    elif prefs.year_min or prefs.year_max:
-        trail_items.append(
-            f"years {prefs.year_min or '…'}-{prefs.year_max or '…'}"
-        )
-    trail = ", ".join(t for t in trail_items if t)
-    return (
-        f"Got it — {trail}. Want to add anything else — a year, a director, "
-        "a genre? Or shall I pull the films now?"
-    )
-
-
 def build_funnel_query(prefs: UserSessionPreferences) -> str:
     """Natural-language retrieval query synthesized from funnel answers.
 
@@ -529,6 +507,7 @@ def funnel_axes(prefs: UserSessionPreferences) -> list[str]:
 def handle_probe_answer(
     query: str, prefs: UserSessionPreferences, probe_count: int,
     prefs_update: UserSessionPreferences | None = None,
+    retrieve_axes: int = DEFAULT_RETRIEVE_AXES,
 ) -> FunnelOutcome:
     """Funnel decision for the message following a probe (#23).
 
@@ -546,18 +525,23 @@ def handle_probe_answer(
     # movie" must update the narrowing state, never escape to the router.
     if prefs_update.answered_axes() or has_year_constraint(prefs_update):
         merged = merge_preferences(prefs, prefs_update)
-        return next_funnel_step(merged, probe_count, query)
+        return next_funnel_step(merged, probe_count, query, retrieve_axes)
     return FunnelOutcome(action="fallthrough")
 
 
 def next_funnel_step(
-    prefs: UserSessionPreferences, probe_count: int, query: str = ""
+    prefs: UserSessionPreferences, probe_count: int, query: str = "",
+    retrieve_axes: int = DEFAULT_RETRIEVE_AXES,
 ) -> FunnelOutcome:
     """Pure funnel progression from the CURRENT merged preferences (#25).
 
     Stage order: genre confirmation (mood just learned) → enough-axes
-    confirm → next probe → retrieval. Single-candidate mood maps auto-accept
+    retrieval → next probe → retrieval. Single-candidate mood maps auto-accept
     their genre without wasting a turn ("funny" IS comedy, no need to ask).
+    #53: at ``retrieve_axes`` answered axes the funnel retrieves IMMEDIATELY —
+    the old confirm-before-retrieve turn gated retrieval behind a fixed reply
+    vocabulary ("all of them" fell through to OUT_OF_SCOPE with 0 movies).
+    The #26-E carry-over notice remains the transparency mechanism.
     """
     merged = prefs
     pending = UserSessionPreferences()
@@ -567,7 +551,9 @@ def next_funnel_step(
         remaining = [g for g in candidates if g.casefold() not in have]
         if len(remaining) == 1:
             pending = UserSessionPreferences(
-                preferred_genres=remaining, genre_confirmation_done=True
+                preferred_genres=remaining, genre_confirmation_done=True,
+                # #56: map-derived genre with no explicit base = union intent
+                genres_from_candidates=not prefs.preferred_genres,
             )
             merged = merge_preferences(prefs, pending)
         elif remaining:
@@ -581,11 +567,8 @@ def next_funnel_step(
             pending = UserSessionPreferences(genre_confirmation_done=True)
             merged = merge_preferences(prefs, pending)
 
-    if len(funnel_axes(merged)) >= CONFIRM_THRESHOLD:
-        return FunnelOutcome(
-            action="confirm", response=build_confirm_response(merged),
-            prefs_update=merged,
-        )
+    if len(funnel_axes(merged)) >= retrieve_axes:
+        return FunnelOutcome(action="retrieve", prefs_update=merged)
     question = next_probe_question(merged)
     if question and probe_count < MAX_PROBE_TURNS:
         return FunnelOutcome(
