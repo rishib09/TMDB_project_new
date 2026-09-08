@@ -168,6 +168,20 @@ BENCHMARK_PROFILES: list[str] = [
 ]
 
 
+#: Profiles the app UI exposes (#30) — the ADR 0008 registry verdict: floor,
+#: free workhorse, production ceiling. Benchmark-only profiles stay out.
+UI_PROFILES: list[str] = ["lfm_free", "nemotron_free", "gemini_embedding_2"]
+
+
+def collection_name(preset: str, profile: str) -> str:
+    """Chroma collection name for a (column preset, model profile) cell.
+
+    Single source of the #11 naming rule — shared by the benchmark script,
+    the UI session, and the Lab's availability guard.
+    """
+    return f"{preset}_{profile}"
+
+
 def provider_from_profile(profile_name: str) -> EmbeddingProvider:
     """Builds a provider from MODEL_PROFILES — the benchmark matrix's factory."""
     profile = MODEL_PROFILES.get(profile_name)

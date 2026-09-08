@@ -210,3 +210,38 @@ def test_empty_world_synth_cannot_recommend():
 
     assert synth.calls == []  # LLM skipped entirely on the empty-world path
     assert "couldn't find" in out["final_response"]  # grounded deterministic text
+
+
+# --- #30: an unbuilt embedding combo must never reach the engine -------------
+
+def test_missing_collection_never_reaches_engine():
+    """The Lab guard keeps the current combo when the target isn't built."""
+    from src.ui.sidebar_lab import resolve_combo
+
+    current = ("full", "gemini_embedding_2")
+    chosen = ("minimal", "lfm_free")
+
+    combo, warning = resolve_combo(chosen, current, collection_exists=lambda n: False)
+    assert combo == current, "unbuilt combo leaked past the guard"
+    assert warning and "minimal_lfm_free" in warning
+
+    combo, warning = resolve_combo(chosen, current, collection_exists=lambda n: True)
+    assert combo == chosen and warning is None
+
+    # no guard wired (tests, headless) -> chosen wins, never crashes
+    combo, warning = resolve_combo(chosen, current, collection_exists=None)
+    assert combo == chosen and warning is None
+
+
+def test_session_signature_rebuilds_on_combo_change():
+    """A combo edit MUST rebuild the graph — collection + query embedder swap."""
+    from src.domain.config import ExperimentConfig
+    from src.ui.session import MayaSession
+
+    class Stub:
+        config = ExperimentConfig()
+
+    before = MayaSession._graph_signature(Stub)
+    Stub.config = ExperimentConfig(embedding_profile="lfm_free", column_preset="minimal")
+    after = MayaSession._graph_signature(Stub)
+    assert before != after

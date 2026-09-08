@@ -28,7 +28,12 @@ with st.sidebar:
     views = ["Chat", "Evals", "Traces"]
     view_icons = {"Chat": ":material/chat:", "Evals": ":material/monitoring:", "Traces": ":material/timeline:"}
     selection = st.segmented_control(
-        "Navigation", views, default=session.view, label_visibility="collapsed"
+        "Pages",
+        views,
+        format_func=lambda v: f"{view_icons[v]} {v}",
+        default=session.view,
+        width="stretch",
+        help="Switch between the Chat, Evals, and Traces pages.",
     )
     if selection:
         session.view = selection
