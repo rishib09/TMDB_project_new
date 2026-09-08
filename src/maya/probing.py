@@ -308,6 +308,57 @@ def _is_negated(text: str, keyword_start: int) -> bool:
     return bool(_NEGATION_PREFIX_RE.search(prefix))
 
 
+# --- era extraction (#42): vague era words are code-owned constraints --------
+
+#: Vague-past vocabulary → year_max from config (what "old" means is a
+#: tunable, never model vibes — ADR 0004/0005).
+_ERA_OLD_RE = re.compile(r"\b(old|older|oldies?|classics?|vintage)\b")
+#: Vague-recent vocabulary → year_min from config. Bare "new" is deliberately
+#: absent ("something new" means *different*, not recent-year).
+_ERA_RECENT_RE = re.compile(r"\b(recent|latest|modern|newer)\b")
+#: Decade tokens with a concrete anchor: "1980s", "80s", "2000s", "2010s".
+_ERA_DECADE_RE = re.compile(r"\b(?:(19[7-9]0|20[0-2]0)s|([7-9]0)s)\b")
+#: Era negation allows intervening words ("not too old", "nothing old please")
+#: — wider than the adjacent-token mood window, still clause-bounded.
+_ERA_NEGATION_RE = re.compile(r"\b(no|not|without|never|nothing)\b[^.,;!?]{0,16}$")
+
+
+def _is_negated_near(text: str, keyword_start: int) -> bool:
+    prefix = text[max(0, keyword_start - 24):keyword_start]
+    return bool(_ERA_NEGATION_RE.search(prefix))
+
+
+def extract_era(
+    query: str, old_year_max: int, recent_year_min: int
+) -> UserSessionPreferences:
+    """Deterministic era extraction: old/classic → year_max, recent → year_min,
+    decade tokens → exact ranges. Vague words need a code-owned threshold —
+    the thresholds come from ExperimentConfig (#42). Concrete years/decades
+    the LLM extractor already grounds take precedence at the merge site.
+    """
+    lowered = query.lower()
+    decade = _ERA_DECADE_RE.search(lowered)
+    if decade and not _is_negated_near(lowered, decade.start()):
+        start = int(decade.group(1) or f"19{decade.group(2)}")
+        return UserSessionPreferences(year_min=start, year_max=start + 9)
+    old = _ERA_OLD_RE.search(lowered)
+    if old and not _is_negated_near(lowered, old.start()):
+        return UserSessionPreferences(year_max=old_year_max)
+    recent = _ERA_RECENT_RE.search(lowered)
+    if recent and not _is_negated_near(lowered, recent.start()):
+        return UserSessionPreferences(year_min=recent_year_min)
+    return UserSessionPreferences()
+
+
+def has_year_constraint(prefs: UserSessionPreferences | None) -> bool:
+    """True when the update carries any year constraint (#42 funnel ownership)."""
+    return prefs is not None and (
+        prefs.exact_year is not None
+        or prefs.year_min is not None
+        or prefs.year_max is not None
+    )
+
+
 # --- funnel state machine (#23): the turn after a probe is OURS -----------
 #
 # Walkthrough defect (#23): probe answers like "edge of the seat" confused
@@ -424,6 +475,13 @@ def build_confirm_response(prefs: UserSessionPreferences) -> str:
         *(prefs.preferred_genres or []),
         *(f"{d}'s films" for d in prefs.preferred_directors),
     ]
+    # #42: carried year constraints are visible in the confirm trail too.
+    if prefs.exact_year:
+        trail_items.append(f"year {prefs.exact_year}")
+    elif prefs.year_min or prefs.year_max:
+        trail_items.append(
+            f"years {prefs.year_min or '…'}-{prefs.year_max or '…'}"
+        )
     trail = ", ".join(t for t in trail_items if t)
     return (
         f"Got it — {trail}. Want to add anything else — a year, a director, "
@@ -484,7 +542,9 @@ def handle_probe_answer(
         return FunnelOutcome(action="retrieve", prefs_update=prefs_update)
     if prefs_update is None:
         prefs_update = extract_probe_answers(query)
-    if prefs_update.answered_axes():
+    # #42: a year constraint is a funnel refinement too — "may be an old
+    # movie" must update the narrowing state, never escape to the router.
+    if prefs_update.answered_axes() or has_year_constraint(prefs_update):
         merged = merge_preferences(prefs, prefs_update)
         return next_funnel_step(merged, probe_count, query)
     return FunnelOutcome(action="fallthrough")
