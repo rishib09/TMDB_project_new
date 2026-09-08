@@ -315,3 +315,38 @@ def test_funnel_retrieve_without_stated_years_adds_no_filter():
         and routing.filters.year_max is None
         and routing.filters.exact_year is None
     )
+
+
+# --- #33: genre pivot retires stale narrowing --------------------------------
+
+
+@pytest.mark.adversarial
+def test_genre_pivot_clears_stale_mood_and_derived_genres():
+    """#33 transcript: after a funny/Comedy funnel session, 'lets look for some
+    other suggestion. I want to watch action movies without Tom Cruise' must
+    retire the stale mood + derived-genre narrowing — not carry 'mood: funny ·
+    Comedy' alongside a contradicting action filter."""
+    from src.domain.memory import UserSessionPreferences, merge_preferences
+    from src.maya.probing import is_narrowing_pivot
+
+    prefs = UserSessionPreferences(preferred_mood="funny", preferred_genres=["Comedy"])
+    query = "lets look for some other suggestion. I want to watch action movies without Tom Cruise"
+
+    assert is_narrowing_pivot(query, ["action"], prefs)
+
+    merged = merge_preferences(prefs, UserSessionPreferences(genre_pivot=True))
+    assert merged.preferred_genres == []
+    assert merged.preferred_mood == ""
+    assert merged.genre_confirmation_done is False
+
+
+@pytest.mark.adversarial
+def test_genre_refinement_is_not_a_pivot():
+    """Adding a genre that overlaps the current narrowing is refinement —
+    narrowing must survive."""
+    from src.domain.memory import UserSessionPreferences
+    from src.maya.probing import is_narrowing_pivot
+
+    prefs = UserSessionPreferences(preferred_mood="funny", preferred_genres=["Comedy"])
+    assert not is_narrowing_pivot("more comedy movies please", ["Comedy"], prefs)
+    assert not is_narrowing_pivot("what about romantic comedies", ["Comedy", "Romance"], prefs)

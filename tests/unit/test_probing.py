@@ -217,3 +217,55 @@ def test_funnel_query_natural_language_from_prefs():
     prefs = UserSessionPreferences(preferred_mood="funny", audience="kids")
     assert build_funnel_query(prefs) == "funny movies for kids"  # reads naturally
     assert build_funnel_query(UserSessionPreferences()) == "movies"  # bare fallback
+
+
+# --- #33: narrowing pivot detection ------------------------------------------
+
+
+class TestNarrowingPivot:
+    def _prefs(self):
+        from src.domain.memory import UserSessionPreferences
+        return UserSessionPreferences(preferred_mood="funny", preferred_genres=["Comedy"])
+
+    def test_stated_genre_conflict_is_a_pivot(self):
+        from src.maya.probing import is_narrowing_pivot
+        assert is_narrowing_pivot("I want action movies", ["Action"], self._prefs())
+
+    def test_pivot_vocabulary_with_genre(self):
+        from src.domain.memory import UserSessionPreferences
+        from src.maya.probing import is_narrowing_pivot
+        mood_only = UserSessionPreferences(preferred_mood="funny")
+        for query in (
+            "lets look for some other suggestion, action movies",
+            "any other suggestions? maybe action",
+            "something else, like action films",
+            "give me another other recommendation for action",
+        ):
+            assert is_narrowing_pivot(query, ["Action"], mood_only), query
+
+    def test_no_stated_genre_never_pivots(self):
+        from src.maya.probing import is_narrowing_pivot
+        assert not is_narrowing_pivot("some other suggestion please", [], self._prefs())
+
+    def test_overlapping_genre_is_refinement(self):
+        from src.maya.probing import is_narrowing_pivot
+        assert not is_narrowing_pivot("romantic comedies", ["Comedy", "Romance"], self._prefs())
+
+    def test_no_prior_narrowing_no_pivot(self):
+        from src.domain.memory import UserSessionPreferences
+        from src.maya.probing import is_narrowing_pivot
+        assert not is_narrowing_pivot("action movies", ["Action"], UserSessionPreferences())
+
+    def test_merge_retires_mood_and_genres_but_keeps_exclusions(self):
+        from src.domain.memory import UserSessionPreferences, merge_preferences
+        current = UserSessionPreferences(
+            preferred_mood="funny", preferred_genres=["Comedy"],
+            excluded_actors=["Tom Cruise"], audience="alone",
+            genre_confirmation_done=True,
+        )
+        merged = merge_preferences(current, UserSessionPreferences(genre_pivot=True))
+        assert merged.preferred_mood == ""
+        assert merged.preferred_genres == []
+        assert merged.genre_confirmation_done is False
+        assert merged.excluded_actors == ["Tom Cruise"]
+        assert merged.audience == "alone"
