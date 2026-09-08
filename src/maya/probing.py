@@ -253,7 +253,7 @@ def canonical_mood(mood: str) -> str:
     and funnel state machine key on canonical values. Unknown moods pass
     through (open vocabulary, flavor-only per #25).
     """
-    cleaned = strip_markup((mood or "")).strip().lower()
+    cleaned = strip_markup(mood or "").strip().lower()
     if not cleaned:
         return ""
     if cleaned in _MOOD_VOCAB:  # already a keyword

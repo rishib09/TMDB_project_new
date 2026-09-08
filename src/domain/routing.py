@@ -1,12 +1,12 @@
 """Routing, Intent taxonomy, and deterministic filter criteria schemas."""
 
-from enum import Enum
+from enum import StrEnum
 from typing import Literal
 
 from pydantic import BaseModel, Field
 
 
-class IntentType(str, Enum):
+class IntentType(StrEnum):
     """7-Class Intent Taxonomy for Maya Movie Agent."""
     GREETING = "GREETING"
     CAPABILITIES = "CAPABILITIES"
@@ -17,7 +17,7 @@ class IntentType(str, Enum):
     OUT_OF_SCOPE = "OUT_OF_SCOPE"
 
 
-class SuperlativeMetric(str, Enum):
+class SuperlativeMetric(StrEnum):
     """Supported metrics for deterministic SQL superlative queries."""
     REVENUE = "REVENUE"
     BUDGET = "BUDGET"

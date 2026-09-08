@@ -13,7 +13,7 @@ before routing. Design notes:
 import logging
 import re
 from datetime import date
-from enum import Enum
+from enum import StrEnum
 from typing import ClassVar, Protocol
 
 from pydantic import BaseModel, Field
@@ -23,7 +23,7 @@ from src.domain.memory import ConversationState
 logger = logging.getLogger(__name__)
 
 
-class GuardrailVerdict(str, Enum):
+class GuardrailVerdict(StrEnum):
     """Pipeline action for a guardrail check."""
 
     CLEAN = "clean"            # proceed normally
