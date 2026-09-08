@@ -94,6 +94,56 @@ def render_poster_grid(movies, cols: int = 4) -> None:
                 st.caption(f"{movie.vote_average:.1f} / 10 — " + ", ".join(movie.genres[:3]))
 
 
+def recall_queries(turn_log: list[dict], limit: int = 10) -> list[str]:
+    """Pure helper (#48): recallable queries, newest first, deduplicated.
+
+    Funnel-owned turns are excluded — their queries ("yes", "family") only
+    made sense mid-funnel and would route to nonsense replayed cold.
+    """
+    seen: set[str] = set()
+    out: list[str] = []
+    for row in reversed(turn_log):
+        query = row.get("query", "")
+        if not query or row.get("path") == "funnel":
+            continue
+        if str(row.get("intent", "")).startswith("FUNNEL_"):
+            continue
+        if query in seen:
+            continue
+        seen.add(query)
+        out.append(query)
+        if len(out) == limit:
+            break
+    return out
+
+
+def render_recall(session: MayaSession) -> str | None:
+    """Recent-queries popover above the chat input (#48, ADR 0009).
+
+    Returns a query to replay this rerun, or None. Recall replays INPUT only:
+    the returned query becomes an ordinary turn under current state.
+    """
+    queries = recall_queries(session.turn_log)
+    if not queries:
+        return None
+    picked: str | None = None
+    with st.popover(":material/history: Recent queries"):
+        for i, query in enumerate(queries):
+            cols = st.columns([5, 1, 1])
+            cols[0].markdown(query)
+            if cols[1].button("Resend", key=f"recall_send_{i}"):
+                picked = query
+            if cols[2].button("Edit", key=f"recall_edit_{i}"):
+                st.session_state["recall_draft"] = query
+        draft = st.session_state.get("recall_draft")
+        if draft:
+            edited = st.text_area("Edit and resend", value=draft, key=f"recall_area_{hash(draft)}")
+            if st.button("Send", key="recall_send_edited") and edited.strip():
+                st.session_state.pop("recall_draft", None)
+                picked = edited.strip()
+    return picked
+
+
 def resolve_turn_row(session: MayaSession, ui_index: int) -> dict | None:
     """Maps the UI's assistant-message counter to its turn row (#26-K).
 
@@ -164,7 +214,11 @@ def render_chat(session: MayaSession) -> None:
 
     render_poster_grid(session.last_movies)
 
+    recalled_query = render_recall(session)  # #48: replay input, never output
     query = st.chat_input("Ask Maya about movies")
+    recalled = False
+    if recalled_query and not query:
+        query, recalled = recalled_query, True
     if not query:
         return
     if session.is_admin_command(query):
@@ -176,7 +230,7 @@ def render_chat(session: MayaSession) -> None:
     assistant = st.chat_message("assistant", avatar=MAYA_AVATAR)
     try:
         with assistant, st.status("Working through the pipeline", expanded=False):
-            session.turn(query)
+            session.turn(query, recalled=recalled)
     except Exception as exc:  # noqa: BLE001 — surface a readable failure, never a traceback
         st.error(
             "Maya could not complete this turn. Check that the app was started with "
