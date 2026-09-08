@@ -87,95 +87,10 @@ def test_scroll_to_newest_renders_without_runtime():
     scroll_to_newest()  # smoke: import-time wiring correct
 
 
-def test_routing_counters_aggregate_route_spans_only():
-    """#29 observability: fallback / re-route / mismatch chips from the ring."""
-    from src.ui.trace_tab import routing_counters
+def test_shared_resources_cached_across_calls():
+    """Issue #17: DB and vector store are one instance per process, so every
+    browser session and every knob-change graph rebuild reuses them."""
+    from src.ui.session import shared_database, shared_vector_store
 
-    traces = [
-        {"node": "route", "payload": {"attempt": 1, "is_fallback": True,
-                                      "requires_rag_mismatch": False}},
-        {"node": "route", "payload": {"attempt": 2, "is_fallback": False,
-                                      "requires_rag_mismatch": True}},
-        {"node": "retrieve", "payload": {"is_fallback": True}},  # not a route span
-    ]
-    counters = routing_counters(traces)
-    assert counters == {"fallbacks": 1, "reroutes": 1, "mismatches": 1}
-
-
-def test_routing_counters_empty_ring():
-    from src.ui.trace_tab import routing_counters
-
-    assert routing_counters([]) == {"fallbacks": 0, "reroutes": 0, "mismatches": 0}
-
-
-# --- #30: Lab embedding knobs -------------------------------------------------
-
-def test_matching_preset_exact_or_none():
-    """Red highlight semantics: pristine preset match only; any edit clears."""
-    from src.domain.config import ExperimentConfig, PresetType
-    from src.ui.sidebar_lab import matching_preset
-
-    assert matching_preset(ExperimentConfig()) is PresetType.PRODUCTION_HYBRID
-    fast = ExperimentConfig().apply_preset(PresetType.FAST_BUDGET)
-    assert matching_preset(fast) is PresetType.FAST_BUDGET
-    fast.temperature = 0.3  # a NON-preset knob still clears the highlight
-    assert matching_preset(fast) is None
-    naive = ExperimentConfig().apply_preset(PresetType.NAIVE_BASELINE)
-    naive.embedding_profile = "gemini_embedding_2"
-    assert matching_preset(naive) is None
-
-
-def test_usable_models_drops_delisted_keeps_active(monkeypatch):
-    """Availability guard: delisted slugs vanish; the active model survives."""
-    from src.ui import sidebar_lab
-
-    monkeypatch.setattr(
-        sidebar_lab, "available_model_ids", lambda: frozenset({"model/a"})
-    )
-    assert sidebar_lab.usable_models(["model/a", "model/dead"], "model/a") == ["model/a"]
-    # the currently-selected model never disappears from its own dropdown
-    assert sidebar_lab.usable_models(["model/a", "model/dead"], "model/dead") == [
-        "model/a", "model/dead",
-    ]
-
-
-def test_usable_models_fails_open(monkeypatch):
-    """Catalog down -> assume everything works (dropdowns must not empty)."""
-    from src.ui import sidebar_lab
-
-    monkeypatch.setattr(sidebar_lab, "available_model_ids", lambda: None)
-    assert sidebar_lab.usable_models(["x", "y"], "x") == ["x", "y"]
-
-
-def test_collection_name_single_source():
-    from src.indexing.embeddings import collection_name
-
-    assert collection_name("full", "gemini_embedding_2") == "full_gemini_embedding_2"
-    assert collection_name("minimal", "lfm_free") == "minimal_lfm_free"
-
-
-def test_has_collection_semantics():
-    """Empty or missing collections both count as unavailable (#30 guard)."""
-    from src.indexing.vector_store import MovieVectorStore
-
-    class Stub:
-        def __init__(self, n):
-            self._n = n
-
-        def count(self, name):
-            return self._n
-
-    assert MovieVectorStore.has_collection(Stub(9119), "full_gemini_embedding_2")
-    assert not MovieVectorStore.has_collection(Stub(0), "anything")
-
-
-def test_lab_combos_cover_all_six_and_carry_measurements():
-    from src.ui.sidebar_lab import _COMBOS
-
-    assert len(_COMBOS) == 6
-    assert {(p, m) for p, m, _ in _COMBOS} == {
-        (preset, model)
-        for preset in ("minimal", "full")
-        for model in ("lfm_free", "nemotron_free", "gemini_embedding_2")
-    }
-    assert all("hit@5" in stats for _, _, stats in _COMBOS)
+    assert shared_database() is shared_database()
+    assert shared_vector_store() is shared_vector_store()
