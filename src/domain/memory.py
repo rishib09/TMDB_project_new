@@ -63,6 +63,10 @@ class UserSessionPreferences(BaseModel):
     #: #26-E: one-shot signal to WIPE accumulated preferences. Must ride the
     #: reducer (an empty update would otherwise be a no-op merge).
     reset_requested: bool = False
+    #: #33: one-shot signal that the user pivoted to a different genre — the
+    #: merge retires stale mood + derived-genre narrowing (like a mood change)
+    #: while exclusions and other constraints survive.
+    genre_pivot: bool = False
 
     def answered_axes(self) -> list[str]:
         """Ordered narrowing axes with a value — drives the probe funnel."""
@@ -105,14 +109,21 @@ def merge_preferences(
         and current.preferred_mood
         and incoming.preferred_mood != current.preferred_mood
     )
-    # On mood change the OLD genres are dropped: merged genres come only
+    # #33: an explicit genre pivot retires stale narrowing the same way a
+    # mood change does — old mood AND old derived genres both go.
+    retired = mood_changed or incoming.genre_pivot
+    # On retirement the OLD genres are dropped: merged genres come only
     # from the incoming update (the new mood's picks), never accumulated.
-    current_genres = [] if mood_changed else current.preferred_genres
+    current_genres = [] if retired else current.preferred_genres
     return UserSessionPreferences(
         excluded_genres=list(dict.fromkeys(current.excluded_genres + incoming.excluded_genres)),
         excluded_actors=list(dict.fromkeys(current.excluded_actors + incoming.excluded_actors)),
         preferred_genres=list(dict.fromkeys(current_genres + incoming.preferred_genres)),
-        preferred_mood=incoming.preferred_mood or current.preferred_mood,
+        preferred_mood=(
+            incoming.preferred_mood
+            if incoming.genre_pivot
+            else incoming.preferred_mood or current.preferred_mood
+        ),
         audience=incoming.audience or current.audience,
         preferred_directors=list(
             dict.fromkeys(current.preferred_directors + incoming.preferred_directors)
@@ -122,11 +133,11 @@ def merge_preferences(
         exact_year=incoming.exact_year if incoming.exact_year is not None else current.exact_year,
         year_min=incoming.year_min if incoming.year_min is not None else current.year_min,
         year_max=incoming.year_max if incoming.year_max is not None else current.year_max,
-        # Mood change reopens genre confirmation (#25/#26-M): the new mood may
-        # map to different candidate genres. Same mood → confirmation stays.
+        # Mood change or genre pivot reopens genre confirmation (#25/#26-M/#33):
+        # the new mood/genre may map differently. Otherwise confirmation stays.
         genre_confirmation_done=(
             incoming.genre_confirmation_done or current.genre_confirmation_done
-            if not mood_changed
+            if not retired
             else False
         ),
     )

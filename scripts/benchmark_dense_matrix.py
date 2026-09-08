@@ -29,6 +29,9 @@ from src.indexing.embeddings import (  # noqa: E402
     MODEL_PROFILES,
     provider_from_profile,
 )
+from src.indexing.embeddings import (  # noqa: E402
+    collection_name as cell_name,  # promoted to the seam (#30) — same rule
+)
 from src.indexing.vector_store import MovieVectorStore  # noqa: E402
 from src.storage.database import MovieDatabase  # noqa: E402
 from tests.integration.test_vector_store import GOLDEN_QUERIES  # noqa: E402
@@ -38,10 +41,6 @@ PRESETS = ["minimal", "full"]
 
 def load_movies(db: MovieDatabase) -> list[MovieRecord]:
     return db.get_all_movies()
-
-
-def cell_name(preset: str, profile: str) -> str:
-    return f"{preset}_{profile}"
 
 
 def build_cell(store: MovieVectorStore, movies: list[MovieRecord],

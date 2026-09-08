@@ -134,6 +134,53 @@ def _cloud_waterfall_frame(tree: TraceTree) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def node_header(node: ObservationNode) -> str:
+    """One-line drill-down header: name · type · latency · model · tokens · cost (pure)."""
+    bits = [node.name or node.type]
+    if node.name:
+        bits.append(node.type)
+    if node.duration_ms is not None:
+        bits.append(f"{node.duration_ms:.0f} ms")
+    if node.model:
+        bits.append(node.model)
+    if node.usage.get("total"):
+        bits.append(f"{node.usage['total']} tok")
+    if node.cost is not None:
+        bits.append(f"${node.cost:.6f}")
+    return " · ".join(bits)
+
+
+def bar_fraction(node: ObservationNode, root: ObservationNode) -> float:
+    """Node duration as a fraction of the root's, clamped to [0, 1] (pure)."""
+    if node.duration_ms is None or not root.duration_ms:
+        return 0.0
+    return max(0.0, min(1.0, node.duration_ms / root.duration_ms))
+
+
+def node_metadata(node: ObservationNode) -> dict[str, object]:
+    """Key-value rows for the Metadata tab, blanks dropped (pure)."""
+    meta = {
+        "id": node.id,
+        "parent_id": node.parent_id,
+        "type": node.type,
+        "model": node.model,
+        "start_time": node.start_time,
+        "end_time": node.end_time,
+        "duration_ms": round(node.duration_ms) if node.duration_ms is not None else None,
+        "cost_usd": node.cost,
+        **{f"usage.{k}": v for k, v in node.usage.items()},
+    }
+    return {k: v for k, v in meta.items() if v not in (None, "")}
+
+
+def find_root(tree: TraceTree, node_id: str) -> ObservationNode | None:
+    """Root observation whose subtree contains node_id (pure)."""
+    for root in tree.roots:
+        if any(n.id == node_id for n, _ in _flatten([root])):
+            return root
+    return tree.roots[0] if tree.roots else None
+
+
 def _render_io(label: str, payload) -> None:
     """Chat messages render as role blocks; everything else as JSON."""
     if payload in (None, "", [], {}):
@@ -177,6 +224,83 @@ def render_observation_node(node: ObservationNode, depth: int = 0) -> None:
         _render_node_detail(node)
 
 
+# --- Langfuse-style drill-down (#31): tree + detail pane below the table ---
+
+
+def _render_json(label: str, payload) -> None:
+    if payload in (None, "", [], {}):
+        return
+    st.markdown(f"**{label}**")
+    if isinstance(payload, str):
+        st.code(payload, language=None, wrap_lines=True)
+    else:
+        st.json(payload)
+
+
+def _render_tree(root: ObservationNode, trace_id: str, selected_id: str) -> None:
+    """Fully-expanded observation tree: indented buttons + proportional latency bars."""
+    state_key = f"drill-{trace_id}"
+    for node, depth in _flatten([root]):
+        icon = "✦" if node.type == "GENERATION" else "•"
+        label = f"{'│ ' * depth}{icon} {node.name or node.type}"
+        if node.duration_ms is not None:
+            label += f" · {node.duration_ms:.0f} ms"
+        cols = st.columns([3, 1], vertical_alignment="center", gap="small")
+        if cols[0].button(
+            label, key=f"drill-{trace_id}-{node.id}",
+            type="primary" if node.id == selected_id else "tertiary",
+            width="stretch",
+        ):
+            st.session_state[state_key] = node.id
+            st.rerun()
+        pct = bar_fraction(node, root) * 100
+        cols[1].markdown(
+            "<div style='background:#e8eaf0;border-radius:3px;height:8px'>"
+            f"<div style='background:#7c83fd;height:8px;border-radius:3px;width:{pct:.0f}%'></div></div>",
+            unsafe_allow_html=True,
+        )
+
+
+def _render_detail(node: ObservationNode, root: ObservationNode, scores: list[dict]) -> None:
+    st.caption(node_header(node))
+    if node is root:
+        for score in scores:
+            st.caption(f"Score **{score['name']}** = {score['value']}"
+                       + (f" — {score['comment']}" if score.get("comment") else ""))
+    preview, raw, meta = st.tabs(["Preview", "JSON", "Metadata"])
+    with preview:
+        _render_io("Input", node.input)
+        _render_io("Output", node.output)
+    with raw:
+        _render_json("Input", node.input)
+        _render_json("Output", node.output)
+    with meta:
+        rows = node_metadata(node)
+        st.dataframe(
+            pd.DataFrame({"Path": list(rows), "Value": [str(v) for v in rows.values()]}),
+            use_container_width=True, hide_index=True,
+        )
+
+
+def _render_drilldown(tree: TraceTree, clicked: ObservationNode) -> None:
+    root = find_root(tree, clicked.id)
+    if root is None:
+        _render_node_detail(clicked)
+        return
+    state_key = f"drill-{tree.trace_id}"
+    # Reset selection to root whenever a different table row is clicked (D5).
+    if st.session_state.get("drill-last-row") != clicked.id:
+        st.session_state["drill-last-row"] = clicked.id
+        st.session_state[state_key] = root.id
+    selected_id = st.session_state.get(state_key, root.id)
+    node = next((n for n, _ in _flatten([root]) if n.id == selected_id), root)
+    tree_col, detail_col = st.columns([2, 3], gap="medium")
+    with tree_col:
+        _render_tree(root, tree.trace_id, node.id)
+    with detail_col:
+        _render_detail(node, root, tree.scores)
+
+
 # --- Langfuse-style observations table (#35) ---
 
 
@@ -216,6 +340,7 @@ def observation_rows(
                     str(v) for v in (node.name, node.input, node.output)
                 ).lower(),
                 "node": node,
+                "trace_id": trace_id,
             })
     rows.sort(key=lambda r: (r["start"] is None, r["start"]), reverse=True)
     return rows
@@ -315,7 +440,11 @@ def render_observations_table(session, refresh: bool = False) -> None:
     if selected:
         row = filtered[selected[0]]
         st.markdown(f"#### {row['name']} — {row['turn']}")
-        _render_node_detail(row["node"])
+        tree = trees.get(row["trace_id"])
+        if tree is None:
+            _render_node_detail(row["node"])
+        else:
+            _render_drilldown(tree, row["node"])
     else:
         st.caption("Select a row to inspect full prompts and outputs.")
 

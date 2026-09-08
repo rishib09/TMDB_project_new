@@ -18,6 +18,7 @@ from src.feedback.langfuse_score import push_feedback_score
 from src.feedback.store import FeedbackStore
 from src.graph.orchestrator import build_maya_graph
 from src.indexing.embeddings import EmbeddingProvider, provider_from_profile
+from src.indexing.embeddings import collection_name, provider_from_profile
 from src.indexing.vector_store import MovieVectorStore
 from src.maya.agent import MayaSynthesizer
 from src.maya.guardrails import SessionTokenLimiter, WeeklyBudgetTracker
@@ -101,6 +102,16 @@ class MayaSession:
         # degrading to a weaker collection.
         self.rag_version = "full_gemini_embedding_2"
         self.search_provider = shared_search_provider("gemini_embedding_2")
+        # #11/#30: the dense path derives from config — ONE knob pair names
+        # the collection AND the query-embedding provider, so user queries are
+        # always embedded by the collection's own model. Default = ADR 0008
+        # verdict (gemini-embedding-2 · full: 100% golden hit@5 / MRR 0.964).
+        # Fail-closed: without OPENROUTER_API_KEY the app refuses to start
+        # rather than silently degrading to a weaker collection.
+        self.rag_version = collection_name(
+            self.config.column_preset, self.config.embedding_profile
+        )
+        self.search_provider = provider_from_profile(self.config.embedding_profile)
         self.admin_mode = False
         self.config_version = 0  # bumped on preset apply → knob widgets remount
         self.turn_log: list[dict] = []  # one row per turn for badges/trace
@@ -111,6 +122,12 @@ class MayaSession:
     # --- graph lifecycle ---
 
     def _build_graph(self):
+        # #30: re-derive the dense pair on every rebuild — a Lab combo change
+        # must swap collection and query-embedder together, never one alone.
+        self.rag_version = collection_name(
+            self.config.column_preset, self.config.embedding_profile
+        )
+        self.search_provider = provider_from_profile(self.config.embedding_profile)
         engine = HybridRetrievalEngine(
             db=self.db,
             vector_store=shared_vector_store(),
@@ -140,6 +157,8 @@ class MayaSession:
                 self.config.reranker_enabled, self.config.reranker_model,
                 self.config.retrieval_top_k, self.config.route_max_attempts,
                 self.config.reasoning_effort,
+                # #30: combo change swaps collection + query provider
+                self.config.embedding_profile, self.config.column_preset,
             )
         )
 
