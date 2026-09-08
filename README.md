@@ -18,7 +18,7 @@ pinned: false
 [![Streamlit](https://img.shields.io/badge/UI-Streamlit-red.svg)]()
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-An observable, multi-version **Retrieval-Augmented Generation (RAG)** pipeline and **Evaluation Harness** specialized in US theatrical releases from **1970 to 2026** (9,119 curated films). 
+An observable, multi-version **Retrieval-Augmented Generation (RAG)** pipeline and **Evaluation Harness** specialized in US releases from **1970 to 2026** (9,119 curated films, including a small share of TV movies and specials). 
 
 Fronted by **"Maya"**, a conversational film curator featuring deterministic intent routing, Closed-World Assumption (CWA) grounding, high-resolution poster rendering, 5-layer multi-turn conversational memory, and full-fidelity **Langfuse Cloud** telemetry alongside an in-app Streamlit trace inspector.
 

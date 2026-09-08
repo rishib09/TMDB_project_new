@@ -134,3 +134,22 @@ def test_excluded_actor_tokens_never_enter_sparse_query(db):
     results = engine.retrieve("action movies without Tom Cruise", routing, top_k=8)
     titles = {r.movie.title for r in results}
     assert "Speed 2: Cruise Control" not in titles
+
+
+@pytest.mark.adversarial
+def test_mood_tokens_never_enter_sparse_query(db):
+    """#34: the funnel mood ('funny') must not act as a BM25 keyword — it
+    rewarded pure title matches (Funny People, It's Kind of a Funny Story)
+    over comedic fit. Mood flavors the dense side only."""
+    engine = HybridRetrievalEngine(db=db, vector_store=None, reranker_enabled=False)
+    routing = make_routing(
+        standalone_query="funny movies",
+        mood="funny",
+    )
+
+    sparse = engine.sparse_query("funny movies", routing.filters, mood=routing.mood)
+    assert "funny" not in {t.lower() for t in sparse.split()}
+
+    results = engine.retrieve("funny movies", routing, top_k=8)
+    for r in results:
+        assert "funny" not in r.movie.title.lower(), r.movie.title

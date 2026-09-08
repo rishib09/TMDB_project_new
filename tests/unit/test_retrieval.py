@@ -277,3 +277,16 @@ class TestSparseQuery:
         assert HybridRetrievalEngine.sparse_query("space opera", None) == "space opera"
         filters = MetadataFilterCriteria()
         assert HybridRetrievalEngine.sparse_query("space opera", filters) == "space opera"
+
+    def test_strips_mood_tokens(self):
+        out = HybridRetrievalEngine.sparse_query(
+            "funny movies Comedy for solo", None, mood="funny"
+        )
+        assert "funny" not in out.split()
+        assert "Comedy" in out.split()
+
+    def test_multiword_mood_stripped(self):
+        out = HybridRetrievalEngine.sparse_query(
+            "feel good or sad movies", None, mood="feel good or sad"
+        )
+        assert out == "movies"
