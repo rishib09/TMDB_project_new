@@ -114,3 +114,23 @@ def test_top_k_zero(db):
     engine = HybridRetrievalEngine(db=db, vector_store=None, reranker_enabled=False)
     results = engine.retrieve("space", make_routing(), top_k=0)
     assert results == []
+
+
+@pytest.mark.adversarial
+def test_excluded_actor_tokens_never_enter_sparse_query(db):
+    """#32: 'no Tom Cruise' must not retrieve 'Speed 2: Cruise Control' via a
+    BM25 title match on the excluded entity's tokens."""
+    engine = HybridRetrievalEngine(db=db, vector_store=None, reranker_enabled=False)
+    routing = make_routing(
+        intent=IntentType.NEGATION_EXCLUSION,
+        standalone_query="action movies without Tom Cruise",
+        filters=MetadataFilterCriteria(excluded_actors=["Tom Cruise"]),
+    )
+
+    sparse = engine.sparse_query("action movies without Tom Cruise", routing.filters)
+    tokens = {t.lower() for t in sparse.split()}
+    assert "cruise" not in tokens and "tom" not in tokens
+
+    results = engine.retrieve("action movies without Tom Cruise", routing, top_k=8)
+    titles = {r.movie.title for r in results}
+    assert "Speed 2: Cruise Control" not in titles

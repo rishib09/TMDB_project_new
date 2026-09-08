@@ -246,3 +246,34 @@ class TestRetrieveOrchestration:
         assert len(results) == 1
         assert results[0].movie.id == 7
         assert results[0].source == "rrf"
+
+
+# --- sparse query construction (#32) -----------------------------------------
+
+
+class TestSparseQuery:
+    def test_strips_excluded_actor_tokens(self):
+        filters = MetadataFilterCriteria(excluded_actors=["Tom Cruise"])
+        out = HybridRetrievalEngine.sparse_query("action movies without Tom Cruise", filters)
+        assert out == "action movies without"
+
+    def test_strips_excluded_genre_tokens(self):
+        filters = MetadataFilterCriteria(excluded_genres=["Horror"])
+        out = HybridRetrievalEngine.sparse_query("scary movies but no horror please", filters)
+        assert "horror" not in out.split()
+        assert "scary" in out.split()
+
+    def test_unrelated_tokens_untouched(self):
+        filters = MetadataFilterCriteria(excluded_actors=["Tom Cruise"])
+        out = HybridRetrievalEngine.sparse_query("heist thriller in Paris", filters)
+        assert out == "heist thriller in Paris"
+
+    def test_case_insensitive_match(self):
+        filters = MetadataFilterCriteria(excluded_actors=["tom cruise"])
+        out = HybridRetrievalEngine.sparse_query("no TOM CRUISE films", filters)
+        assert out == "no films"
+
+    def test_no_filters_passthrough(self):
+        assert HybridRetrievalEngine.sparse_query("space opera", None) == "space opera"
+        filters = MetadataFilterCriteria()
+        assert HybridRetrievalEngine.sparse_query("space opera", filters) == "space opera"
