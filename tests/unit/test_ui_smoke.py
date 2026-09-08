@@ -85,3 +85,24 @@ def test_scroll_to_newest_renders_without_runtime():
     from src.ui.chat_tab import scroll_to_newest
 
     scroll_to_newest()  # smoke: import-time wiring correct
+
+
+def test_routing_counters_aggregate_route_spans_only():
+    """#29 observability: fallback / re-route / mismatch chips from the ring."""
+    from src.ui.trace_tab import routing_counters
+
+    traces = [
+        {"node": "route", "payload": {"attempt": 1, "is_fallback": True,
+                                      "requires_rag_mismatch": False}},
+        {"node": "route", "payload": {"attempt": 2, "is_fallback": False,
+                                      "requires_rag_mismatch": True}},
+        {"node": "retrieve", "payload": {"is_fallback": True}},  # not a route span
+    ]
+    counters = routing_counters(traces)
+    assert counters == {"fallbacks": 1, "reroutes": 1, "mismatches": 1}
+
+
+def test_routing_counters_empty_ring():
+    from src.ui.trace_tab import routing_counters
+
+    assert routing_counters([]) == {"fallbacks": 0, "reroutes": 0, "mismatches": 0}
