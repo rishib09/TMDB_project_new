@@ -1,0 +1,865 @@
+{
+  "label": "reranker=ce-esci-MiniLM-L12-v2",
+  "mode": "retrieval",
+  "config_snapshot": {
+    "router_model": "~google/gemini-flash-latest",
+    "synthesis_model": "~google/gemini-flash-latest",
+    "reasoning_effort": "low",
+    "temperature": 0.0,
+    "embedding_profile": "gemini_embedding_2",
+    "column_preset": "full",
+    "embedding_model": "BAAI/bge-small-en-v1.5",
+    "token_budget": 256,
+    "chunking_strategy": "enriched_metadata",
+    "hybrid_alpha": 0.5,
+    "reranker_enabled": true,
+    "reranker_model": "ce-esci-MiniLM-L12-v2",
+    "retrieval_top_k": 5,
+    "multi_turn_mode": "fused_single_pass",
+    "route_max_attempts": 2,
+    "memory_strategy": "sliding_window_with_entity",
+    "confidence_threshold": 0.5,
+    "cwa_guardrail_enabled": true,
+    "funnel_retrieve_axes": 2,
+    "era_old_year_max": 2000,
+    "era_recent_year_min": 2015,
+    "judge_model": "meta-llama/llama-3.3-70b-instruct",
+    "rag_version": "full_gemini_embedding_2"
+  },
+  "config_hash": "2d14c83b",
+  "preset": "custom",
+  "dataset_version": "2026-09-01",
+  "collection": "full_gemini_embedding_2",
+  "sweep": {
+    "knob": "reranker",
+    "value": "ce-esci-MiniLM-L12-v2",
+    "baseline": "production"
+  },
+  "n_queries": 29,
+  "hit_rate": 0.5517241379310345,
+  "mrr": 0.4339080459770115,
+  "context_precision": 0.4339080459770115,
+  "faithfulness": null,
+  "relevancy": null,
+  "total_tokens": 0,
+  "total_cost_usd": 0.0,
+  "routing_accuracy": null,
+  "routing_per_intent": null,
+  "fallback_count": 0,
+  "per_query": [
+    {
+      "query_id": "A07",
+      "tier": "A_guardrails",
+      "query": "What is the highest-grossing movie of all time?",
+      "expected_path": "sql",
+      "ranked_ids": [
+        19995,
+        299534,
+        76600,
+        969681,
+        597
+      ],
+      "relevant_ids": [
+        19995
+      ],
+      "hit_rate": 1.0,
+      "mrr": 1.0,
+      "context_precision": 1.0,
+      "response": "",
+      "faithfulness": null,
+      "relevancy": null,
+      "tokens": 0,
+      "cost_usd": 0.0,
+      "routed_intent": "",
+      "intent_correct": null,
+      "confidence": null,
+      "is_fallback": false
+    },
+    {
+      "query_id": "A08",
+      "tier": "A_guardrails",
+      "query": "Which movie had the highest rating in 1994?",
+      "expected_path": "sql",
+      "ranked_ids": [
+        278,
+        680,
+        13,
+        8587,
+        9495
+      ],
+      "relevant_ids": [
+        278
+      ],
+      "hit_rate": 1.0,
+      "mrr": 1.0,
+      "context_precision": 1.0,
+      "response": "",
+      "faithfulness": null,
+      "relevancy": null,
+      "tokens": 0,
+      "cost_usd": 0.0,
+      "routed_intent": "",
+      "intent_correct": null,
+      "confidence": null,
+      "is_fallback": false
+    },
+    {
+      "query_id": "A09",
+      "tier": "A_guardrails",
+      "query": "Best science fiction movie of 1999?",
+      "expected_path": "sql",
+      "ranked_ids": [
+        603,
+        10386,
+        2277,
+        64202,
+        926
+      ],
+      "relevant_ids": [
+        603
+      ],
+      "hit_rate": 1.0,
+      "mrr": 1.0,
+      "context_precision": 1.0,
+      "response": "",
+      "faithfulness": null,
+      "relevancy": null,
+      "tokens": 0,
+      "cost_usd": 0.0,
+      "routed_intent": "",
+      "intent_correct": null,
+      "confidence": null,
+      "is_fallback": false
+    },
+    {
+      "query_id": "A10",
+      "tier": "A_guardrails",
+      "query": "Which film earned the most money in 2019?",
+      "expected_path": "sql",
+      "ranked_ids": [
+        299534,
+        420818,
+        330457,
+        429617,
+        299537
+      ],
+      "relevant_ids": [
+        299534
+      ],
+      "hit_rate": 1.0,
+      "mrr": 1.0,
+      "context_precision": 1.0,
+      "response": "",
+      "faithfulness": null,
+      "relevancy": null,
+      "tokens": 0,
+      "cost_usd": 0.0,
+      "routed_intent": "",
+      "intent_correct": null,
+      "confidence": null,
+      "is_fallback": false
+    },
+    {
+      "query_id": "A11",
+      "tier": "A_guardrails",
+      "query": "A time-loop action movie, but absolutely no romantic comedy",
+      "expected_path": "rrf",
+      "ranked_ids": [
+        8831,
+        513310,
+        59967,
+        410199,
+        273271
+      ],
+      "relevant_ids": [
+        137113
+      ],
+      "hit_rate": 0.0,
+      "mrr": 0.0,
+      "context_precision": 0.0,
+      "response": "",
+      "faithfulness": null,
+      "relevancy": null,
+      "tokens": 0,
+      "cost_usd": 0.0,
+      "routed_intent": "",
+      "intent_correct": null,
+      "confidence": null,
+      "is_fallback": false
+    },
+    {
+      "query_id": "A12",
+      "tier": "A_guardrails",
+      "query": "Crime drama with a big ensemble cast, nothing animated",
+      "expected_path": "rrf",
+      "ranked_ids": [
+        82682,
+        14198,
+        449443,
+        26269,
+        507532
+      ],
+      "relevant_ids": [
+        546554
+      ],
+      "hit_rate": 0.0,
+      "mrr": 0.0,
+      "context_precision": 0.0,
+      "response": "",
+      "faithfulness": null,
+      "relevancy": null,
+      "tokens": 0,
+      "cost_usd": 0.0,
+      "routed_intent": "",
+      "intent_correct": null,
+      "confidence": null,
+      "is_fallback": false
+    },
+    {
+      "query_id": "A13",
+      "tier": "A_guardrails",
+      "query": "An animated movie from 2015 about emotions inside a girl's head",
+      "expected_path": "rrf",
+      "ranked_ids": [
+        150540,
+        354857,
+        326359,
+        355338,
+        228161
+      ],
+      "relevant_ids": [
+        150540
+      ],
+      "hit_rate": 1.0,
+      "mrr": 1.0,
+      "context_precision": 1.0,
+      "response": "",
+      "faithfulness": null,
+      "relevancy": null,
+      "tokens": 0,
+      "cost_usd": 0.0,
+      "routed_intent": "",
+      "intent_correct": null,
+      "confidence": null,
+      "is_fallback": false
+    },
+    {
+      "query_id": "A14",
+      "tier": "A_guardrails",
+      "query": "Epic historical revenge story set in ancient Rome",
+      "expected_path": "rrf",
+      "ranked_ids": [
+        12524,
+        9453,
+        271969,
+        42592,
+        26428
+      ],
+      "relevant_ids": [
+        98
+      ],
+      "hit_rate": 0.0,
+      "mrr": 0.0,
+      "context_precision": 0.0,
+      "response": "",
+      "faithfulness": null,
+      "relevancy": null,
+      "tokens": 0,
+      "cost_usd": 0.0,
+      "routed_intent": "",
+      "intent_correct": null,
+      "confidence": null,
+      "is_fallback": false
+    },
+    {
+      "query_id": "A15",
+      "tier": "A_guardrails",
+      "query": "Space horror movie from 1979 with a strong crew trapped on a ship",
+      "expected_path": "rrf",
+      "ranked_ids": [
+        9570,
+        348,
+        152,
+        9640,
+        31638
+      ],
+      "relevant_ids": [
+        348
+      ],
+      "hit_rate": 1.0,
+      "mrr": 0.5,
+      "context_precision": 0.5,
+      "response": "",
+      "faithfulness": null,
+      "relevancy": null,
+      "tokens": 0,
+      "cost_usd": 0.0,
+      "routed_intent": "",
+      "intent_correct": null,
+      "confidence": null,
+      "is_fallback": false
+    },
+    {
+      "query_id": "B01",
+      "tier": "B_retrieval",
+      "query": "mind-bending dream heist inside the subconscious",
+      "expected_path": "rrf",
+      "ranked_ids": [
+        325603,
+        24099,
+        291805,
+        1043565,
+        453395
+      ],
+      "relevant_ids": [
+        27205
+      ],
+      "hit_rate": 0.0,
+      "mrr": 0.0,
+      "context_precision": 0.0,
+      "response": "",
+      "faithfulness": null,
+      "relevancy": null,
+      "tokens": 0,
+      "cost_usd": 0.0,
+      "routed_intent": "",
+      "intent_correct": null,
+      "confidence": null,
+      "is_fallback": false
+    },
+    {
+      "query_id": "B02",
+      "tier": "B_retrieval",
+      "query": "simulated reality where humans are trapped by machines",
+      "expected_path": "rrf",
+      "ranked_ids": [
+        97,
+        14337,
+        9980,
+        603,
+        13186
+      ],
+      "relevant_ids": [
+        603
+      ],
+      "hit_rate": 1.0,
+      "mrr": 0.25,
+      "context_precision": 0.25,
+      "response": "",
+      "faithfulness": null,
+      "relevancy": null,
+      "tokens": 0,
+      "cost_usd": 0.0,
+      "routed_intent": "",
+      "intent_correct": null,
+      "confidence": null,
+      "is_fallback": false
+    },
+    {
+      "query_id": "B03",
+      "tier": "B_retrieval",
+      "query": "dinosaur theme park goes horribly wrong",
+      "expected_path": "rrf",
+      "ranked_ids": [
+        135397,
+        329,
+        12144,
+        351286,
+        2362
+      ],
+      "relevant_ids": [
+        329
+      ],
+      "hit_rate": 1.0,
+      "mrr": 0.5,
+      "context_precision": 0.5,
+      "response": "",
+      "faithfulness": null,
+      "relevancy": null,
+      "tokens": 0,
+      "cost_usd": 0.0,
+      "routed_intent": "",
+      "intent_correct": null,
+      "confidence": null,
+      "is_fallback": false
+    },
+    {
+      "query_id": "B04",
+      "tier": "B_retrieval",
+      "query": "toy cowboy and spaceman come alive when humans leave",
+      "expected_path": "rrf",
+      "ranked_ids": [
+        3786,
+        301528,
+        250546,
+        863,
+        10193
+      ],
+      "relevant_ids": [
+        862
+      ],
+      "hit_rate": 0.0,
+      "mrr": 0.0,
+      "context_precision": 0.0,
+      "response": "",
+      "faithfulness": null,
+      "relevancy": null,
+      "tokens": 0,
+      "cost_usd": 0.0,
+      "routed_intent": "",
+      "intent_correct": null,
+      "confidence": null,
+      "is_fallback": false
+    },
+    {
+      "query_id": "B05",
+      "tier": "B_retrieval",
+      "query": "lion cub heir flees then returns to claim his kingdom",
+      "expected_path": "rrf",
+      "ranked_ids": [
+        420818,
+        762509,
+        11430,
+        42486,
+        103698
+      ],
+      "relevant_ids": [
+        8587
+      ],
+      "hit_rate": 0.0,
+      "mrr": 0.0,
+      "context_precision": 0.0,
+      "response": "",
+      "faithfulness": null,
+      "relevancy": null,
+      "tokens": 0,
+      "cost_usd": 0.0,
+      "routed_intent": "",
+      "intent_correct": null,
+      "confidence": null,
+      "is_fallback": false
+    },
+    {
+      "query_id": "B06",
+      "tier": "B_retrieval",
+      "query": "teenager travels through time in a DeLorean sports car",
+      "expected_path": "rrf",
+      "ranked_ids": [
+        45232,
+        9278,
+        283366,
+        1729,
+        27201
+      ],
+      "relevant_ids": [
+        105
+      ],
+      "hit_rate": 0.0,
+      "mrr": 0.0,
+      "context_precision": 0.0,
+      "response": "",
+      "faithfulness": null,
+      "relevancy": null,
+      "tokens": 0,
+      "cost_usd": 0.0,
+      "routed_intent": "",
+      "intent_correct": null,
+      "confidence": null,
+      "is_fallback": false
+    },
+    {
+      "query_id": "B07",
+      "tier": "B_retrieval",
+      "query": "office tower seized by terrorists on Christmas Eve",
+      "expected_path": "rrf",
+      "ranked_ids": [
+        899112,
+        845781,
+        51831,
+        1005331,
+        59108
+      ],
+      "relevant_ids": [
+        562
+      ],
+      "hit_rate": 0.0,
+      "mrr": 0.0,
+      "context_precision": 0.0,
+      "response": "",
+      "faithfulness": null,
+      "relevancy": null,
+      "tokens": 0,
+      "cost_usd": 0.0,
+      "routed_intent": "",
+      "intent_correct": null,
+      "confidence": null,
+      "is_fallback": false
+    },
+    {
+      "query_id": "B08",
+      "tier": "B_retrieval",
+      "query": "hitmen, a glowing briefcase and a diner conversation",
+      "expected_path": "rrf",
+      "ranked_ids": [
+        2001,
+        974635,
+        1620,
+        21627,
+        9515
+      ],
+      "relevant_ids": [
+        680
+      ],
+      "hit_rate": 0.0,
+      "mrr": 0.0,
+      "context_precision": 0.0,
+      "response": "",
+      "faithfulness": null,
+      "relevancy": null,
+      "tokens": 0,
+      "cost_usd": 0.0,
+      "routed_intent": "",
+      "intent_correct": null,
+      "confidence": null,
+      "is_fallback": false
+    },
+    {
+      "query_id": "B09",
+      "tier": "B_retrieval",
+      "query": "green ogre and a talkative donkey rescue a princess",
+      "expected_path": "rrf",
+      "ranked_ids": [
+        808,
+        10192,
+        25523,
+        809,
+        13394
+      ],
+      "relevant_ids": [
+        808
+      ],
+      "hit_rate": 1.0,
+      "mrr": 1.0,
+      "context_precision": 1.0,
+      "response": "",
+      "faithfulness": null,
+      "relevancy": null,
+      "tokens": 0,
+      "cost_usd": 0.0,
+      "routed_intent": "",
+      "intent_correct": null,
+      "confidence": null,
+      "is_fallback": false
+    },
+    {
+      "query_id": "B10",
+      "tier": "B_retrieval",
+      "query": "father fish crosses the ocean to find his lost son",
+      "expected_path": "rrf",
+      "ranked_ids": [
+        12,
+        421,
+        83965,
+        587,
+        1040148
+      ],
+      "relevant_ids": [
+        12
+      ],
+      "hit_rate": 1.0,
+      "mrr": 1.0,
+      "context_precision": 1.0,
+      "response": "",
+      "faithfulness": null,
+      "relevancy": null,
+      "tokens": 0,
+      "cost_usd": 0.0,
+      "routed_intent": "",
+      "intent_correct": null,
+      "confidence": null,
+      "is_fallback": false
+    },
+    {
+      "query_id": "B11",
+      "tier": "B_retrieval",
+      "query": "simple-hearted man witnesses decades of American history",
+      "expected_path": "rrf",
+      "ranked_ids": [
+        10163,
+        1883,
+        2069,
+        17689,
+        476669
+      ],
+      "relevant_ids": [
+        13
+      ],
+      "hit_rate": 0.0,
+      "mrr": 0.0,
+      "context_precision": 0.0,
+      "response": "",
+      "faithfulness": null,
+      "relevancy": null,
+      "tokens": 0,
+      "cost_usd": 0.0,
+      "routed_intent": "",
+      "intent_correct": null,
+      "confidence": null,
+      "is_fallback": false
+    },
+    {
+      "query_id": "B12",
+      "tier": "B_retrieval",
+      "query": "news reporter relives the same day over and over",
+      "expected_path": "rrf",
+      "ranked_ids": [
+        88112,
+        31679,
+        12626,
+        1131553,
+        10521
+      ],
+      "relevant_ids": [
+        137
+      ],
+      "hit_rate": 0.0,
+      "mrr": 0.0,
+      "context_precision": 0.0,
+      "response": "",
+      "faithfulness": null,
+      "relevancy": null,
+      "tokens": 0,
+      "cost_usd": 0.0,
+      "routed_intent": "",
+      "intent_correct": null,
+      "confidence": null,
+      "is_fallback": false
+    },
+    {
+      "query_id": "B13",
+      "tier": "B_retrieval",
+      "query": "ship sinks after striking an iceberg on its maiden voyage",
+      "expected_path": "rrf",
+      "ranked_ids": [
+        8665,
+        9570,
+        597,
+        90974,
+        31638
+      ],
+      "relevant_ids": [
+        597
+      ],
+      "hit_rate": 1.0,
+      "mrr": 0.3333333333333333,
+      "context_precision": 0.3333333333333333,
+      "response": "",
+      "faithfulness": null,
+      "relevancy": null,
+      "tokens": 0,
+      "cost_usd": 0.0,
+      "routed_intent": "",
+      "intent_correct": null,
+      "confidence": null,
+      "is_fallback": false
+    },
+    {
+      "query_id": "B14",
+      "tier": "B_retrieval",
+      "query": "caped vigilante faces a clown-faced agent of chaos in gotham",
+      "expected_path": "rrf",
+      "ranked_ids": [
+        629176,
+        1413976,
+        16296,
+        663712,
+        49026
+      ],
+      "relevant_ids": [
+        155
+      ],
+      "hit_rate": 0.0,
+      "mrr": 0.0,
+      "context_precision": 0.0,
+      "response": "",
+      "faithfulness": null,
+      "relevancy": null,
+      "tokens": 0,
+      "cost_usd": 0.0,
+      "routed_intent": "",
+      "intent_correct": null,
+      "confidence": null,
+      "is_fallback": false
+    },
+    {
+      "query_id": "B15",
+      "tier": "B_retrieval",
+      "query": "chrome wasteland warrior with a metal arm races across the desert",
+      "expected_path": "rrf",
+      "ranked_ids": [
+        27549,
+        45827,
+        26300,
+        840464,
+        9922
+      ],
+      "relevant_ids": [
+        76341
+      ],
+      "hit_rate": 0.0,
+      "mrr": 0.0,
+      "context_precision": 0.0,
+      "response": "",
+      "faithfulness": null,
+      "relevancy": null,
+      "tokens": 0,
+      "cost_usd": 0.0,
+      "routed_intent": "",
+      "intent_correct": null,
+      "confidence": null,
+      "is_fallback": false
+    },
+    {
+      "query_id": "B16",
+      "tier": "B_retrieval",
+      "query": "jazz drummer pushed past his limits by a ruthless instructor",
+      "expected_path": "rrf",
+      "ranked_ids": [
+        244786,
+        13497,
+        638,
+        24772,
+        50359
+      ],
+      "relevant_ids": [
+        244786
+      ],
+      "hit_rate": 1.0,
+      "mrr": 1.0,
+      "context_precision": 1.0,
+      "response": "",
+      "faithfulness": null,
+      "relevancy": null,
+      "tokens": 0,
+      "cost_usd": 0.0,
+      "routed_intent": "",
+      "intent_correct": null,
+      "confidence": null,
+      "is_fallback": false
+    },
+    {
+      "query_id": "B17",
+      "tier": "B_retrieval",
+      "query": "linguist decodes an alien language and bends time",
+      "expected_path": "rrf",
+      "ranked_ids": [
+        10865,
+        329865,
+        284293,
+        17654,
+        16000
+      ],
+      "relevant_ids": [
+        329865
+      ],
+      "hit_rate": 1.0,
+      "mrr": 0.5,
+      "context_precision": 0.5,
+      "response": "",
+      "faithfulness": null,
+      "relevancy": null,
+      "tokens": 0,
+      "cost_usd": 0.0,
+      "routed_intent": "",
+      "intent_correct": null,
+      "confidence": null,
+      "is_fallback": false
+    },
+    {
+      "query_id": "B18",
+      "tier": "B_retrieval",
+      "query": "the emotions inside a young girl's head go to war",
+      "expected_path": "rrf",
+      "ranked_ids": [
+        1022789,
+        150540,
+        399019,
+        968303,
+        786942
+      ],
+      "relevant_ids": [
+        150540
+      ],
+      "hit_rate": 1.0,
+      "mrr": 0.5,
+      "context_precision": 0.5,
+      "response": "",
+      "faithfulness": null,
+      "relevancy": null,
+      "tokens": 0,
+      "cost_usd": 0.0,
+      "routed_intent": "",
+      "intent_correct": null,
+      "confidence": null,
+      "is_fallback": false
+    },
+    {
+      "query_id": "B19",
+      "tier": "B_retrieval",
+      "query": "colorful journey through the land of the dead about family memory",
+      "expected_path": "rrf",
+      "ranked_ids": [
+        354912,
+        940139,
+        77174,
+        449406,
+        1013850
+      ],
+      "relevant_ids": [
+        354912
+      ],
+      "hit_rate": 1.0,
+      "mrr": 1.0,
+      "context_precision": 1.0,
+      "response": "",
+      "faithfulness": null,
+      "relevancy": null,
+      "tokens": 0,
+      "cost_usd": 0.0,
+      "routed_intent": "",
+      "intent_correct": null,
+      "confidence": null,
+      "is_fallback": false
+    },
+    {
+      "query_id": "B20",
+      "tier": "B_retrieval",
+      "query": "everything everywhere all at once across the multiverse with bagels",
+      "expected_path": "rrf",
+      "ranked_ids": [
+        545611,
+        1155089,
+        430231,
+        569094,
+        397837
+      ],
+      "relevant_ids": [
+        545611
+      ],
+      "hit_rate": 1.0,
+      "mrr": 1.0,
+      "context_precision": 1.0,
+      "response": "",
+      "faithfulness": null,
+      "relevancy": null,
+      "tokens": 0,
+      "cost_usd": 0.0,
+      "routed_intent": "",
+      "intent_correct": null,
+      "confidence": null,
+      "is_fallback": false
+    }
+  ],
+  "delta": null,
+  "timestamp": "2026-09-10T22:09:26.825402+00:00"
+}

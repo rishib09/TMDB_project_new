@@ -156,6 +156,22 @@ class BenchmarkRunner:
                 "spend resets on Monday"
             )
 
+    def _refuse_dense_loss(self, query_id: str) -> None:
+        """A hybrid run that lost dense measured BM25, not the config (#65).
+
+        Sep 8 sweep: six embedding combos saved identical BM25-only rows
+        stamped "rrf". Sparse-only configs (hybrid_alpha == 0) never ask for
+        dense, so nothing to check there.
+        """
+        if self.config.hybrid_alpha == 0.0:
+            return
+        failure = getattr(self.engine, "last_dense_failure", None)
+        if failure:
+            raise RuntimeError(
+                f"dense retrieval failed on {query_id} ({failure}) — hybrid run "
+                "refused: the numbers would measure BM25-only, not this config"
+            )
+
     def run_retrieval(self, queries: list[dict], label: str) -> BenchmarkSummary:
         """Offline mode: IR metrics from deterministic retrieval replay.
 
@@ -171,6 +187,7 @@ class BenchmarkRunner:
                 query=routing.standalone_query, routing=routing,
                 top_k=self.config.retrieval_top_k,
             )
+            self._refuse_dense_loss(row["id"])
             results.append(self._ir_result(row, [r.movie.id for r in retrieved]))
         return self._summarize(results, label, mode="retrieval")
 
@@ -182,6 +199,7 @@ class BenchmarkRunner:
         for row in queries:
             self._budget_check()
             turn = self.graph.invoke({"messages": [HumanMessage(content=row["query"])]})
+            self._refuse_dense_loss(row["id"])
             movies = turn.get("retrieved_movies", [])
             response = turn.get("final_response", "")
             result = self._ir_result(row, [m.id for m in movies])

@@ -25,6 +25,10 @@ class RetrievalResult(BaseModel):
     dense_rank: int | None = None
     sparse_rank: int | None = None
     document_text: str = ""
+    dense_failed: bool = Field(
+        default=False,
+        description="#65: dense search raised for this call; the list is BM25-only",
+    )
 
 
 class HybridRetrievalEngine:
@@ -51,6 +55,10 @@ class HybridRetrievalEngine:
         self.vector_store = vector_store
         self.rag_version = rag_version
         self.search_provider = search_provider  # #11: cloud provider for the default collection
+        #: #65 (map #64 D16): repr of the exception the most recent hybrid
+        #: retrieve() swallowed in the dense leg; None when dense ran. Chat
+        #: keeps the BM25 fallback, the trace records it, the harness refuses.
+        self.last_dense_failure: str | None = None
         self.hybrid_alpha = hybrid_alpha
         self.reranker_enabled = reranker_enabled
         self.reranker_model = reranker_model
@@ -66,6 +74,7 @@ class HybridRetrievalEngine:
         candidate_pool: int = 50,
     ) -> list[RetrievalResult]:
         """Returns the final ranked movies for one router decision."""
+        self.last_dense_failure = None
         if not routing.requires_rag:
             return []
 
@@ -79,6 +88,8 @@ class HybridRetrievalEngine:
         dense = self._retrieve_dense(query, candidate_pool)
         sparse = self._retrieve_bm25(self.sparse_query(query, routing.filters), candidate_pool)
         fused = self._rrf_fuse(dense, sparse)
+        if self.last_dense_failure is not None:
+            fused = [r.model_copy(update={"dense_failed": True}) for r in fused]
 
         # Uniform post-filtering: positive filters + exclusions on the small
         # candidate pool (BM25 has no metadata columns; this keeps one path).
@@ -154,8 +165,10 @@ class HybridRetrievalEngine:
                 query=query, version_name=self.rag_version, top_k=top_k,
                 provider=self.search_provider,
             )
-        except Exception:
-            # Missing/legacy collection must not kill retrieval — BM25 carries on.
+        except Exception as exc:  # noqa: BLE001 — fallback is deliberate and RECORDED
+            # Missing/legacy collection or a failed provider call must not kill
+            # retrieval — BM25 carries on — but the loss is never silent (#65).
+            self.last_dense_failure = f"{type(exc).__name__}: {exc}"
             return []
 
     def _retrieve_bm25(self, query: str, top_k: int) -> list[MovieRecord]:

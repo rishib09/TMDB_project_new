@@ -166,3 +166,42 @@ def test_load_dataset_rejects_missing_fields(tmp_path):
     bad.write_text(json.dumps({"queries": [{"id": "X1", "query": "q"}]}), encoding="utf-8")
     with pytest.raises(ValueError, match="missing fields"):
         load_dataset(bad)
+
+
+# --- #65: a hybrid run that lost dense must never be saved -------------------
+
+class _RaisingStore:
+    def search(self, **kwargs):
+        raise RuntimeError("provider 401")
+
+
+def test_retrieval_run_refuses_when_dense_is_lost():
+    """Sep 8 sweep: six combos scored identical BM25-only rows as 'rrf' (#65)."""
+    from src.retrieval.hybrid_engine import HybridRetrievalEngine
+
+    config = ExperimentConfig()  # hybrid_alpha 0.5 → dense is part of the architecture
+    engine = HybridRetrievalEngine(
+        db=MovieDatabase("data/tmdb_movies.db"), vector_store=_RaisingStore(),
+        hybrid_alpha=config.hybrid_alpha, reranker_enabled=False,
+    )
+    rows = [r for r in load_dataset(Path("data/eval_benchmark_dataset.json"))
+            if r["expected_path"] == "rrf"][:2]
+
+    with pytest.raises(RuntimeError, match="dense"):
+        BenchmarkRunner(config, engine).run_retrieval(rows, "combo")
+
+
+def test_bm25_only_config_ignores_dense_loss():
+    """hybrid_alpha 0.0 never asks for dense — a failing store is irrelevant."""
+    from src.retrieval.hybrid_engine import HybridRetrievalEngine
+
+    config = ExperimentConfig(hybrid_alpha=0.0)
+    engine = HybridRetrievalEngine(
+        db=MovieDatabase("data/tmdb_movies.db"), vector_store=_RaisingStore(),
+        hybrid_alpha=0.0, reranker_enabled=False,
+    )
+    rows = [r for r in load_dataset(Path("data/eval_benchmark_dataset.json"))
+            if r["expected_path"] == "rrf"][:2]
+
+    summary = BenchmarkRunner(config, engine).run_retrieval(rows, "sparse")
+    assert summary.n_queries == 2
