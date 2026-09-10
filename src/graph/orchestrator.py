@@ -410,6 +410,9 @@ def build_maya_graph(
             )
             tracer.record_local("retrieve", {"genre_match_relaxed": True})
         movies = [r.movie for r in results]
+        dense_failure = getattr(engine, "last_dense_failure", None)
+        if dense_failure:  # #65: BM25-only fallback is explicit in the Trace
+            tracer.record_local("retrieve", {"dense_failed": True, "error": dense_failure})
         tracer.record_local("retrieve", {"count": len(movies), "ids": [m.id for m in movies]})
         return {"retrieved_movies": movies, "shown_movie_ids": [m.id for m in movies]}
 

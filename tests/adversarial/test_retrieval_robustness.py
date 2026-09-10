@@ -134,3 +134,43 @@ def test_excluded_actor_tokens_never_enter_sparse_query(db):
     results = engine.retrieve("action movies without Tom Cruise", routing, top_k=8)
     titles = {r.movie.title for r in results}
     assert "Speed 2: Cruise Control" not in titles
+
+
+# --- #65: dense loss is recorded, never silent ---------------------------------
+
+
+class _RaisingStore:
+    def search(self, **kwargs):
+        raise RuntimeError("provider 401")
+
+
+class _EmptyStore:
+    def search(self, **kwargs):
+        return []
+
+
+@pytest.mark.adversarial
+def test_dense_failure_is_recorded_on_engine_and_results(db):
+    """Chat keeps the BM25 fallback, but the loss must be visible (#65, map #64 D16)."""
+    engine = HybridRetrievalEngine(
+        db=db, vector_store=_RaisingStore(), hybrid_alpha=0.5, reranker_enabled=False
+    )
+    results = engine.retrieve("space horror crew trapped on a ship", make_routing(), top_k=5)
+
+    assert results, "BM25 fallback must still answer"
+    assert "provider 401" in (engine.last_dense_failure or "")
+    assert all(r.dense_failed for r in results)
+
+
+@pytest.mark.adversarial
+def test_dense_failure_marker_resets_on_next_retrieve(db):
+    engine = HybridRetrievalEngine(
+        db=db, vector_store=_RaisingStore(), hybrid_alpha=0.5, reranker_enabled=False
+    )
+    engine.retrieve("space horror", make_routing(), top_k=5)
+    assert engine.last_dense_failure is not None
+
+    engine.vector_store = _EmptyStore()
+    results = engine.retrieve("space horror", make_routing(), top_k=5)
+    assert engine.last_dense_failure is None
+    assert not any(r.dense_failed for r in results)
