@@ -14,7 +14,11 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 
 from src.domain.config import ExperimentConfig, PresetType
 from src.domain.memory import ConversationState
-from src.feedback.langfuse_score import push_feedback_score
+from src.feedback.inbox import (
+    REPORTS_PER_SESSION, WINDOW_TURNS, format_rating_comment,
+    format_report_comment, post_inbox_comment, validate_report,
+)
+from src.feedback.langfuse_score import push_feedback_score, push_report_comment
 from src.feedback.store import FeedbackStore
 from src.graph.orchestrator import build_maya_graph
 from src.indexing.embeddings import EmbeddingProvider, provider_from_profile
@@ -95,6 +99,7 @@ class MayaSession:
         self.view = "Chat"  # sidebar navigation: Chat | Evals | Traces
         self.feedback_log: dict[int, int] = {}  # assistant-turn index → ±1 (thumbs)
         self.feedback_store = FeedbackStore()  # SQLite persistence (#9)
+        self.report_count = 0  # /feedback Reports posted this tab (#76 cap)
         # #11 Phase 1 verdict (ADR 0008): gemini-embedding-2 via OpenRouter is
         # the production dense path — 100% golden hit@5 / MRR 0.964 on the
         # `full` preset, vs 71% for the best free model. Fail-closed: without
@@ -359,7 +364,27 @@ class MayaSession:
             row["trace_id"], value, row["rag_version"], intent=row["intent"]
         )
         self.feedback_log[turn_index] = value
+        post_inbox_comment(format_rating_comment(value, row))  # #76: durable copy
         return push_feedback_score(row["trace_id"], value)
+
+    def record_report(self, text: str) -> bool:
+        """Posts a ``/feedback`` Report with its Feedback Window (#76).
+
+        False when the text fails a guard, the per-tab cap is reached, or
+        no turn exists to report on — nothing is logged in those cases
+        (verdict D9, D11). True once the Report is durable somewhere:
+        the GitHub inbox, or Langfuse when the inbox is unreachable (D12).
+        """
+        cleaned = validate_report(text)
+        if cleaned is None or not self.turn_log:
+            return False
+        if self.report_count >= REPORTS_PER_SESSION:
+            return False
+        window = self.turn_log[-WINDOW_TURNS:]
+        self.report_count += 1
+        if post_inbox_comment(format_report_comment(cleaned, window)) is None:
+            push_report_comment(window[-1]["trace_id"], cleaned)
+        return True
 
     def _turn_row_for_ui_index(self, ui_index: int) -> dict | None:
         """Resolves the UI's assistant-message counter to its turn row (#26-K).
