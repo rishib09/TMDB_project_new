@@ -44,6 +44,26 @@ _Avoid_: App settings, parameters, flags.
 A complete user transaction log containing end-to-end latency, total token usage, estimated cost, intent classification, and child execution spans, mirrored to Langfuse and inspectable in the in-app DAG tree.
 _Avoid_: Log entry, telemetry record.
 
+**Feedback**:
+A visitor's judgement on one Maya turn, always linked to that turn's Trace and recorded as one comment on the GitHub feedback inbox. Two kinds: a Rating and a Report.
+_Avoid_: Review, vote, telemetry, re-route feedback (the Router's corrective prompt is not Feedback).
+
+**Rating**:
+A thumbs up or thumbs down on one Maya reply.
+_Avoid_: Score, like, reaction.
+
+**Report**:
+Free text a visitor submits with `/feedback` about the last Maya reply, carrying its Feedback Window.
+_Avoid_: Bug report, comment, note.
+
+**Feedback Window**:
+The last five user turns attached to a Report, each with its Intent, path, query and reply excerpts, and Trace id.
+_Avoid_: Context, history dump.
+
+**Feedback Action**:
+What the loop did with a Feedback: received, promoted to an issue, or fixed.
+_Avoid_: Status, outcome, resolution.
+
 **FTS5 (Full-Text Search 5)**:
 The native SQLite sparse lexical search engine executing BM25 keyword matching with Porter stemming over titles, overviews, directors, genres, and cast names to complement dense vector retrieval.
 _Avoid_: Keyword searcher, regex search, text filter.

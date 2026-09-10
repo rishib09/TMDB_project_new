@@ -12,6 +12,7 @@ import os
 logger = logging.getLogger(__name__)
 
 FEEDBACK_SCORE_NAME = "user-feedback"
+REPORT_SCORE_NAME = "user-report"
 
 
 def cloud_configured() -> bool:
@@ -44,4 +45,30 @@ def push_feedback_score(trace_id: str, rating: int, comment: str | None = None) 
         return True
     except Exception:
         logger.exception("Failed to push feedback score to Langfuse")
+        return False
+
+
+def push_report_comment(trace_id: str, text: str) -> bool:
+    """Fallback for a Report when the GitHub inbox is unreachable (#76 D12).
+
+    One score per trace named ``user-report`` carrying the text as its
+    comment. Never raises; False when not configured or the push fails.
+    """
+    if not cloud_configured():
+        logger.info("Langfuse not configured — report dropped")
+        return False
+    try:
+        import langfuse
+
+        langfuse.get_client().create_score(
+            trace_id=trace_id,
+            name=REPORT_SCORE_NAME,
+            value=1.0,
+            data_type="NUMERIC",
+            comment=text,
+            score_id=f"{trace_id}:{REPORT_SCORE_NAME}",
+        )
+        return True
+    except Exception:
+        logger.exception("Failed to push report to Langfuse")
         return False
