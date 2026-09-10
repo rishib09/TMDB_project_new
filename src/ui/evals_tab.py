@@ -134,12 +134,15 @@ def render_sweep_section(runs: list[dict]) -> None:
     rows, missing = sweep_rows(runs, knob)
     if rows:
         frame = pd.DataFrame(rows)
+        # Categorical x-axis: plotly's add_vline can't annotate string ticks,
+        # so the Production baseline is marked in the tick label itself.
+        baseline = sweep_baseline_label(knob)
+        if baseline is not None:
+            frame["value"] = frame["value"].map(
+                lambda v: f"{v} (baseline)" if v == baseline else v
+            )
         fig = px.bar(frame, x="value", y="score", color="metric", barmode="group",
                      color_discrete_sequence=px.colors.qualitative.Set2)
-        baseline = sweep_baseline_label(knob)
-        if baseline is not None and any(r["value"] == baseline for r in rows):
-            fig.add_vline(x=baseline, line_dash="dot", line_color="#D7263D",
-                          annotation_text="Production baseline")
         fig.update_layout(height=320, margin=dict(l=10, r=10, t=30, b=10),
                           legend_title="", xaxis_title=knob, yaxis_title="score")
         st.plotly_chart(fig, use_container_width=True)
