@@ -100,6 +100,9 @@ class MayaSession:
         self.feedback_log: dict[int, int] = {}  # assistant-turn index → ±1 (thumbs)
         self.feedback_store = FeedbackStore()  # SQLite persistence (#9)
         self.report_count = 0  # /feedback Reports posted this tab (#76 cap)
+        # Feedback Receipt (#76 amendment): reported reply's trace id → inbox
+        # comment URL, or None when only Langfuse holds the Report.
+        self.report_receipts: dict[str, str | None] = {}
         # #11 Phase 1 verdict (ADR 0008): gemini-embedding-2 via OpenRouter is
         # the production dense path — 100% golden hit@5 / MRR 0.964 on the
         # `full` preset, vs 71% for the best free model. Fail-closed: without
@@ -383,14 +386,13 @@ class MayaSession:
         if self.report_count >= REPORTS_PER_SESSION:
             return ReportResult.REJECTED
         window = self.turn_log[-WINDOW_TURNS:]
-        delivered = (
-            post_inbox_comment(format_report_comment(cleaned, window)) is not None
-            or push_report_comment(window[-1]["trace_id"], cleaned)
-        )
-        if not delivered:
+        trace_id = window[-1]["trace_id"]
+        url = post_inbox_comment(format_report_comment(cleaned, window))
+        if url is None and not push_report_comment(trace_id, cleaned):
             logger.warning("Report undelivered: GitHub inbox and Langfuse both unavailable")
             return ReportResult.UNDELIVERED
         self.report_count += 1
+        self.report_receipts[trace_id] = url  # Feedback Receipt for the reported reply
         return ReportResult.RECORDED
 
     def _turn_row_for_ui_index(self, ui_index: int) -> dict | None:

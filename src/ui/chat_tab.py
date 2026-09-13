@@ -82,6 +82,19 @@ def render_feedback(session: MayaSession, turn_index: int) -> None:
         session.record_feedback(turn_index, rating)
 
 
+def render_report_receipt(session: MayaSession, row: dict) -> None:
+    """Persistent Feedback Receipt under a reported reply (#76 amendment).
+
+    No-op when no Report exists for this reply. Links the inbox comment when
+    GitHub accepted it; the Langfuse-only fallback (D12) says so without a link.
+    """
+    if row["trace_id"] not in session.report_receipts:
+        return
+    url = session.report_receipts[row["trace_id"]]
+    where = f"[inbox comment]({url})" if url else "kept in telemetry"
+    st.caption(f"Feedback recorded for this reply ({where}). See the Feedback page in the sidebar.")
+
+
 def render_poster_grid(movies, cols: int = 4) -> None:
     """Retrieved-context gallery: bordered cards, uniform poster width."""
     if not movies:
@@ -215,6 +228,8 @@ def render_chat(session: MayaSession) -> None:
             if row is not None:
                 render_intent_badge(row)
             render_feedback(session, turn_index)
+            if row is not None:
+                render_report_receipt(session, row)
 
     render_poster_grid(session.last_movies)
 
@@ -232,7 +247,7 @@ def render_chat(session: MayaSession) -> None:
     if report is not None:  # #76: Report on the last reply, never a turn
         result = session.record_report(report)
         if result == ReportResult.RECORDED:
-            st.toast("Feedback recorded. Thank you.")
+            st.rerun()  # the Feedback Receipt renders under the reported reply
         elif result == ReportResult.UNDELIVERED:
             st.toast("Feedback could not be saved right now. Please try again in a moment.")
         else:

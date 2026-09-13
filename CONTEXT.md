@@ -64,6 +64,10 @@ _Avoid_: Context, history dump.
 What the loop did with a Feedback: received, promoted to an issue, or fixed.
 _Avoid_: Status, outcome, resolution.
 
+**Feedback Receipt**:
+The persistent note under a reported Maya reply confirming the Report was recorded, linking its inbox comment when GitHub holds it.
+_Avoid_: Toast, confirmation message, acknowledgement.
+
 **FTS5 (Full-Text Search 5)**:
 The native SQLite sparse lexical search engine executing BM25 keyword matching with Porter stemming over titles, overviews, directors, genres, and cast names to complement dense vector retrieval.
 _Avoid_: Keyword searcher, regex search, text filter.

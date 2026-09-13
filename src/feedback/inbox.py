@@ -50,6 +50,7 @@ class ReportResult(StrEnum):
 
 _HEADER_RE = re.compile(r"<!--\s*feedback\s+(.*?)\s*-->")
 _ISSUE_LINE_RE = re.compile(r"^Issue:\s*#(\d+)\s*$", re.MULTILINE)
+_FENCE_RE = re.compile(r"```text\n(.*?)\n```", re.DOTALL)
 
 
 # --- command + guards (pure) -------------------------------------------------
@@ -138,10 +139,21 @@ def format_report_comment(text: str, window: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def report_text(comment_body: str) -> str:
+    """Visitor text of a comment: the first ```text fence, or "" when none.
+
+    Templates put the visitor's own words in the first fence (a Report's
+    text, a Rating's Q/A excerpt), so the view can show them capped.
+    """
+    match = _FENCE_RE.search(comment_body)
+    return match.group(1) if match else ""
+
+
 def parse_inbox_comment(comment: dict) -> dict | None:
     """Machine header of one GitHub comment → flat row for the Feedback view.
 
     Returns None for comments without a feedback header (developer replies).
+    ``text`` carries the visitor's Report wording (empty for Ratings).
     """
     body = comment.get("body") or ""
     match = _HEADER_RE.search(body)
@@ -149,13 +161,15 @@ def parse_inbox_comment(comment: dict) -> dict | None:
         return None
     fields = dict(pair.split("=", 1) for pair in match.group(1).split() if "=" in pair)
     action, issue = parse_feedback_action(body)
+    kind = fields.get("kind", "")
     return {
         "date": (comment.get("created_at") or "")[:10],
-        "kind": fields.get("kind", ""),
+        "kind": kind,
         "rating": fields.get("rating", ""),
         "version": fields.get("version", ""),
         "intent": fields.get("intent", ""),
         "trace": fields.get("trace", ""),
+        "text": report_text(body) if kind == "report" else "",
         "action": action,
         "issue": issue,
         "url": comment.get("html_url", ""),

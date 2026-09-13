@@ -26,6 +26,7 @@ def _session(turns: int = 6) -> MayaSession:
     session.feedback_store = FeedbackStore(":memory:")
     session.feedback_log = {}
     session.report_count = 0
+    session.report_receipts = {}
     session.turn_log = [
         {"trace_id": f"t{n}", "rag_version": "v", "intent": "SEMANTIC_SEARCH",
          "path": "single-route", "query": f"q{n}", "response": f"a{n}"}
@@ -124,6 +125,39 @@ def test_report_undelivered_when_both_backends_fail(monkeypatch):
     session = _session()
     assert session.record_report("the year filter ignored 1999") == ReportResult.UNDELIVERED
     assert session.report_count == 0
+    assert session.report_receipts == {}
+
+
+# --- Feedback Receipt (#76 amendment) --------------------------------------------
+
+
+def test_receipt_keyed_by_reported_reply_with_inbox_url(monkeypatch):
+    """A RECORDED Report leaves a receipt on the reply it was about (D9: the last one)."""
+    import src.ui.session as session_mod
+
+    monkeypatch.setattr(session_mod, "post_inbox_comment", lambda body: "https://github.com/x/issues/75#c1")
+    session = _session()
+    assert session.record_report("the year filter ignored 1999") == ReportResult.RECORDED
+    assert session.report_receipts == {"t5": "https://github.com/x/issues/75#c1"}
+
+
+def test_receipt_without_url_on_langfuse_fallback(monkeypatch):
+    import src.ui.session as session_mod
+
+    monkeypatch.setattr(session_mod, "post_inbox_comment", lambda body: None)
+    monkeypatch.setattr(session_mod, "push_report_comment", lambda tid, text: True)
+    session = _session()
+    assert session.record_report("the year filter ignored 1999") == ReportResult.RECORDED
+    assert session.report_receipts == {"t5": None}
+
+
+def test_rejected_report_leaves_no_receipt(monkeypatch):
+    import src.ui.session as session_mod
+
+    monkeypatch.setattr(session_mod, "post_inbox_comment", lambda body: pytest.fail("posted"))
+    session = _session()
+    assert session.record_report("bad") == ReportResult.REJECTED
+    assert session.report_receipts == {}
 
 
 def test_report_falls_back_to_langfuse_when_inbox_unreachable(monkeypatch):

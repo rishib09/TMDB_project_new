@@ -7,6 +7,7 @@ import pytest
 
 from src.feedback.inbox import (
     EXCERPT_CHARS,
+    REPO,
     REPORT_MAX_CHARS,
     excerpt,
     fence,
@@ -15,9 +16,10 @@ from src.feedback.inbox import (
     parse_feedback_action,
     parse_feedback_command,
     parse_inbox_comment,
+    report_text,
     validate_report,
 )
-from src.ui.feedback_tab import feedback_action_label, kind_label
+from src.ui.feedback_tab import VIEW_EXCERPT_CHARS, feedback_action_label, issue_url, kind_label
 
 
 def _row(n: int = 1) -> dict:
@@ -112,6 +114,39 @@ def test_action_labels():
 
 
 def test_kind_labels():
-    assert kind_label({"kind": "report", "rating": ""}) == "Report"
-    assert kind_label({"kind": "rating", "rating": "up"}) == "Rating: thumbs up"
-    assert kind_label({"kind": "rating", "rating": "down"}) == "Rating: thumbs down"
+    assert kind_label({"kind": "report", "rating": "", "text": "the year filter ignored 1999"}) == (
+        "Report: the year filter ignored 1999"
+    )
+    assert kind_label({"kind": "rating", "rating": "up", "text": ""}) == "Rating: thumbs up"
+    assert kind_label({"kind": "rating", "rating": "down", "text": ""}) == "Rating: thumbs down"
+
+
+def test_report_label_caps_visitor_text():
+    long = "word " * 60
+    label = kind_label({"kind": "report", "rating": "", "text": long})
+    assert label.startswith("Report: word word")
+    assert len(label) <= len("Report: ") + VIEW_EXCERPT_CHARS
+
+
+# --- report text + links ------------------------------------------------------
+
+
+def test_report_text_is_first_fence_only():
+    window = [_row(n) for n in range(1, 3)]
+    body = format_report_comment("the year filter ignored 1999", window)
+    assert report_text(body) == "the year filter ignored 1999"
+    assert report_text(format_rating_comment(1, _row())) == "Q: query 1\nA: reply 1"
+    assert report_text("Thanks, looking into it.") == ""
+
+
+def test_parsed_report_row_carries_text_and_url():
+    body = format_report_comment("the year filter ignored 1999", [_row()])
+    parsed = parse_inbox_comment({"body": body, "created_at": "2026-09-13T00:00:00Z", "html_url": "u"})
+    assert parsed["text"] == "the year filter ignored 1999" and parsed["url"] == "u"
+    rating = parse_inbox_comment({"body": format_rating_comment(1, _row()), "html_url": "r"})
+    assert rating["text"] == ""
+
+
+def test_issue_url():
+    assert issue_url({"action": "issue", "issue": 77}) == f"https://github.com/{REPO}/issues/77"
+    assert issue_url({"action": "received", "issue": None}) == ""
