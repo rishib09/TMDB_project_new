@@ -10,8 +10,10 @@ import pytest
 from src.feedback import inbox
 from src.feedback.inbox import (
     REPORTS_PER_SESSION,
+    ReportResult,
     fetch_inbox_comments,
     fetch_issue_state,
+    format_rating_comment,
     format_report_comment,
     post_inbox_comment,
 )
@@ -71,6 +73,59 @@ def test_fetch_failures_return_empty(monkeypatch):
     assert fetch_issue_state(77) is None
 
 
+def test_inbox_read_follows_pagination_newest_first(monkeypatch):
+    """GitHub serves issue comments oldest first, 100 per page (review R2).
+
+    A one-page read returned the oldest 100 and dropped the newest; the
+    read must follow ``Link: rel="next"`` until the inbox is exhausted.
+    """
+    def comment(n: int) -> dict:
+        row = {"trace_id": f"t{n}", "rag_version": "v", "intent": "GREETING",
+               "query": f"q{n}", "response": f"a{n}"}
+        return {"body": format_rating_comment(1, row), "created_at": "2026-09-13T00:00:00Z",
+                "html_url": f"u{n}"}
+
+    base = "https://api.github.com/repos/rishib09/TMDB_project_new/issues/75/comments"
+    calls = []
+
+    class Page:
+        def __init__(self, items, next_url):
+            self._items, self.links = items, ({"next": {"url": next_url}} if next_url else {})
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return self._items
+
+    def fake_get(url, *a, **k):
+        calls.append(url)
+        if "page=2" in url:
+            return Page([comment(n) for n in range(101, 106)], None)
+        return Page([comment(n) for n in range(1, 101)], f"{base}?per_page=100&page=2")
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+    rows = fetch_inbox_comments()
+    assert len(calls) == 2
+    assert len(rows) == 105
+    assert rows[0]["trace"] == "t105" and rows[-1]["trace"] == "t1"
+
+
+def test_report_undelivered_when_both_backends_fail(monkeypatch):
+    """Neither GitHub nor Langfuse accepted the Report (review R3).
+
+    The old code returned True here, so the visitor saw "Feedback recorded"
+    while nothing was stored anywhere. The attempt must not consume the cap.
+    """
+    import src.ui.session as session_mod
+
+    monkeypatch.setattr(session_mod, "post_inbox_comment", lambda body: None)
+    monkeypatch.setattr(session_mod, "push_report_comment", lambda tid, text: False)
+    session = _session()
+    assert session.record_report("the year filter ignored 1999") == ReportResult.UNDELIVERED
+    assert session.report_count == 0
+
+
 def test_report_falls_back_to_langfuse_when_inbox_unreachable(monkeypatch):
     posted, fallback = [], []
     monkeypatch.setattr(inbox, "post_inbox_comment", lambda body: posted.append(body) or None)
@@ -79,7 +134,7 @@ def test_report_falls_back_to_langfuse_when_inbox_unreachable(monkeypatch):
     monkeypatch.setattr(session_mod, "post_inbox_comment", lambda body: posted.append(body) or None)
     monkeypatch.setattr(session_mod, "push_report_comment", lambda tid, text: fallback.append((tid, text)) or True)
     session = _session()
-    assert session.record_report("the year filter ignored 1999") is True
+    assert session.record_report("the year filter ignored 1999") == ReportResult.RECORDED
     assert len(posted) == 1
     assert fallback == [("t5", "the year filter ignored 1999")]
 
@@ -94,8 +149,8 @@ def test_trivial_report_logs_nothing(monkeypatch):
     monkeypatch.setattr(session_mod, "post_inbox_comment", lambda body: calls.append(body) or "u")
     monkeypatch.setattr(session_mod, "push_report_comment", lambda *a: calls.append(a) or True)
     session = _session()
-    assert session.record_report("bad") is False
-    assert session.record_report("") is False
+    assert session.record_report("bad") == ReportResult.REJECTED
+    assert session.record_report("") == ReportResult.REJECTED
     assert calls == [] and session.report_count == 0
 
 
@@ -104,7 +159,7 @@ def test_report_without_turns_logs_nothing(monkeypatch):
 
     monkeypatch.setattr(session_mod, "post_inbox_comment", lambda body: pytest.fail("posted"))
     session = _session(turns=0)
-    assert session.record_report("the year filter ignored 1999") is False
+    assert session.record_report("the year filter ignored 1999") == ReportResult.REJECTED
 
 
 def test_per_tab_cap_blocks_fourth_report(monkeypatch):
@@ -114,8 +169,8 @@ def test_per_tab_cap_blocks_fourth_report(monkeypatch):
     monkeypatch.setattr(session_mod, "post_inbox_comment", lambda body: posted.append(body) or "u")
     session = _session()
     for _ in range(REPORTS_PER_SESSION):
-        assert session.record_report("the year filter ignored 1999") is True
-    assert session.record_report("the year filter ignored 1999 again") is False
+        assert session.record_report("the year filter ignored 1999") == ReportResult.RECORDED
+    assert session.record_report("the year filter ignored 1999 again") == ReportResult.REJECTED
     assert len(posted) == REPORTS_PER_SESSION
 
 

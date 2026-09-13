@@ -14,6 +14,7 @@ calls fail open — a missing or revoked token never breaks the chat.
 import logging
 import os
 import re
+from enum import StrEnum
 
 import httpx
 
@@ -31,6 +32,21 @@ REPORTS_PER_SESSION = 3
 EXCERPT_CHARS = 200
 WINDOW_TURNS = 5
 TIMEOUT_S = 10.0
+MAX_INBOX_PAGES = 10  # 100 comments per page; bounds unauthenticated requests per read
+
+
+class ReportResult(StrEnum):
+    """What happened to a ``/feedback`` Report (review R3 on #76).
+
+    REJECTED: a guard, the per-tab cap, or an empty turn log stopped it
+    (nothing logged). RECORDED: durable in the GitHub inbox or, failing
+    that, in Langfuse. UNDELIVERED: neither backend accepted it, so the
+    visitor must not be told it was recorded.
+    """
+
+    RECORDED = "recorded"
+    REJECTED = "rejected"
+    UNDELIVERED = "undelivered"
 
 _HEADER_RE = re.compile(r"<!--\s*feedback\s+(.*?)\s*-->")
 _ISSUE_LINE_RE = re.compile(r"^Issue:\s*#(\d+)\s*$", re.MULTILINE)
@@ -181,14 +197,25 @@ def post_inbox_comment(body: str, *, token: str | None = None) -> str | None:
 
 
 def fetch_inbox_comments() -> list[dict]:
-    """Parsed feedback rows from the inbox, newest first; [] on any failure."""
+    """Parsed feedback rows from the whole inbox, newest first; [] on any failure.
+
+    GitHub lists issue comments oldest first, 100 per page, and names the
+    next page in the ``Link`` header. Every page is read (bounded by
+    MAX_INBOX_PAGES) so growth never drops the newest comments.
+    """
+    url = f"{API}/repos/{REPO}/issues/{INBOX_ISSUE}/comments"
+    params: dict | None = {"per_page": 100}
+    comments: list[dict] = []
     try:
-        resp = httpx.get(
-            f"{API}/repos/{REPO}/issues/{INBOX_ISSUE}/comments",
-            params={"per_page": 100}, headers=_headers(), timeout=TIMEOUT_S,
-        )
-        resp.raise_for_status()
-        rows = [parse_inbox_comment(c) for c in resp.json()]
+        for _ in range(MAX_INBOX_PAGES):
+            resp = httpx.get(url, params=params, headers=_headers(), timeout=TIMEOUT_S)
+            resp.raise_for_status()
+            comments.extend(resp.json())
+            next_url = resp.links.get("next", {}).get("url")
+            if not next_url:
+                break
+            url, params = next_url, None  # the next link already carries its query
+        rows = [parse_inbox_comment(c) for c in comments]
         return [r for r in reversed(rows) if r]
     except Exception:  # noqa: BLE001
         logger.exception("Failed to fetch feedback inbox")

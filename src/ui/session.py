@@ -15,7 +15,7 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from src.domain.config import ExperimentConfig, PresetType
 from src.domain.memory import ConversationState
 from src.feedback.inbox import (
-    REPORTS_PER_SESSION, WINDOW_TURNS, format_rating_comment,
+    REPORTS_PER_SESSION, WINDOW_TURNS, ReportResult, format_rating_comment,
     format_report_comment, post_inbox_comment, validate_report,
 )
 from src.feedback.langfuse_score import push_feedback_score, push_report_comment
@@ -367,24 +367,31 @@ class MayaSession:
         post_inbox_comment(format_rating_comment(value, row))  # #76: durable copy
         return push_feedback_score(row["trace_id"], value)
 
-    def record_report(self, text: str) -> bool:
+    def record_report(self, text: str) -> ReportResult:
         """Posts a ``/feedback`` Report with its Feedback Window (#76).
 
-        False when the text fails a guard, the per-tab cap is reached, or
+        REJECTED when the text fails a guard, the per-tab cap is reached, or
         no turn exists to report on — nothing is logged in those cases
-        (verdict D9, D11). True once the Report is durable somewhere:
+        (verdict D9, D11). RECORDED once the Report is durable somewhere:
         the GitHub inbox, or Langfuse when the inbox is unreachable (D12).
+        UNDELIVERED when neither backend accepted it; the attempt does not
+        count against the cap so the visitor can retry.
         """
         cleaned = validate_report(text)
         if cleaned is None or not self.turn_log:
-            return False
+            return ReportResult.REJECTED
         if self.report_count >= REPORTS_PER_SESSION:
-            return False
+            return ReportResult.REJECTED
         window = self.turn_log[-WINDOW_TURNS:]
+        delivered = (
+            post_inbox_comment(format_report_comment(cleaned, window)) is not None
+            or push_report_comment(window[-1]["trace_id"], cleaned)
+        )
+        if not delivered:
+            logger.warning("Report undelivered: GitHub inbox and Langfuse both unavailable")
+            return ReportResult.UNDELIVERED
         self.report_count += 1
-        if post_inbox_comment(format_report_comment(cleaned, window)) is None:
-            push_report_comment(window[-1]["trace_id"], cleaned)
-        return True
+        return ReportResult.RECORDED
 
     def _turn_row_for_ui_index(self, ui_index: int) -> dict | None:
         """Resolves the UI's assistant-message counter to its turn row (#26-K).

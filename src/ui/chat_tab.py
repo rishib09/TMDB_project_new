@@ -9,7 +9,8 @@ import streamlit as st
 from streamlit.components.v1 import html as _components_html
 
 from src.feedback.inbox import (
-    REPORT_MAX_CHARS, REPORT_MIN_CHARS, REPORTS_PER_SESSION, parse_feedback_command,
+    REPORT_MAX_CHARS, REPORT_MIN_CHARS, REPORTS_PER_SESSION, ReportResult,
+    parse_feedback_command,
 )
 from src.ui.session import MayaSession
 
@@ -229,8 +230,11 @@ def render_chat(session: MayaSession) -> None:
         return
     report = parse_feedback_command(query)
     if report is not None:  # #76: Report on the last reply, never a turn
-        if session.record_report(report):
+        result = session.record_report(report)
+        if result == ReportResult.RECORDED:
             st.toast("Feedback recorded. Thank you.")
+        elif result == ReportResult.UNDELIVERED:
+            st.toast("Feedback could not be saved right now. Please try again in a moment.")
         else:
             st.toast(
                 f"Usage: /feedback <what went wrong>, {REPORT_MIN_CHARS}–{REPORT_MAX_CHARS} "

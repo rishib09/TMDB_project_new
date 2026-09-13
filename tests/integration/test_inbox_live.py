@@ -1,7 +1,8 @@
 """Live feedback inbox tests (issue #76): real GitHub API.
 
-Read path needs no token (public repo). Write path posts one real comment
-on the inbox issue and is skipped without ``GITHUB_TOKEN``.
+The whole module is skipped without ``GITHUB_TOKEN`` so an offline live run
+never reaches the network. The read path itself needs no token (public
+repo); the write path posts one real comment on the inbox issue.
 """
 
 import os
@@ -16,7 +17,8 @@ from src.feedback.inbox import (
     post_inbox_comment,
 )
 
-pytestmark = [pytest.mark.live]
+pytestmark = [pytest.mark.live, pytest.mark.skipif(not os.getenv("GITHUB_TOKEN"),
+               reason="GITHUB_TOKEN not configured")]
 
 
 def test_public_read_paths_reach_github():
@@ -24,7 +26,6 @@ def test_public_read_paths_reach_github():
     assert isinstance(fetch_inbox_comments(), list)
 
 
-@pytest.mark.skipif(not os.getenv("GITHUB_TOKEN"), reason="GITHUB_TOKEN not configured")
 def test_rating_comment_lands_on_inbox():
     row = {"trace_id": "live-test-trace", "rag_version": "live-test", "intent": "GREETING",
            "query": "live test query", "response": "live test reply"}
