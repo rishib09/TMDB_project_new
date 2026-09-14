@@ -19,7 +19,14 @@ from src.feedback.inbox import (
     report_text,
     validate_report,
 )
-from src.ui.feedback_tab import VIEW_EXCERPT_CHARS, feedback_action_label, issue_url, kind_label
+from src.ui.feedback_tab import (
+    VIEW_EXCERPT_CHARS,
+    action_cell,
+    feedback_action_label,
+    feedback_cell,
+    issue_url,
+    kind_label,
+)
 
 
 def _row(n: int = 1) -> dict:
@@ -150,3 +157,31 @@ def test_parsed_report_row_carries_text_and_url():
 def test_issue_url():
     assert issue_url({"action": "issue", "issue": 77}) == f"https://github.com/{REPO}/issues/77"
     assert issue_url({"action": "received", "issue": None}) == ""
+
+
+# --- table cells: the label IS the link ----------------------------------------
+
+
+def test_feedback_cell_links_label_to_inbox_comment():
+    row = {"kind": "report", "rating": "", "text": "the year filter ignored 1999", "url": "https://g/c1"}
+    assert feedback_cell(row) == "[Report: the year filter ignored 1999](https://g/c1)"
+    rating = {"kind": "rating", "rating": "down", "text": "", "url": "https://g/c2"}
+    assert feedback_cell(rating) == "[Rating: thumbs down](https://g/c2)"
+    assert feedback_cell({**row, "url": ""}) == "Report: the year filter ignored 1999"
+
+
+def test_feedback_cell_neutralises_markdown_in_visitor_text():
+    hostile = {"kind": "report", "rating": "", "url": "https://g/c1",
+               "text": "a] (http://evil) | b [c"}
+    cell = feedback_cell(hostile)
+    assert cell.endswith("](https://g/c1)")
+    assert "http://evil" not in cell.split("](")[-1]  # visitor text cannot become the href
+    assert cell.count("|") == 0  # cannot break the table row
+
+
+def test_action_cell_links_only_when_promoted():
+    promoted = {"action": "issue", "issue": 77}
+    assert action_cell(promoted, "issue #77 open") == (
+        f"[issue #77 open](https://github.com/{REPO}/issues/77)"
+    )
+    assert action_cell({"action": "received", "issue": None}, "received") == "received"
