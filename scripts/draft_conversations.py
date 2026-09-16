@@ -48,7 +48,7 @@ S = "SEMANTIC_SEARCH"
 
 
 def _t(n: int, user: str, intent: str, path: str, notes: str = "", **kw) -> ConversationTurn:
-    flags = {k: kw.pop(k) for k in ("no_repeat", "referenced_titles_from_shown") if k in kw}
+    flags = {k: kw.pop(k) for k in ("no_repeat", "referenced_titles_from_shown", "relevant_movie_ids") if k in kw}
     return ConversationTurn(
         n=n, user=user,
         expect=TurnExpectation(
@@ -294,6 +294,88 @@ COVERAGE: list[CoverageItem] = [
 ]
 
 
+A, N, SUP = "ATTRIBUTE_FILTER", "NEGATION_EXCLUSION", "SUPERLATIVE_RANKING"
+
+#: Plot and director identification (C_plot). Hand-written, never drafted:
+#: every relevant id is verified against data/tmdb_movies.db.
+HANDWRITTEN: list[GoldenConversation] = [
+    GoldenConversation(
+        id="C21", tier="C_plot", title="Nolan, dreams, then time backwards", source="authored",
+        turns=[
+            _t(1, "show me chris nolan's movies", A, "retrieve", director="Christopher Nolan",
+               notes="first name shortened; director resolved from the dataset"),
+            _t(2, "the one about dreams with loads of vfx", S, "retrieve",
+               director="Christopher Nolan", relevant_movie_ids=[27205], no_repeat=True,
+               notes="Inception; plot description narrows within the director"),
+            _t(3, "no wait, the one where time runs forward and then backwards", S, "retrieve",
+               director="Christopher Nolan", relevant_movie_ids=[577922], no_repeat=True,
+               notes="Tenet; a corrected plot replaces the previous identification"),
+            _t(4, "who's in it", S, "converse", director="Christopher Nolan",
+               referenced_titles_from_shown=True),
+            _t(5, "something like that but from the 2010s only", A, "retrieve",
+               director="Christopher Nolan", year_min=2010, year_max=2019, no_repeat=True),
+            _t(6, "the space one with the black hole", S, "retrieve", director="Christopher Nolan",
+               year_min=2010, year_max=2019, relevant_movie_ids=[157336], no_repeat=True,
+               notes="Interstellar"),
+            _t(7, "under two hours", A, "retrieve", director="Christopher Nolan", year_min=2010,
+               year_max=2019, runtime_max=120, relevant_movie_ids=[374720], no_repeat=True,
+               notes="only Dunkirk (107 min) satisfies director + decade + runtime"),
+            _t(8, "ok forget nolan, similar mind-bending stuff by anyone", S, "retrieve",
+               year_min=2010, year_max=2019, runtime_max=120, no_repeat=True,
+               notes="director dropped by an explicit statement; decade and runtime survive"),
+        ],
+    ),
+    GoldenConversation(
+        id="C22", tier="C_plot", title="vague survival plot, narrowed by memory", source="authored",
+        turns=[
+            _t(1, "a movie about a guy stranded somewhere, surviving alone", S, "retrieve",
+               notes="plot only; nothing structured yet"),
+            _t(2, "i think it was on another planet", S, "retrieve", relevant_movie_ids=[286217],
+               no_repeat=True, notes="The Martian"),
+            _t(3, "hmm no, not space. an island, after a plane crash", S, "retrieve",
+               relevant_movie_ids=[8358], no_repeat=True, notes="Cast Away; plot corrected"),
+            _t(4, "yes! the one with the volleyball", S, "retrieve", relevant_movie_ids=[8358],
+               notes="confirmation of the identification; the same title must stay on top"),
+            _t(5, "who directed that", S, "converse", referenced_titles_from_shown=True),
+            _t(6, "show me more from that director", A, "retrieve", director="Robert Zemeckis",
+               referenced_titles_from_shown=True, no_repeat=True,
+               notes="director taken from the shown title, not from the user's words"),
+            _t(7, "only his 80s stuff", A, "retrieve", director="Robert Zemeckis", year_min=1980,
+               year_max=1989, no_repeat=True),
+            _t(8, "the one with the time-travelling car", S, "retrieve", director="Robert Zemeckis",
+               year_min=1980, year_max=1989, relevant_movie_ids=[105], no_repeat=True,
+               notes="Back to the Future"),
+            _t(9, "ok back to survival movies, any director, any era", S, "retrieve", no_repeat=True,
+               notes="director and years dropped by an explicit statement; plot search again"),
+        ],
+    ),
+    GoldenConversation(
+        id="C23", tier="C_plot", title="director hopping through crime films", source="authored",
+        turns=[
+            _t(1, "tarantino movies", A, "retrieve", director="Quentin Tarantino"),
+            _t(2, "the one with the briefcase and the diner", S, "retrieve",
+               director="Quentin Tarantino", relevant_movie_ids=[680], no_repeat=True,
+               notes="Pulp Fiction"),
+            _t(3, "ok now the coen brothers", A, "retrieve", director="Joel Coen", no_repeat=True,
+               notes="the dataset credits Joel Coen; the pair must resolve to him"),
+            _t(4, "the one with the bowling", S, "retrieve", director="Joel Coen",
+               relevant_movie_ids=[115], no_repeat=True, notes="The Big Lebowski"),
+            _t(5, "no, the kidnapping one with the wood chipper", S, "retrieve", director="Joel Coen",
+               relevant_movie_ids=[275], no_repeat=True, notes="Fargo; plot corrected"),
+            _t(6, "what year was that", S, "converse", director="Joel Coen",
+               referenced_titles_from_shown=True),
+            _t(7, "any ridley scott crime stuff?", A, "retrieve", director="Ridley Scott",
+               genres=["Crime"], no_repeat=True, notes="director replaced, genre added"),
+            _t(8, "the one with denzel as a drug lord", S, "retrieve", director="Ridley Scott",
+               genres=["Crime"], relevant_movie_ids=[4982], no_repeat=True, notes="American Gangster"),
+            _t(9, "forget directors, just 90s crime movies", A, "retrieve", genres=["Crime"],
+               year_min=1990, year_max=1999, no_repeat=True,
+               notes="director dropped; genre kept; decade added"),
+        ],
+    ),
+]
+
+
 class ConversationDraft(BaseModel):
     """What the model returns; id, tier and source are assigned by the script."""
 
@@ -398,10 +480,11 @@ def main(argv: list[str] | None = None) -> int:
         version=date.today().isoformat(),
         description=(
             "Maya multi-turn golden source, DRAFT for review on #86 (map #81 G1-G9): "
-            "five recorded conversations continued by the model plus authored coverage of "
-            "exclusions, caveats, persons, narrowing, refinement, eras, and references."
+            "five recorded conversations continued by the model, authored coverage of "
+            "exclusions, caveats, persons, narrowing, refinement, eras, and references, "
+            "and hand-written plot and director identification with verified ids."
         ),
-        conversations=[c for c in ordered if c is not None],
+        conversations=[c for c in ordered if c is not None] + HANDWRITTEN,
     )
     args.out.write_text(conversations.model_dump_json(indent=2), encoding="utf-8")
     print(f"wrote {args.out} ({len(conversations.conversations)} conversations)", file=sys.stderr)

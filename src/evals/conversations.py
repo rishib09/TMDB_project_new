@@ -18,7 +18,7 @@ from src.domain.routing import IntentType
 
 #: Neutral path vocabulary (G3). The harness maps v1 probe/confirm to "ask".
 Path_ = Literal["ask", "retrieve", "converse", "pivot", "refuse"]
-Tier = Literal["C_records", "C_memory", "C_narrowing", "C_refinement", "C_reference"]
+Tier = Literal["C_records", "C_memory", "C_narrowing", "C_refinement", "C_reference", "C_plot"]
 
 DEFAULT_CONVERSATIONS = Path("data/eval_conversations.json")
 MIN_TURNS = 4

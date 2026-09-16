@@ -1,6 +1,6 @@
 {
   "version": "2026-09-16",
-  "description": "Maya multi-turn golden source, DRAFT for review on #86 (map #81 G1-G9): five recorded conversations continued by the model plus authored coverage of exclusions, caveats, persons, narrowing, refinement, eras, and references.",
+  "description": "Maya multi-turn golden source, DRAFT for review on #86 (map #81 G1-G9): five recorded conversations continued by the model, authored coverage of exclusions, caveats, persons, narrowing, refinement, eras, and references, and hand-written plot and director identification with verified ids.",
   "conversations": [
     {
       "id": "C01",
@@ -5062,6 +5062,736 @@
             "referenced_titles_from_shown": false,
             "relevant_movie_ids": [],
             "notes": "rebuilds to two genres again with Crime added"
+          }
+        }
+      ]
+    },
+    {
+      "id": "C21",
+      "tier": "C_plot",
+      "title": "Nolan, dreams, then time backwards",
+      "source": "authored",
+      "turns": [
+        {
+          "n": 1,
+          "user": "show me chris nolan's movies",
+          "expect": {
+            "intent": "ATTRIBUTE_FILTER",
+            "path": "retrieve",
+            "constraints": {
+              "mood": null,
+              "audience": null,
+              "genres": [],
+              "exact_year": null,
+              "year_min": null,
+              "year_max": null,
+              "director": "Christopher Nolan",
+              "cast_member": null,
+              "excluded_genres": [],
+              "excluded_actors": [],
+              "runtime_max": null,
+              "rating_min": null
+            },
+            "no_repeat": false,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [],
+            "notes": "first name shortened; director resolved from the dataset"
+          }
+        },
+        {
+          "n": 2,
+          "user": "the one about dreams with loads of vfx",
+          "expect": {
+            "intent": "SEMANTIC_SEARCH",
+            "path": "retrieve",
+            "constraints": {
+              "mood": null,
+              "audience": null,
+              "genres": [],
+              "exact_year": null,
+              "year_min": null,
+              "year_max": null,
+              "director": "Christopher Nolan",
+              "cast_member": null,
+              "excluded_genres": [],
+              "excluded_actors": [],
+              "runtime_max": null,
+              "rating_min": null
+            },
+            "no_repeat": true,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [
+              27205
+            ],
+            "notes": "Inception; plot description narrows within the director"
+          }
+        },
+        {
+          "n": 3,
+          "user": "no wait, the one where time runs forward and then backwards",
+          "expect": {
+            "intent": "SEMANTIC_SEARCH",
+            "path": "retrieve",
+            "constraints": {
+              "mood": null,
+              "audience": null,
+              "genres": [],
+              "exact_year": null,
+              "year_min": null,
+              "year_max": null,
+              "director": "Christopher Nolan",
+              "cast_member": null,
+              "excluded_genres": [],
+              "excluded_actors": [],
+              "runtime_max": null,
+              "rating_min": null
+            },
+            "no_repeat": true,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [
+              577922
+            ],
+            "notes": "Tenet; a corrected plot replaces the previous identification"
+          }
+        },
+        {
+          "n": 4,
+          "user": "who's in it",
+          "expect": {
+            "intent": "SEMANTIC_SEARCH",
+            "path": "converse",
+            "constraints": {
+              "mood": null,
+              "audience": null,
+              "genres": [],
+              "exact_year": null,
+              "year_min": null,
+              "year_max": null,
+              "director": "Christopher Nolan",
+              "cast_member": null,
+              "excluded_genres": [],
+              "excluded_actors": [],
+              "runtime_max": null,
+              "rating_min": null
+            },
+            "no_repeat": false,
+            "referenced_titles_from_shown": true,
+            "relevant_movie_ids": [],
+            "notes": ""
+          }
+        },
+        {
+          "n": 5,
+          "user": "something like that but from the 2010s only",
+          "expect": {
+            "intent": "ATTRIBUTE_FILTER",
+            "path": "retrieve",
+            "constraints": {
+              "mood": null,
+              "audience": null,
+              "genres": [],
+              "exact_year": null,
+              "year_min": 2010,
+              "year_max": 2019,
+              "director": "Christopher Nolan",
+              "cast_member": null,
+              "excluded_genres": [],
+              "excluded_actors": [],
+              "runtime_max": null,
+              "rating_min": null
+            },
+            "no_repeat": true,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [],
+            "notes": ""
+          }
+        },
+        {
+          "n": 6,
+          "user": "the space one with the black hole",
+          "expect": {
+            "intent": "SEMANTIC_SEARCH",
+            "path": "retrieve",
+            "constraints": {
+              "mood": null,
+              "audience": null,
+              "genres": [],
+              "exact_year": null,
+              "year_min": 2010,
+              "year_max": 2019,
+              "director": "Christopher Nolan",
+              "cast_member": null,
+              "excluded_genres": [],
+              "excluded_actors": [],
+              "runtime_max": null,
+              "rating_min": null
+            },
+            "no_repeat": true,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [
+              157336
+            ],
+            "notes": "Interstellar"
+          }
+        },
+        {
+          "n": 7,
+          "user": "under two hours",
+          "expect": {
+            "intent": "ATTRIBUTE_FILTER",
+            "path": "retrieve",
+            "constraints": {
+              "mood": null,
+              "audience": null,
+              "genres": [],
+              "exact_year": null,
+              "year_min": 2010,
+              "year_max": 2019,
+              "director": "Christopher Nolan",
+              "cast_member": null,
+              "excluded_genres": [],
+              "excluded_actors": [],
+              "runtime_max": 120,
+              "rating_min": null
+            },
+            "no_repeat": true,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [
+              374720
+            ],
+            "notes": "only Dunkirk (107 min) satisfies director + decade + runtime"
+          }
+        },
+        {
+          "n": 8,
+          "user": "ok forget nolan, similar mind-bending stuff by anyone",
+          "expect": {
+            "intent": "SEMANTIC_SEARCH",
+            "path": "retrieve",
+            "constraints": {
+              "mood": null,
+              "audience": null,
+              "genres": [],
+              "exact_year": null,
+              "year_min": 2010,
+              "year_max": 2019,
+              "director": null,
+              "cast_member": null,
+              "excluded_genres": [],
+              "excluded_actors": [],
+              "runtime_max": 120,
+              "rating_min": null
+            },
+            "no_repeat": true,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [],
+            "notes": "director dropped by an explicit statement; decade and runtime survive"
+          }
+        }
+      ]
+    },
+    {
+      "id": "C22",
+      "tier": "C_plot",
+      "title": "vague survival plot, narrowed by memory",
+      "source": "authored",
+      "turns": [
+        {
+          "n": 1,
+          "user": "a movie about a guy stranded somewhere, surviving alone",
+          "expect": {
+            "intent": "SEMANTIC_SEARCH",
+            "path": "retrieve",
+            "constraints": {
+              "mood": null,
+              "audience": null,
+              "genres": [],
+              "exact_year": null,
+              "year_min": null,
+              "year_max": null,
+              "director": null,
+              "cast_member": null,
+              "excluded_genres": [],
+              "excluded_actors": [],
+              "runtime_max": null,
+              "rating_min": null
+            },
+            "no_repeat": false,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [],
+            "notes": "plot only; nothing structured yet"
+          }
+        },
+        {
+          "n": 2,
+          "user": "i think it was on another planet",
+          "expect": {
+            "intent": "SEMANTIC_SEARCH",
+            "path": "retrieve",
+            "constraints": {
+              "mood": null,
+              "audience": null,
+              "genres": [],
+              "exact_year": null,
+              "year_min": null,
+              "year_max": null,
+              "director": null,
+              "cast_member": null,
+              "excluded_genres": [],
+              "excluded_actors": [],
+              "runtime_max": null,
+              "rating_min": null
+            },
+            "no_repeat": true,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [
+              286217
+            ],
+            "notes": "The Martian"
+          }
+        },
+        {
+          "n": 3,
+          "user": "hmm no, not space. an island, after a plane crash",
+          "expect": {
+            "intent": "SEMANTIC_SEARCH",
+            "path": "retrieve",
+            "constraints": {
+              "mood": null,
+              "audience": null,
+              "genres": [],
+              "exact_year": null,
+              "year_min": null,
+              "year_max": null,
+              "director": null,
+              "cast_member": null,
+              "excluded_genres": [],
+              "excluded_actors": [],
+              "runtime_max": null,
+              "rating_min": null
+            },
+            "no_repeat": true,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [
+              8358
+            ],
+            "notes": "Cast Away; plot corrected"
+          }
+        },
+        {
+          "n": 4,
+          "user": "yes! the one with the volleyball",
+          "expect": {
+            "intent": "SEMANTIC_SEARCH",
+            "path": "retrieve",
+            "constraints": {
+              "mood": null,
+              "audience": null,
+              "genres": [],
+              "exact_year": null,
+              "year_min": null,
+              "year_max": null,
+              "director": null,
+              "cast_member": null,
+              "excluded_genres": [],
+              "excluded_actors": [],
+              "runtime_max": null,
+              "rating_min": null
+            },
+            "no_repeat": false,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [
+              8358
+            ],
+            "notes": "confirmation of the identification; the same title must stay on top"
+          }
+        },
+        {
+          "n": 5,
+          "user": "who directed that",
+          "expect": {
+            "intent": "SEMANTIC_SEARCH",
+            "path": "converse",
+            "constraints": {
+              "mood": null,
+              "audience": null,
+              "genres": [],
+              "exact_year": null,
+              "year_min": null,
+              "year_max": null,
+              "director": null,
+              "cast_member": null,
+              "excluded_genres": [],
+              "excluded_actors": [],
+              "runtime_max": null,
+              "rating_min": null
+            },
+            "no_repeat": false,
+            "referenced_titles_from_shown": true,
+            "relevant_movie_ids": [],
+            "notes": ""
+          }
+        },
+        {
+          "n": 6,
+          "user": "show me more from that director",
+          "expect": {
+            "intent": "ATTRIBUTE_FILTER",
+            "path": "retrieve",
+            "constraints": {
+              "mood": null,
+              "audience": null,
+              "genres": [],
+              "exact_year": null,
+              "year_min": null,
+              "year_max": null,
+              "director": "Robert Zemeckis",
+              "cast_member": null,
+              "excluded_genres": [],
+              "excluded_actors": [],
+              "runtime_max": null,
+              "rating_min": null
+            },
+            "no_repeat": true,
+            "referenced_titles_from_shown": true,
+            "relevant_movie_ids": [],
+            "notes": "director taken from the shown title, not from the user's words"
+          }
+        },
+        {
+          "n": 7,
+          "user": "only his 80s stuff",
+          "expect": {
+            "intent": "ATTRIBUTE_FILTER",
+            "path": "retrieve",
+            "constraints": {
+              "mood": null,
+              "audience": null,
+              "genres": [],
+              "exact_year": null,
+              "year_min": 1980,
+              "year_max": 1989,
+              "director": "Robert Zemeckis",
+              "cast_member": null,
+              "excluded_genres": [],
+              "excluded_actors": [],
+              "runtime_max": null,
+              "rating_min": null
+            },
+            "no_repeat": true,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [],
+            "notes": ""
+          }
+        },
+        {
+          "n": 8,
+          "user": "the one with the time-travelling car",
+          "expect": {
+            "intent": "SEMANTIC_SEARCH",
+            "path": "retrieve",
+            "constraints": {
+              "mood": null,
+              "audience": null,
+              "genres": [],
+              "exact_year": null,
+              "year_min": 1980,
+              "year_max": 1989,
+              "director": "Robert Zemeckis",
+              "cast_member": null,
+              "excluded_genres": [],
+              "excluded_actors": [],
+              "runtime_max": null,
+              "rating_min": null
+            },
+            "no_repeat": true,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [
+              105
+            ],
+            "notes": "Back to the Future"
+          }
+        },
+        {
+          "n": 9,
+          "user": "ok back to survival movies, any director, any era",
+          "expect": {
+            "intent": "SEMANTIC_SEARCH",
+            "path": "retrieve",
+            "constraints": {
+              "mood": null,
+              "audience": null,
+              "genres": [],
+              "exact_year": null,
+              "year_min": null,
+              "year_max": null,
+              "director": null,
+              "cast_member": null,
+              "excluded_genres": [],
+              "excluded_actors": [],
+              "runtime_max": null,
+              "rating_min": null
+            },
+            "no_repeat": true,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [],
+            "notes": "director and years dropped by an explicit statement; plot search again"
+          }
+        }
+      ]
+    },
+    {
+      "id": "C23",
+      "tier": "C_plot",
+      "title": "director hopping through crime films",
+      "source": "authored",
+      "turns": [
+        {
+          "n": 1,
+          "user": "tarantino movies",
+          "expect": {
+            "intent": "ATTRIBUTE_FILTER",
+            "path": "retrieve",
+            "constraints": {
+              "mood": null,
+              "audience": null,
+              "genres": [],
+              "exact_year": null,
+              "year_min": null,
+              "year_max": null,
+              "director": "Quentin Tarantino",
+              "cast_member": null,
+              "excluded_genres": [],
+              "excluded_actors": [],
+              "runtime_max": null,
+              "rating_min": null
+            },
+            "no_repeat": false,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [],
+            "notes": ""
+          }
+        },
+        {
+          "n": 2,
+          "user": "the one with the briefcase and the diner",
+          "expect": {
+            "intent": "SEMANTIC_SEARCH",
+            "path": "retrieve",
+            "constraints": {
+              "mood": null,
+              "audience": null,
+              "genres": [],
+              "exact_year": null,
+              "year_min": null,
+              "year_max": null,
+              "director": "Quentin Tarantino",
+              "cast_member": null,
+              "excluded_genres": [],
+              "excluded_actors": [],
+              "runtime_max": null,
+              "rating_min": null
+            },
+            "no_repeat": true,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [
+              680
+            ],
+            "notes": "Pulp Fiction"
+          }
+        },
+        {
+          "n": 3,
+          "user": "ok now the coen brothers",
+          "expect": {
+            "intent": "ATTRIBUTE_FILTER",
+            "path": "retrieve",
+            "constraints": {
+              "mood": null,
+              "audience": null,
+              "genres": [],
+              "exact_year": null,
+              "year_min": null,
+              "year_max": null,
+              "director": "Joel Coen",
+              "cast_member": null,
+              "excluded_genres": [],
+              "excluded_actors": [],
+              "runtime_max": null,
+              "rating_min": null
+            },
+            "no_repeat": true,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [],
+            "notes": "the dataset credits Joel Coen; the pair must resolve to him"
+          }
+        },
+        {
+          "n": 4,
+          "user": "the one with the bowling",
+          "expect": {
+            "intent": "SEMANTIC_SEARCH",
+            "path": "retrieve",
+            "constraints": {
+              "mood": null,
+              "audience": null,
+              "genres": [],
+              "exact_year": null,
+              "year_min": null,
+              "year_max": null,
+              "director": "Joel Coen",
+              "cast_member": null,
+              "excluded_genres": [],
+              "excluded_actors": [],
+              "runtime_max": null,
+              "rating_min": null
+            },
+            "no_repeat": true,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [
+              115
+            ],
+            "notes": "The Big Lebowski"
+          }
+        },
+        {
+          "n": 5,
+          "user": "no, the kidnapping one with the wood chipper",
+          "expect": {
+            "intent": "SEMANTIC_SEARCH",
+            "path": "retrieve",
+            "constraints": {
+              "mood": null,
+              "audience": null,
+              "genres": [],
+              "exact_year": null,
+              "year_min": null,
+              "year_max": null,
+              "director": "Joel Coen",
+              "cast_member": null,
+              "excluded_genres": [],
+              "excluded_actors": [],
+              "runtime_max": null,
+              "rating_min": null
+            },
+            "no_repeat": true,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [
+              275
+            ],
+            "notes": "Fargo; plot corrected"
+          }
+        },
+        {
+          "n": 6,
+          "user": "what year was that",
+          "expect": {
+            "intent": "SEMANTIC_SEARCH",
+            "path": "converse",
+            "constraints": {
+              "mood": null,
+              "audience": null,
+              "genres": [],
+              "exact_year": null,
+              "year_min": null,
+              "year_max": null,
+              "director": "Joel Coen",
+              "cast_member": null,
+              "excluded_genres": [],
+              "excluded_actors": [],
+              "runtime_max": null,
+              "rating_min": null
+            },
+            "no_repeat": false,
+            "referenced_titles_from_shown": true,
+            "relevant_movie_ids": [],
+            "notes": ""
+          }
+        },
+        {
+          "n": 7,
+          "user": "any ridley scott crime stuff?",
+          "expect": {
+            "intent": "ATTRIBUTE_FILTER",
+            "path": "retrieve",
+            "constraints": {
+              "mood": null,
+              "audience": null,
+              "genres": [
+                "Crime"
+              ],
+              "exact_year": null,
+              "year_min": null,
+              "year_max": null,
+              "director": "Ridley Scott",
+              "cast_member": null,
+              "excluded_genres": [],
+              "excluded_actors": [],
+              "runtime_max": null,
+              "rating_min": null
+            },
+            "no_repeat": true,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [],
+            "notes": "director replaced, genre added"
+          }
+        },
+        {
+          "n": 8,
+          "user": "the one with denzel as a drug lord",
+          "expect": {
+            "intent": "SEMANTIC_SEARCH",
+            "path": "retrieve",
+            "constraints": {
+              "mood": null,
+              "audience": null,
+              "genres": [
+                "Crime"
+              ],
+              "exact_year": null,
+              "year_min": null,
+              "year_max": null,
+              "director": "Ridley Scott",
+              "cast_member": null,
+              "excluded_genres": [],
+              "excluded_actors": [],
+              "runtime_max": null,
+              "rating_min": null
+            },
+            "no_repeat": true,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [
+              4982
+            ],
+            "notes": "American Gangster"
+          }
+        },
+        {
+          "n": 9,
+          "user": "forget directors, just 90s crime movies",
+          "expect": {
+            "intent": "ATTRIBUTE_FILTER",
+            "path": "retrieve",
+            "constraints": {
+              "mood": null,
+              "audience": null,
+              "genres": [
+                "Crime"
+              ],
+              "exact_year": null,
+              "year_min": 1990,
+              "year_max": 1999,
+              "director": null,
+              "cast_member": null,
+              "excluded_genres": [],
+              "excluded_actors": [],
+              "runtime_max": null,
+              "rating_min": null
+            },
+            "no_repeat": true,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [],
+            "notes": "director dropped; genre kept; decade added"
           }
         }
       ]
