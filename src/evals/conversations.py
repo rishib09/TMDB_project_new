@@ -36,6 +36,8 @@ class ExpectedConstraints(BaseModel):
     exact_year: int | None = None
     year_min: int | None = None
     year_max: int | None = None
+    director: str | None = None
+    cast_member: str | None = None
     excluded_genres: list[str] = Field(default_factory=list)
     excluded_actors: list[str] = Field(default_factory=list)
     runtime_max: int | None = None

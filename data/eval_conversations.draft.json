@@ -1,12 +1,12 @@
 {
   "version": "2026-09-16",
-  "description": "Maya multi-turn golden source, DRAFT for review on #86 (map #81 G1-G9): five recorded conversations plus LLM-drafted coverage of exclusions, caveats, narrowing, refinement, and references.",
+  "description": "Maya multi-turn golden source, DRAFT for review on #86 (map #81 G1-G9): five recorded conversations continued by the model plus authored coverage of exclusions, caveats, persons, narrowing, refinement, eras, and references.",
   "conversations": [
     {
       "id": "C01",
       "tier": "C_records",
-      "title": "recent date night (inbox Report)",
-      "source": "report#75",
+      "title": "Date Night Movies Refined Backwards",
+      "source": "report#75+authored",
       "turns": [
         {
           "n": 1,
@@ -21,6 +21,8 @@
               "exact_year": null,
               "year_min": null,
               "year_max": null,
+              "director": null,
+              "cast_member": null,
               "excluded_genres": [],
               "excluded_actors": [],
               "runtime_max": null,
@@ -45,6 +47,8 @@
               "exact_year": null,
               "year_min": null,
               "year_max": null,
+              "director": null,
+              "cast_member": null,
               "excluded_genres": [],
               "excluded_actors": [],
               "runtime_max": null,
@@ -69,6 +73,8 @@
               "exact_year": null,
               "year_min": null,
               "year_max": null,
+              "director": null,
+              "cast_member": null,
               "excluded_genres": [],
               "excluded_actors": [],
               "runtime_max": null,
@@ -93,6 +99,8 @@
               "exact_year": null,
               "year_min": 2015,
               "year_max": null,
+              "director": null,
+              "cast_member": null,
               "excluded_genres": [],
               "excluded_actors": [],
               "runtime_max": null,
@@ -103,14 +111,152 @@
             "relevant_movie_ids": [],
             "notes": "era_recent_year_min default; five fresh titles, none from turn 3 (#78, #80)"
           }
+        },
+        {
+          "n": 5,
+          "user": "under two hours please",
+          "expect": {
+            "intent": "ATTRIBUTE_FILTER",
+            "path": "retrieve",
+            "constraints": {
+              "mood": "feel-good",
+              "audience": "date night",
+              "genres": [],
+              "exact_year": null,
+              "year_min": 2015,
+              "year_max": null,
+              "director": null,
+              "cast_member": null,
+              "excluded_genres": [],
+              "excluded_actors": [],
+              "runtime_max": 120,
+              "rating_min": null
+            },
+            "no_repeat": true,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [],
+            "notes": "runtime constraint applied"
+          }
+        },
+        {
+          "n": 6,
+          "user": "no ryan gosling though",
+          "expect": {
+            "intent": "NEGATION_EXCLUSION",
+            "path": "retrieve",
+            "constraints": {
+              "mood": "feel-good",
+              "audience": "date night",
+              "genres": [],
+              "exact_year": null,
+              "year_min": 2015,
+              "year_max": null,
+              "director": null,
+              "cast_member": null,
+              "excluded_genres": [],
+              "excluded_actors": [
+                "Ryan Gosling"
+              ],
+              "runtime_max": 120,
+              "rating_min": null
+            },
+            "no_repeat": true,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [],
+            "notes": "actor exclusion applied"
+          }
+        },
+        {
+          "n": 7,
+          "user": "yes",
+          "expect": {
+            "intent": "SEMANTIC_SEARCH",
+            "path": "retrieve",
+            "constraints": {
+              "mood": "feel-good",
+              "audience": "date night",
+              "genres": [],
+              "exact_year": null,
+              "year_min": 2015,
+              "year_max": null,
+              "director": null,
+              "cast_member": null,
+              "excluded_genres": [],
+              "excluded_actors": [
+                "Ryan Gosling"
+              ],
+              "runtime_max": 120,
+              "rating_min": null
+            },
+            "no_repeat": true,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [],
+            "notes": "bare confirmation keeps constraints and triggers new list"
+          }
+        },
+        {
+          "n": 8,
+          "user": "who directed the second one?",
+          "expect": {
+            "intent": "SEMANTIC_SEARCH",
+            "path": "converse",
+            "constraints": {
+              "mood": "feel-good",
+              "audience": "date night",
+              "genres": [],
+              "exact_year": null,
+              "year_min": 2015,
+              "year_max": null,
+              "director": null,
+              "cast_member": null,
+              "excluded_genres": [],
+              "excluded_actors": [
+                "Ryan Gosling"
+              ],
+              "runtime_max": 120,
+              "rating_min": null
+            },
+            "no_repeat": false,
+            "referenced_titles_from_shown": true,
+            "relevant_movie_ids": [],
+            "notes": "ordinal question regarding shown candidate"
+          }
+        },
+        {
+          "n": 9,
+          "user": "actually give me something older",
+          "expect": {
+            "intent": "ATTRIBUTE_FILTER",
+            "path": "retrieve",
+            "constraints": {
+              "mood": "feel-good",
+              "audience": "date night",
+              "genres": [],
+              "exact_year": null,
+              "year_min": null,
+              "year_max": 2000,
+              "director": null,
+              "cast_member": null,
+              "excluded_genres": [],
+              "excluded_actors": [
+                "Ryan Gosling"
+              ],
+              "runtime_max": 120,
+              "rating_min": null
+            },
+            "no_repeat": true,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [],
+            "notes": "era switch drops year_min and sets year_max to 2000"
+          }
         }
       ]
     },
     {
       "id": "C02",
       "tier": "C_records",
-      "title": "old classic, all of them, just me",
-      "source": "walkthrough#56",
+      "title": "From Seventies Classics To Recent",
+      "source": "walkthrough#56+authored",
       "turns": [
         {
           "n": 1,
@@ -125,6 +271,8 @@
               "exact_year": null,
               "year_min": null,
               "year_max": 2000,
+              "director": null,
+              "cast_member": null,
               "excluded_genres": [],
               "excluded_actors": [],
               "runtime_max": null,
@@ -149,6 +297,8 @@
               "exact_year": null,
               "year_min": null,
               "year_max": 2000,
+              "director": null,
+              "cast_member": null,
               "excluded_genres": [],
               "excluded_actors": [],
               "runtime_max": null,
@@ -173,6 +323,8 @@
               "exact_year": null,
               "year_min": null,
               "year_max": 2000,
+              "director": null,
+              "cast_member": null,
               "excluded_genres": [],
               "excluded_actors": [],
               "runtime_max": null,
@@ -197,6 +349,8 @@
               "exact_year": null,
               "year_min": null,
               "year_max": 2000,
+              "director": null,
+              "cast_member": null,
               "excluded_genres": [],
               "excluded_actors": [],
               "runtime_max": null,
@@ -207,14 +361,152 @@
             "relevant_movie_ids": [],
             "notes": ""
           }
+        },
+        {
+          "n": 5,
+          "user": "70s only",
+          "expect": {
+            "intent": "ATTRIBUTE_FILTER",
+            "path": "retrieve",
+            "constraints": {
+              "mood": "feel-good",
+              "audience": "solo",
+              "genres": [],
+              "exact_year": null,
+              "year_min": 1970,
+              "year_max": 1979,
+              "director": null,
+              "cast_member": null,
+              "excluded_genres": [],
+              "excluded_actors": [],
+              "runtime_max": null,
+              "rating_min": null
+            },
+            "no_repeat": true,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [],
+            "notes": "decade bounds replace the prior broad ceiling"
+          }
+        },
+        {
+          "n": 6,
+          "user": "no romance",
+          "expect": {
+            "intent": "NEGATION_EXCLUSION",
+            "path": "retrieve",
+            "constraints": {
+              "mood": "feel-good",
+              "audience": "solo",
+              "genres": [],
+              "exact_year": null,
+              "year_min": 1970,
+              "year_max": 1979,
+              "director": null,
+              "cast_member": null,
+              "excluded_genres": [
+                "Romance"
+              ],
+              "excluded_actors": [],
+              "runtime_max": null,
+              "rating_min": null
+            },
+            "no_repeat": true,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [],
+            "notes": "genre negation added"
+          }
+        },
+        {
+          "n": 7,
+          "user": "show me some others",
+          "expect": {
+            "intent": "SEMANTIC_SEARCH",
+            "path": "retrieve",
+            "constraints": {
+              "mood": "feel-good",
+              "audience": "solo",
+              "genres": [],
+              "exact_year": null,
+              "year_min": 1970,
+              "year_max": 1979,
+              "director": null,
+              "cast_member": null,
+              "excluded_genres": [
+                "Romance"
+              ],
+              "excluded_actors": [],
+              "runtime_max": null,
+              "rating_min": null
+            },
+            "no_repeat": true,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [],
+            "notes": "first paging turn"
+          }
+        },
+        {
+          "n": 8,
+          "user": "what else you got",
+          "expect": {
+            "intent": "SEMANTIC_SEARCH",
+            "path": "retrieve",
+            "constraints": {
+              "mood": "feel-good",
+              "audience": "solo",
+              "genres": [],
+              "exact_year": null,
+              "year_min": 1970,
+              "year_max": 1979,
+              "director": null,
+              "cast_member": null,
+              "excluded_genres": [
+                "Romance"
+              ],
+              "excluded_actors": [],
+              "runtime_max": null,
+              "rating_min": null
+            },
+            "no_repeat": true,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [],
+            "notes": "second paging turn"
+          }
+        },
+        {
+          "n": 9,
+          "user": "actually something recent instead",
+          "expect": {
+            "intent": "ATTRIBUTE_FILTER",
+            "path": "retrieve",
+            "constraints": {
+              "mood": "feel-good",
+              "audience": "solo",
+              "genres": [],
+              "exact_year": null,
+              "year_min": 2015,
+              "year_max": null,
+              "director": null,
+              "cast_member": null,
+              "excluded_genres": [
+                "Romance"
+              ],
+              "excluded_actors": [],
+              "runtime_max": null,
+              "rating_min": null
+            },
+            "no_repeat": true,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [],
+            "notes": "recent overwrites decade and clears upper bound"
+          }
         }
       ]
     },
     {
       "id": "C03",
       "tier": "C_records",
-      "title": "horror for kids, five ways",
-      "source": "walkthrough#26",
+      "title": "Kid Friendly Spooky Movie Night",
+      "source": "walkthrough#26+authored",
       "turns": [
         {
           "n": 1,
@@ -231,6 +523,8 @@
               "exact_year": null,
               "year_min": null,
               "year_max": null,
+              "director": null,
+              "cast_member": null,
               "excluded_genres": [],
               "excluded_actors": [],
               "runtime_max": null,
@@ -257,6 +551,8 @@
               "exact_year": null,
               "year_min": null,
               "year_max": null,
+              "director": null,
+              "cast_member": null,
               "excluded_genres": [],
               "excluded_actors": [],
               "runtime_max": null,
@@ -283,6 +579,8 @@
               "exact_year": null,
               "year_min": null,
               "year_max": null,
+              "director": null,
+              "cast_member": null,
               "excluded_genres": [],
               "excluded_actors": [],
               "runtime_max": null,
@@ -296,9 +594,9 @@
         },
         {
           "n": 4,
-          "user": "horror movies",
+          "user": "rated at least 7",
           "expect": {
-            "intent": "SEMANTIC_SEARCH",
+            "intent": "ATTRIBUTE_FILTER",
             "path": "retrieve",
             "constraints": {
               "mood": "scary",
@@ -309,20 +607,134 @@
               "exact_year": null,
               "year_min": null,
               "year_max": null,
+              "director": null,
+              "cast_member": null,
               "excluded_genres": [],
               "excluded_actors": [],
               "runtime_max": null,
-              "rating_min": null
+              "rating_min": 7.0
             },
             "no_repeat": true,
             "referenced_titles_from_shown": false,
             "relevant_movie_ids": [],
-            "notes": "no new constraint; state persists"
+            "notes": "adds a minimum rating constraint"
           }
         },
         {
           "n": 5,
-          "user": "show me horror movies for kids",
+          "user": "anything by Tim Burton",
+          "expect": {
+            "intent": "ATTRIBUTE_FILTER",
+            "path": "retrieve",
+            "constraints": {
+              "mood": "scary",
+              "audience": "kids",
+              "genres": [
+                "Horror"
+              ],
+              "exact_year": null,
+              "year_min": null,
+              "year_max": null,
+              "director": "Tim Burton",
+              "cast_member": null,
+              "excluded_genres": [],
+              "excluded_actors": [],
+              "runtime_max": null,
+              "rating_min": 7.0
+            },
+            "no_repeat": true,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [],
+            "notes": "filters by director Tim Burton"
+          }
+        },
+        {
+          "n": 6,
+          "user": "who directed the first one?",
+          "expect": {
+            "intent": "SEMANTIC_SEARCH",
+            "path": "converse",
+            "constraints": {
+              "mood": "scary",
+              "audience": "kids",
+              "genres": [
+                "Horror"
+              ],
+              "exact_year": null,
+              "year_min": null,
+              "year_max": null,
+              "director": "Tim Burton",
+              "cast_member": null,
+              "excluded_genres": [],
+              "excluded_actors": [],
+              "runtime_max": null,
+              "rating_min": 7.0
+            },
+            "no_repeat": false,
+            "referenced_titles_from_shown": true,
+            "relevant_movie_ids": [],
+            "notes": "inquires about the director of a shown movie"
+          }
+        },
+        {
+          "n": 7,
+          "user": "forget the director",
+          "expect": {
+            "intent": "ATTRIBUTE_FILTER",
+            "path": "retrieve",
+            "constraints": {
+              "mood": "scary",
+              "audience": "kids",
+              "genres": [
+                "Horror"
+              ],
+              "exact_year": null,
+              "year_min": null,
+              "year_max": null,
+              "director": null,
+              "cast_member": null,
+              "excluded_genres": [],
+              "excluded_actors": [],
+              "runtime_max": null,
+              "rating_min": 7.0
+            },
+            "no_repeat": false,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [],
+            "notes": "drops director constraint while keeping others"
+          }
+        },
+        {
+          "n": 8,
+          "user": "keep it under 90 minutes",
+          "expect": {
+            "intent": "ATTRIBUTE_FILTER",
+            "path": "retrieve",
+            "constraints": {
+              "mood": "scary",
+              "audience": "kids",
+              "genres": [
+                "Horror"
+              ],
+              "exact_year": null,
+              "year_min": null,
+              "year_max": null,
+              "director": null,
+              "cast_member": null,
+              "excluded_genres": [],
+              "excluded_actors": [],
+              "runtime_max": 90,
+              "rating_min": 7.0
+            },
+            "no_repeat": true,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [],
+            "notes": "adds maximum runtime constraint"
+          }
+        },
+        {
+          "n": 9,
+          "user": "show me more",
           "expect": {
             "intent": "SEMANTIC_SEARCH",
             "path": "retrieve",
@@ -335,15 +747,17 @@
               "exact_year": null,
               "year_min": null,
               "year_max": null,
+              "director": null,
+              "cast_member": null,
               "excluded_genres": [],
               "excluded_actors": [],
-              "runtime_max": null,
-              "rating_min": null
+              "runtime_max": 90,
+              "rating_min": 7.0
             },
             "no_repeat": true,
             "referenced_titles_from_shown": false,
             "relevant_movie_ids": [],
-            "notes": ""
+            "notes": "requests additional matching recommendations"
           }
         }
       ]
@@ -351,8 +765,8 @@
     {
       "id": "C04",
       "tier": "C_records",
-      "title": "make me cry, then start over",
-      "source": "walkthrough#27",
+      "title": "Family Animation Reset And Detour",
+      "source": "walkthrough#27+authored",
       "turns": [
         {
           "n": 1,
@@ -367,6 +781,8 @@
               "exact_year": null,
               "year_min": null,
               "year_max": null,
+              "director": null,
+              "cast_member": null,
               "excluded_genres": [],
               "excluded_actors": [],
               "runtime_max": null,
@@ -393,6 +809,8 @@
               "exact_year": null,
               "year_min": null,
               "year_max": null,
+              "director": null,
+              "cast_member": null,
               "excluded_genres": [],
               "excluded_actors": [],
               "runtime_max": null,
@@ -419,6 +837,8 @@
               "exact_year": null,
               "year_min": null,
               "year_max": null,
+              "director": null,
+              "cast_member": null,
               "excluded_genres": [],
               "excluded_actors": [],
               "runtime_max": null,
@@ -445,6 +865,8 @@
               "exact_year": null,
               "year_min": 2000,
               "year_max": 2026,
+              "director": null,
+              "cast_member": null,
               "excluded_genres": [],
               "excluded_actors": [],
               "runtime_max": null,
@@ -469,6 +891,8 @@
               "exact_year": null,
               "year_min": null,
               "year_max": null,
+              "director": null,
+              "cast_member": null,
               "excluded_genres": [],
               "excluded_actors": [],
               "runtime_max": null,
@@ -493,6 +917,8 @@
               "exact_year": null,
               "year_min": null,
               "year_max": null,
+              "director": null,
+              "cast_member": null,
               "excluded_genres": [],
               "excluded_actors": [],
               "runtime_max": null,
@@ -503,14 +929,128 @@
             "relevant_movie_ids": [],
             "notes": "post-reset cold start asks again"
           }
+        },
+        {
+          "n": 7,
+          "user": "animation for the family",
+          "expect": {
+            "intent": "SEMANTIC_SEARCH",
+            "path": "retrieve",
+            "constraints": {
+              "mood": null,
+              "audience": "family",
+              "genres": [
+                "Animation"
+              ],
+              "exact_year": null,
+              "year_min": null,
+              "year_max": null,
+              "director": null,
+              "cast_member": null,
+              "excluded_genres": [],
+              "excluded_actors": [],
+              "runtime_max": null,
+              "rating_min": null
+            },
+            "no_repeat": false,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [],
+            "notes": "genre and audience trigger retrieval"
+          }
+        },
+        {
+          "n": 8,
+          "user": "no tom hanks",
+          "expect": {
+            "intent": "NEGATION_EXCLUSION",
+            "path": "retrieve",
+            "constraints": {
+              "mood": null,
+              "audience": "family",
+              "genres": [
+                "Animation"
+              ],
+              "exact_year": null,
+              "year_min": null,
+              "year_max": null,
+              "director": null,
+              "cast_member": null,
+              "excluded_genres": [],
+              "excluded_actors": [
+                "Tom Hanks"
+              ],
+              "runtime_max": null,
+              "rating_min": null
+            },
+            "no_repeat": true,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [],
+            "notes": "actor exclusion refinement"
+          }
+        },
+        {
+          "n": 9,
+          "user": "longest animated movie of 2010",
+          "expect": {
+            "intent": "SUPERLATIVE_RANKING",
+            "path": "retrieve",
+            "constraints": {
+              "mood": null,
+              "audience": null,
+              "genres": [],
+              "exact_year": null,
+              "year_min": null,
+              "year_max": null,
+              "director": null,
+              "cast_member": null,
+              "excluded_genres": [],
+              "excluded_actors": [],
+              "runtime_max": null,
+              "rating_min": null
+            },
+            "no_repeat": false,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [],
+            "notes": "superlative detour; constraints empty for the turn, memory must survive it"
+          }
+        },
+        {
+          "n": 10,
+          "user": "let's go back to the family movies",
+          "expect": {
+            "intent": "SEMANTIC_SEARCH",
+            "path": "retrieve",
+            "constraints": {
+              "mood": null,
+              "audience": "family",
+              "genres": [
+                "Animation"
+              ],
+              "exact_year": null,
+              "year_min": null,
+              "year_max": null,
+              "director": null,
+              "cast_member": null,
+              "excluded_genres": [],
+              "excluded_actors": [
+                "Tom Hanks"
+              ],
+              "runtime_max": null,
+              "rating_min": null
+            },
+            "no_repeat": true,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [],
+            "notes": "return to previous family set"
+          }
         }
       ]
     },
     {
       "id": "C05",
       "tier": "C_records",
-      "title": "help me with the mood, maybe old",
-      "source": "walkthrough#42",
+      "title": "Pacino Solo Tearjerkers In Eighties",
+      "source": "walkthrough#42+authored",
       "turns": [
         {
           "n": 1,
@@ -525,6 +1065,8 @@
               "exact_year": null,
               "year_min": null,
               "year_max": null,
+              "director": null,
+              "cast_member": null,
               "excluded_genres": [],
               "excluded_actors": [],
               "runtime_max": null,
@@ -549,6 +1091,8 @@
               "exact_year": null,
               "year_min": null,
               "year_max": null,
+              "director": null,
+              "cast_member": null,
               "excluded_genres": [],
               "excluded_actors": [],
               "runtime_max": null,
@@ -573,6 +1117,8 @@
               "exact_year": null,
               "year_min": null,
               "year_max": null,
+              "director": null,
+              "cast_member": null,
               "excluded_genres": [],
               "excluded_actors": [],
               "runtime_max": null,
@@ -597,6 +1143,8 @@
               "exact_year": null,
               "year_min": null,
               "year_max": 2000,
+              "director": null,
+              "cast_member": null,
               "excluded_genres": [],
               "excluded_actors": [],
               "runtime_max": null,
@@ -606,6 +1154,142 @@
             "referenced_titles_from_shown": false,
             "relevant_movie_ids": [],
             "notes": "mid-conversation era must not escape (#42)"
+          }
+        },
+        {
+          "n": 5,
+          "user": "make it a tearjerker",
+          "expect": {
+            "intent": "SEMANTIC_SEARCH",
+            "path": "retrieve",
+            "constraints": {
+              "mood": "tearjerker",
+              "audience": "solo",
+              "genres": [],
+              "exact_year": null,
+              "year_min": null,
+              "year_max": 2000,
+              "director": null,
+              "cast_member": null,
+              "excluded_genres": [],
+              "excluded_actors": [],
+              "runtime_max": null,
+              "rating_min": null
+            },
+            "no_repeat": true,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [],
+            "notes": "settles mood"
+          }
+        },
+        {
+          "n": 6,
+          "user": "with Al Pacino",
+          "expect": {
+            "intent": "ATTRIBUTE_FILTER",
+            "path": "retrieve",
+            "constraints": {
+              "mood": "tearjerker",
+              "audience": "solo",
+              "genres": [],
+              "exact_year": null,
+              "year_min": null,
+              "year_max": 2000,
+              "director": null,
+              "cast_member": "Al Pacino",
+              "excluded_genres": [],
+              "excluded_actors": [],
+              "runtime_max": null,
+              "rating_min": null
+            },
+            "no_repeat": true,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [],
+            "notes": "adds actor filter"
+          }
+        },
+        {
+          "n": 7,
+          "user": "no crime though",
+          "expect": {
+            "intent": "NEGATION_EXCLUSION",
+            "path": "retrieve",
+            "constraints": {
+              "mood": "tearjerker",
+              "audience": "solo",
+              "genres": [],
+              "exact_year": null,
+              "year_min": null,
+              "year_max": 2000,
+              "director": null,
+              "cast_member": "Al Pacino",
+              "excluded_genres": [
+                "Crime"
+              ],
+              "excluded_actors": [],
+              "runtime_max": null,
+              "rating_min": null
+            },
+            "no_repeat": true,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [],
+            "notes": "excludes crime genre"
+          }
+        },
+        {
+          "n": 8,
+          "user": "more like the first one",
+          "expect": {
+            "intent": "SEMANTIC_SEARCH",
+            "path": "retrieve",
+            "constraints": {
+              "mood": "tearjerker",
+              "audience": "solo",
+              "genres": [],
+              "exact_year": null,
+              "year_min": null,
+              "year_max": 2000,
+              "director": null,
+              "cast_member": "Al Pacino",
+              "excluded_genres": [
+                "Crime"
+              ],
+              "excluded_actors": [],
+              "runtime_max": null,
+              "rating_min": null
+            },
+            "no_repeat": true,
+            "referenced_titles_from_shown": true,
+            "relevant_movie_ids": [],
+            "notes": "similarity reference to shown title"
+          }
+        },
+        {
+          "n": 9,
+          "user": "80s actually",
+          "expect": {
+            "intent": "ATTRIBUTE_FILTER",
+            "path": "retrieve",
+            "constraints": {
+              "mood": "tearjerker",
+              "audience": "solo",
+              "genres": [],
+              "exact_year": null,
+              "year_min": 1980,
+              "year_max": 1989,
+              "director": null,
+              "cast_member": "Al Pacino",
+              "excluded_genres": [
+                "Crime"
+              ],
+              "excluded_actors": [],
+              "runtime_max": null,
+              "rating_min": null
+            },
+            "no_repeat": true,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [],
+            "notes": "decade replaces pre-2000 ceiling"
           }
         }
       ]
@@ -631,6 +1315,8 @@
               "exact_year": null,
               "year_min": null,
               "year_max": null,
+              "director": null,
+              "cast_member": null,
               "excluded_genres": [
                 "Horror"
               ],
@@ -659,6 +1345,8 @@
               "exact_year": null,
               "year_min": null,
               "year_max": null,
+              "director": null,
+              "cast_member": null,
               "excluded_genres": [
                 "Horror"
               ],
@@ -687,6 +1375,8 @@
               "exact_year": null,
               "year_min": 2015,
               "year_max": null,
+              "director": null,
+              "cast_member": null,
               "excluded_genres": [
                 "Horror"
               ],
@@ -715,6 +1405,8 @@
               "exact_year": null,
               "year_min": 2015,
               "year_max": null,
+              "director": null,
+              "cast_member": null,
               "excluded_genres": [
                 "Horror"
               ],
@@ -743,6 +1435,8 @@
               "exact_year": null,
               "year_min": 2015,
               "year_max": null,
+              "director": null,
+              "cast_member": null,
               "excluded_genres": [
                 "Horror"
               ],
@@ -773,6 +1467,8 @@
               "exact_year": null,
               "year_min": 2015,
               "year_max": null,
+              "director": null,
+              "cast_member": null,
               "excluded_genres": [
                 "Horror"
               ],
@@ -803,6 +1499,8 @@
               "exact_year": null,
               "year_min": 2015,
               "year_max": null,
+              "director": null,
+              "cast_member": null,
               "excluded_genres": [
                 "Horror"
               ],
@@ -834,6 +1532,8 @@
               "exact_year": null,
               "year_min": 2015,
               "year_max": null,
+              "director": null,
+              "cast_member": null,
               "excluded_genres": [
                 "Horror"
               ],
@@ -865,6 +1565,8 @@
               "exact_year": null,
               "year_min": 1990,
               "year_max": 1999,
+              "director": null,
+              "cast_member": null,
               "excluded_genres": [
                 "Horror"
               ],
@@ -896,6 +1598,8 @@
               "exact_year": null,
               "year_min": 1990,
               "year_max": 1999,
+              "director": null,
+              "cast_member": null,
               "excluded_genres": [
                 "Horror"
               ],
@@ -934,6 +1638,8 @@
               "exact_year": null,
               "year_min": null,
               "year_max": null,
+              "director": null,
+              "cast_member": null,
               "excluded_genres": [],
               "excluded_actors": [],
               "runtime_max": null,
@@ -960,6 +1666,8 @@
               "exact_year": null,
               "year_min": null,
               "year_max": null,
+              "director": null,
+              "cast_member": null,
               "excluded_genres": [],
               "excluded_actors": [],
               "runtime_max": 120,
@@ -986,6 +1694,8 @@
               "exact_year": null,
               "year_min": 1990,
               "year_max": 1999,
+              "director": null,
+              "cast_member": null,
               "excluded_genres": [],
               "excluded_actors": [],
               "runtime_max": 120,
@@ -1012,6 +1722,8 @@
               "exact_year": null,
               "year_min": 1990,
               "year_max": 1999,
+              "director": null,
+              "cast_member": null,
               "excluded_genres": [],
               "excluded_actors": [],
               "runtime_max": 120,
@@ -1038,6 +1750,8 @@
               "exact_year": null,
               "year_min": 1990,
               "year_max": 1999,
+              "director": null,
+              "cast_member": null,
               "excluded_genres": [
                 "Horror"
               ],
@@ -1066,6 +1780,8 @@
               "exact_year": null,
               "year_min": 1990,
               "year_max": 1999,
+              "director": null,
+              "cast_member": null,
               "excluded_genres": [
                 "Horror"
               ],
@@ -1102,6 +1818,8 @@
               "exact_year": 1999,
               "year_min": null,
               "year_max": null,
+              "director": null,
+              "cast_member": null,
               "excluded_genres": [],
               "excluded_actors": [],
               "runtime_max": null,
@@ -1131,6 +1849,8 @@
               "exact_year": 1999,
               "year_min": null,
               "year_max": null,
+              "director": null,
+              "cast_member": null,
               "excluded_genres": [],
               "excluded_actors": [],
               "runtime_max": null,
@@ -1157,6 +1877,8 @@
               "exact_year": 1999,
               "year_min": null,
               "year_max": null,
+              "director": null,
+              "cast_member": null,
               "excluded_genres": [
                 "Horror"
               ],
@@ -1185,6 +1907,8 @@
               "exact_year": null,
               "year_min": 1990,
               "year_max": 1999,
+              "director": null,
+              "cast_member": null,
               "excluded_genres": [
                 "Horror"
               ],
@@ -1213,6 +1937,8 @@
               "exact_year": null,
               "year_min": 1990,
               "year_max": 1999,
+              "director": null,
+              "cast_member": null,
               "excluded_genres": [
                 "Horror"
               ],
@@ -1241,6 +1967,8 @@
               "exact_year": null,
               "year_min": 1990,
               "year_max": 1999,
+              "director": null,
+              "cast_member": null,
               "excluded_genres": [
                 "Horror"
               ],
@@ -1275,6 +2003,8 @@
               "exact_year": null,
               "year_min": null,
               "year_max": null,
+              "director": null,
+              "cast_member": null,
               "excluded_genres": [],
               "excluded_actors": [],
               "runtime_max": null,
@@ -1299,6 +2029,8 @@
               "exact_year": null,
               "year_min": null,
               "year_max": null,
+              "director": null,
+              "cast_member": null,
               "excluded_genres": [],
               "excluded_actors": [],
               "runtime_max": null,
@@ -1323,6 +2055,8 @@
               "exact_year": null,
               "year_min": null,
               "year_max": null,
+              "director": null,
+              "cast_member": null,
               "excluded_genres": [],
               "excluded_actors": [],
               "runtime_max": null,
@@ -1347,6 +2081,8 @@
               "exact_year": null,
               "year_min": null,
               "year_max": null,
+              "director": null,
+              "cast_member": null,
               "excluded_genres": [],
               "excluded_actors": [],
               "runtime_max": null,
@@ -1371,6 +2107,8 @@
               "exact_year": null,
               "year_min": 2015,
               "year_max": null,
+              "director": null,
+              "cast_member": null,
               "excluded_genres": [],
               "excluded_actors": [],
               "runtime_max": null,
@@ -1395,6 +2133,8 @@
               "exact_year": null,
               "year_min": 2015,
               "year_max": null,
+              "director": null,
+              "cast_member": null,
               "excluded_genres": [],
               "excluded_actors": [],
               "runtime_max": 120,
@@ -1427,6 +2167,8 @@
               "exact_year": null,
               "year_min": null,
               "year_max": 2000,
+              "director": null,
+              "cast_member": null,
               "excluded_genres": [],
               "excluded_actors": [],
               "runtime_max": null,
@@ -1451,6 +2193,8 @@
               "exact_year": null,
               "year_min": null,
               "year_max": 2000,
+              "director": null,
+              "cast_member": null,
               "excluded_genres": [],
               "excluded_actors": [],
               "runtime_max": null,
@@ -1475,6 +2219,8 @@
               "exact_year": null,
               "year_min": null,
               "year_max": 2000,
+              "director": null,
+              "cast_member": null,
               "excluded_genres": [],
               "excluded_actors": [],
               "runtime_max": 100,
@@ -1499,6 +2245,8 @@
               "exact_year": null,
               "year_min": 2015,
               "year_max": null,
+              "director": null,
+              "cast_member": null,
               "excluded_genres": [],
               "excluded_actors": [],
               "runtime_max": 100,
@@ -1523,6 +2271,8 @@
               "exact_year": null,
               "year_min": 2015,
               "year_max": null,
+              "director": null,
+              "cast_member": null,
               "excluded_genres": [],
               "excluded_actors": [],
               "runtime_max": 100,
@@ -1549,6 +2299,8 @@
               "exact_year": null,
               "year_min": 2015,
               "year_max": null,
+              "director": null,
+              "cast_member": null,
               "excluded_genres": [],
               "excluded_actors": [],
               "runtime_max": 100,
@@ -1575,6 +2327,8 @@
               "exact_year": null,
               "year_min": 2015,
               "year_max": null,
+              "director": null,
+              "cast_member": null,
               "excluded_genres": [
                 "Science Fiction"
               ],
@@ -1601,6 +2355,8 @@
               "exact_year": null,
               "year_min": null,
               "year_max": null,
+              "director": null,
+              "cast_member": null,
               "excluded_genres": [],
               "excluded_actors": [],
               "runtime_max": null,
@@ -1627,6 +2383,8 @@
               "exact_year": null,
               "year_min": null,
               "year_max": null,
+              "director": null,
+              "cast_member": null,
               "excluded_genres": [],
               "excluded_actors": [],
               "runtime_max": null,
@@ -1653,6 +2411,8 @@
               "exact_year": null,
               "year_min": null,
               "year_max": null,
+              "director": null,
+              "cast_member": null,
               "excluded_genres": [],
               "excluded_actors": [],
               "runtime_max": null,
@@ -1687,6 +2447,8 @@
               "exact_year": null,
               "year_min": null,
               "year_max": null,
+              "director": null,
+              "cast_member": null,
               "excluded_genres": [],
               "excluded_actors": [],
               "runtime_max": null,
@@ -1713,6 +2475,8 @@
               "exact_year": null,
               "year_min": null,
               "year_max": null,
+              "director": null,
+              "cast_member": null,
               "excluded_genres": [],
               "excluded_actors": [],
               "runtime_max": 100,
@@ -1737,6 +2501,8 @@
               "exact_year": null,
               "year_min": null,
               "year_max": null,
+              "director": null,
+              "cast_member": null,
               "excluded_genres": [],
               "excluded_actors": [],
               "runtime_max": null,
@@ -1763,6 +2529,8 @@
               "exact_year": null,
               "year_min": null,
               "year_max": null,
+              "director": null,
+              "cast_member": null,
               "excluded_genres": [],
               "excluded_actors": [],
               "runtime_max": 100,
@@ -1789,6 +2557,8 @@
               "exact_year": null,
               "year_min": 1990,
               "year_max": 1999,
+              "director": null,
+              "cast_member": null,
               "excluded_genres": [],
               "excluded_actors": [],
               "runtime_max": 100,
@@ -1815,6 +2585,8 @@
               "exact_year": null,
               "year_min": 1990,
               "year_max": 1999,
+              "director": null,
+              "cast_member": null,
               "excluded_genres": [],
               "excluded_actors": [
                 "Jim Carrey"
@@ -1843,6 +2615,8 @@
               "exact_year": null,
               "year_min": 1990,
               "year_max": 1999,
+              "director": null,
+              "cast_member": null,
               "excluded_genres": [],
               "excluded_actors": [
                 "Jim Carrey"
@@ -1871,6 +2645,8 @@
               "exact_year": null,
               "year_min": 1990,
               "year_max": 1999,
+              "director": null,
+              "cast_member": null,
               "excluded_genres": [],
               "excluded_actors": [
                 "Jim Carrey"
@@ -1908,6 +2684,8 @@
               "exact_year": null,
               "year_min": 1990,
               "year_max": 1999,
+              "director": null,
+              "cast_member": null,
               "excluded_genres": [],
               "excluded_actors": [],
               "runtime_max": null,
@@ -1935,6 +2713,8 @@
               "exact_year": null,
               "year_min": 1990,
               "year_max": 1999,
+              "director": null,
+              "cast_member": null,
               "excluded_genres": [],
               "excluded_actors": [],
               "runtime_max": null,
@@ -1962,6 +2742,8 @@
               "exact_year": null,
               "year_min": 1990,
               "year_max": 1999,
+              "director": null,
+              "cast_member": null,
               "excluded_genres": [],
               "excluded_actors": [],
               "runtime_max": null,
@@ -1989,6 +2771,8 @@
               "exact_year": null,
               "year_min": 1990,
               "year_max": 1999,
+              "director": null,
+              "cast_member": null,
               "excluded_genres": [],
               "excluded_actors": [],
               "runtime_max": null,
@@ -2016,6 +2800,8 @@
               "exact_year": null,
               "year_min": 1990,
               "year_max": 1999,
+              "director": null,
+              "cast_member": null,
               "excluded_genres": [],
               "excluded_actors": [],
               "runtime_max": null,
@@ -2043,6 +2829,8 @@
               "exact_year": null,
               "year_min": 1990,
               "year_max": 1999,
+              "director": null,
+              "cast_member": null,
               "excluded_genres": [],
               "excluded_actors": [],
               "runtime_max": 100,
@@ -2070,6 +2858,8 @@
               "exact_year": null,
               "year_min": 1990,
               "year_max": 1999,
+              "director": null,
+              "cast_member": null,
               "excluded_genres": [],
               "excluded_actors": [],
               "runtime_max": 100,
@@ -2096,6 +2886,8 @@
               "exact_year": null,
               "year_min": 1990,
               "year_max": 1999,
+              "director": null,
+              "cast_member": null,
               "excluded_genres": [
                 "Romance"
               ],
@@ -2119,11 +2911,14 @@
               "mood": "scary",
               "audience": "date night",
               "genres": [
-                "Horror"
+                "Horror",
+                "Romance"
               ],
               "exact_year": null,
               "year_min": 1990,
               "year_max": 1999,
+              "director": null,
+              "cast_member": null,
               "excluded_genres": [],
               "excluded_actors": [],
               "runtime_max": 100,
@@ -2132,7 +2927,7 @@
             "no_repeat": true,
             "referenced_titles_from_shown": false,
             "relevant_movie_ids": [],
-            "notes": "revoking an exclusion (#82 C6 revoke_exclusions)"
+            "notes": "revoking an exclusion puts Romance back among wanted genres (#82 C6)"
           }
         },
         {
@@ -2145,11 +2940,14 @@
               "mood": "scary",
               "audience": "date night",
               "genres": [
-                "Horror"
+                "Horror",
+                "Romance"
               ],
               "exact_year": null,
               "year_min": 2015,
               "year_max": null,
+              "director": null,
+              "cast_member": null,
               "excluded_genres": [],
               "excluded_actors": [],
               "runtime_max": 100,
@@ -2159,6 +2957,2111 @@
             "referenced_titles_from_shown": false,
             "relevant_movie_ids": [],
             "notes": "'recent' replaces the 90s range with year_min only"
+          }
+        }
+      ]
+    },
+    {
+      "id": "C13",
+      "tier": "C_memory",
+      "title": "Shifting Hanks And Spielberg Filters",
+      "source": "authored",
+      "turns": [
+        {
+          "n": 1,
+          "user": "I want a feel-good movie",
+          "expect": {
+            "intent": "SEMANTIC_SEARCH",
+            "path": "ask",
+            "constraints": {
+              "mood": "feel-good",
+              "audience": null,
+              "genres": [],
+              "exact_year": null,
+              "year_min": null,
+              "year_max": null,
+              "director": null,
+              "cast_member": null,
+              "excluded_genres": [],
+              "excluded_actors": [],
+              "runtime_max": null,
+              "rating_min": null
+            },
+            "no_repeat": false,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [],
+            "notes": "Initial mood filter requires more context to retrieve."
+          }
+        },
+        {
+          "n": 2,
+          "user": "keep it under two hours",
+          "expect": {
+            "intent": "ATTRIBUTE_FILTER",
+            "path": "retrieve",
+            "constraints": {
+              "mood": "feel-good",
+              "audience": null,
+              "genres": [],
+              "exact_year": null,
+              "year_min": null,
+              "year_max": null,
+              "director": null,
+              "cast_member": null,
+              "excluded_genres": [],
+              "excluded_actors": [],
+              "runtime_max": 120,
+              "rating_min": null
+            },
+            "no_repeat": false,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [],
+            "notes": "Adding runtime constraint triggers retrieval."
+          }
+        },
+        {
+          "n": 3,
+          "user": "got any movies with Tom Hanks?",
+          "expect": {
+            "intent": "ATTRIBUTE_FILTER",
+            "path": "retrieve",
+            "constraints": {
+              "mood": "feel-good",
+              "audience": null,
+              "genres": [],
+              "exact_year": null,
+              "year_min": null,
+              "year_max": null,
+              "director": null,
+              "cast_member": "Tom Hanks",
+              "excluded_genres": [],
+              "excluded_actors": [],
+              "runtime_max": 120,
+              "rating_min": null
+            },
+            "no_repeat": true,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [],
+            "notes": "Add Tom Hanks to cast_member while preserving mood and runtime."
+          }
+        },
+        {
+          "n": 4,
+          "user": "make sure it's a comedy",
+          "expect": {
+            "intent": "SEMANTIC_SEARCH",
+            "path": "retrieve",
+            "constraints": {
+              "mood": "feel-good",
+              "audience": null,
+              "genres": [
+                "Comedy"
+              ],
+              "exact_year": null,
+              "year_min": null,
+              "year_max": null,
+              "director": null,
+              "cast_member": "Tom Hanks",
+              "excluded_genres": [],
+              "excluded_actors": [],
+              "runtime_max": 120,
+              "rating_min": null
+            },
+            "no_repeat": true,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [],
+            "notes": "Add comedy genre filter."
+          }
+        },
+        {
+          "n": 5,
+          "user": "are any directed by Spielberg?",
+          "expect": {
+            "intent": "ATTRIBUTE_FILTER",
+            "path": "retrieve",
+            "constraints": {
+              "mood": "feel-good",
+              "audience": null,
+              "genres": [
+                "Comedy"
+              ],
+              "exact_year": null,
+              "year_min": null,
+              "year_max": null,
+              "director": "Steven Spielberg",
+              "cast_member": "Tom Hanks",
+              "excluded_genres": [],
+              "excluded_actors": [],
+              "runtime_max": 120,
+              "rating_min": null
+            },
+            "no_repeat": true,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [],
+            "notes": "Add Steven Spielberg as director alongside Hanks."
+          }
+        },
+        {
+          "n": 6,
+          "user": "what about 2000s releases",
+          "expect": {
+            "intent": "ATTRIBUTE_FILTER",
+            "path": "retrieve",
+            "constraints": {
+              "mood": "feel-good",
+              "audience": null,
+              "genres": [
+                "Comedy"
+              ],
+              "exact_year": null,
+              "year_min": 2000,
+              "year_max": 2009,
+              "director": "Steven Spielberg",
+              "cast_member": "Tom Hanks",
+              "excluded_genres": [],
+              "excluded_actors": [],
+              "runtime_max": 120,
+              "rating_min": null
+            },
+            "no_repeat": true,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [],
+            "notes": "Add 2000s decade bounds."
+          }
+        },
+        {
+          "n": 7,
+          "user": "actually let's do it without Tom Hanks",
+          "expect": {
+            "intent": "NEGATION_EXCLUSION",
+            "path": "retrieve",
+            "constraints": {
+              "mood": "feel-good",
+              "audience": null,
+              "genres": [
+                "Comedy"
+              ],
+              "exact_year": null,
+              "year_min": 2000,
+              "year_max": 2009,
+              "director": "Steven Spielberg",
+              "cast_member": null,
+              "excluded_genres": [],
+              "excluded_actors": [
+                "Tom Hanks"
+              ],
+              "runtime_max": 120,
+              "rating_min": null
+            },
+            "no_repeat": true,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [],
+            "notes": "Move Hanks from cast_member to excluded_actors."
+          }
+        },
+        {
+          "n": 8,
+          "user": "honestly any director is fine",
+          "expect": {
+            "intent": "ATTRIBUTE_FILTER",
+            "path": "retrieve",
+            "constraints": {
+              "mood": "feel-good",
+              "audience": null,
+              "genres": [
+                "Comedy"
+              ],
+              "exact_year": null,
+              "year_min": 2000,
+              "year_max": 2009,
+              "director": null,
+              "cast_member": null,
+              "excluded_genres": [],
+              "excluded_actors": [
+                "Tom Hanks"
+              ],
+              "runtime_max": 120,
+              "rating_min": null
+            },
+            "no_repeat": true,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [],
+            "notes": "Drop director filter while retaining other constraints."
+          }
+        },
+        {
+          "n": 9,
+          "user": "no romance elements either",
+          "expect": {
+            "intent": "NEGATION_EXCLUSION",
+            "path": "retrieve",
+            "constraints": {
+              "mood": "feel-good",
+              "audience": null,
+              "genres": [
+                "Comedy"
+              ],
+              "exact_year": null,
+              "year_min": 2000,
+              "year_max": 2009,
+              "director": null,
+              "cast_member": null,
+              "excluded_genres": [
+                "Romance"
+              ],
+              "excluded_actors": [
+                "Tom Hanks"
+              ],
+              "runtime_max": 120,
+              "rating_min": null
+            },
+            "no_repeat": true,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [],
+            "notes": "Add Romance to excluded_genres."
+          }
+        },
+        {
+          "n": 10,
+          "user": "show me some more",
+          "expect": {
+            "intent": "SEMANTIC_SEARCH",
+            "path": "retrieve",
+            "constraints": {
+              "mood": "feel-good",
+              "audience": null,
+              "genres": [
+                "Comedy"
+              ],
+              "exact_year": null,
+              "year_min": 2000,
+              "year_max": 2009,
+              "director": null,
+              "cast_member": null,
+              "excluded_genres": [
+                "Romance"
+              ],
+              "excluded_actors": [
+                "Tom Hanks"
+              ],
+              "runtime_max": 120,
+              "rating_min": null
+            },
+            "no_repeat": true,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [],
+            "notes": "Paging request keeps exact constraints."
+          }
+        }
+      ]
+    },
+    {
+      "id": "C14",
+      "tier": "C_narrowing",
+      "title": "Switching Audiences Back And Forth",
+      "source": "authored",
+      "turns": [
+        {
+          "n": 1,
+          "user": "funny, for the kids",
+          "expect": {
+            "intent": "SEMANTIC_SEARCH",
+            "path": "retrieve",
+            "constraints": {
+              "mood": "funny",
+              "audience": "kids",
+              "genres": [],
+              "exact_year": null,
+              "year_min": null,
+              "year_max": null,
+              "director": null,
+              "cast_member": null,
+              "excluded_genres": [],
+              "excluded_actors": [],
+              "runtime_max": null,
+              "rating_min": null
+            },
+            "no_repeat": false,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [],
+            "notes": "Two axes provided at start triggers immediate retrieval."
+          }
+        },
+        {
+          "n": 2,
+          "user": "actually make it for adults",
+          "expect": {
+            "intent": "SEMANTIC_SEARCH",
+            "path": "retrieve",
+            "constraints": {
+              "mood": "funny",
+              "audience": "adults",
+              "genres": [],
+              "exact_year": null,
+              "year_min": null,
+              "year_max": null,
+              "director": null,
+              "cast_member": null,
+              "excluded_genres": [],
+              "excluded_actors": [],
+              "runtime_max": null,
+              "rating_min": null
+            },
+            "no_repeat": true,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [],
+            "notes": "Audience replaces kids with adults."
+          }
+        },
+        {
+          "n": 3,
+          "user": "let's switch to family instead",
+          "expect": {
+            "intent": "SEMANTIC_SEARCH",
+            "path": "retrieve",
+            "constraints": {
+              "mood": "funny",
+              "audience": "family",
+              "genres": [],
+              "exact_year": null,
+              "year_min": null,
+              "year_max": null,
+              "director": null,
+              "cast_member": null,
+              "excluded_genres": [],
+              "excluded_actors": [],
+              "runtime_max": null,
+              "rating_min": null
+            },
+            "no_repeat": true,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [],
+            "notes": "Audience replaces adults with family."
+          }
+        },
+        {
+          "n": 4,
+          "user": "nah",
+          "expect": {
+            "intent": "SEMANTIC_SEARCH",
+            "path": "retrieve",
+            "constraints": {
+              "mood": "funny",
+              "audience": "family",
+              "genres": [],
+              "exact_year": null,
+              "year_min": null,
+              "year_max": null,
+              "director": null,
+              "cast_member": null,
+              "excluded_genres": [],
+              "excluded_actors": [],
+              "runtime_max": null,
+              "rating_min": null
+            },
+            "no_repeat": true,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [],
+            "notes": "Bare rejection changes nothing and fetches fresh results."
+          }
+        },
+        {
+          "n": 5,
+          "user": "how about something recent",
+          "expect": {
+            "intent": "ATTRIBUTE_FILTER",
+            "path": "retrieve",
+            "constraints": {
+              "mood": "funny",
+              "audience": "family",
+              "genres": [],
+              "exact_year": null,
+              "year_min": 2015,
+              "year_max": null,
+              "director": null,
+              "cast_member": null,
+              "excluded_genres": [],
+              "excluded_actors": [],
+              "runtime_max": null,
+              "rating_min": null
+            },
+            "no_repeat": true,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [],
+            "notes": "Recent filter sets year_min to 2015."
+          }
+        },
+        {
+          "n": 6,
+          "user": "no animation",
+          "expect": {
+            "intent": "NEGATION_EXCLUSION",
+            "path": "retrieve",
+            "constraints": {
+              "mood": "funny",
+              "audience": "family",
+              "genres": [],
+              "exact_year": null,
+              "year_min": 2015,
+              "year_max": null,
+              "director": null,
+              "cast_member": null,
+              "excluded_genres": [
+                "Animation"
+              ],
+              "excluded_actors": [],
+              "runtime_max": null,
+              "rating_min": null
+            },
+            "no_repeat": true,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [],
+            "notes": "Adds excluded genre."
+          }
+        },
+        {
+          "n": 7,
+          "user": "show me some more",
+          "expect": {
+            "intent": "SEMANTIC_SEARCH",
+            "path": "retrieve",
+            "constraints": {
+              "mood": "funny",
+              "audience": "family",
+              "genres": [],
+              "exact_year": null,
+              "year_min": 2015,
+              "year_max": null,
+              "director": null,
+              "cast_member": null,
+              "excluded_genres": [
+                "Animation"
+              ],
+              "excluded_actors": [],
+              "runtime_max": null,
+              "rating_min": null
+            },
+            "no_repeat": true,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [],
+            "notes": "Paging turn retains all constraints."
+          }
+        },
+        {
+          "n": 8,
+          "user": "ok kids again",
+          "expect": {
+            "intent": "SEMANTIC_SEARCH",
+            "path": "retrieve",
+            "constraints": {
+              "mood": "funny",
+              "audience": "kids",
+              "genres": [],
+              "exact_year": null,
+              "year_min": 2015,
+              "year_max": null,
+              "director": null,
+              "cast_member": null,
+              "excluded_genres": [
+                "Animation"
+              ],
+              "excluded_actors": [],
+              "runtime_max": null,
+              "rating_min": null
+            },
+            "no_repeat": true,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [],
+            "notes": "Audience switches back to kids."
+          }
+        }
+      ]
+    },
+    {
+      "id": "C15",
+      "tier": "C_refinement",
+      "title": "Top K Pressure Horror Marathon",
+      "source": "authored",
+      "turns": [
+        {
+          "n": 1,
+          "user": "What can you help me find?",
+          "expect": {
+            "intent": "CAPABILITIES",
+            "path": "converse",
+            "constraints": {
+              "mood": null,
+              "audience": null,
+              "genres": [],
+              "exact_year": null,
+              "year_min": null,
+              "year_max": null,
+              "director": null,
+              "cast_member": null,
+              "excluded_genres": [],
+              "excluded_actors": [],
+              "runtime_max": null,
+              "rating_min": null
+            },
+            "no_repeat": false,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [],
+            "notes": "Initial capability query"
+          }
+        },
+        {
+          "n": 2,
+          "user": "I want something scary",
+          "expect": {
+            "intent": "SEMANTIC_SEARCH",
+            "path": "ask",
+            "constraints": {
+              "mood": "scary",
+              "audience": null,
+              "genres": [],
+              "exact_year": null,
+              "year_min": null,
+              "year_max": null,
+              "director": null,
+              "cast_member": null,
+              "excluded_genres": [],
+              "excluded_actors": [],
+              "runtime_max": null,
+              "rating_min": null
+            },
+            "no_repeat": false,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [],
+            "notes": "Single mood constraint asks for more detail"
+          }
+        },
+        {
+          "n": 3,
+          "user": "Just watching solo, show me horror movies",
+          "expect": {
+            "intent": "SEMANTIC_SEARCH",
+            "path": "retrieve",
+            "constraints": {
+              "mood": "scary",
+              "audience": "solo",
+              "genres": [
+                "Horror"
+              ],
+              "exact_year": null,
+              "year_min": null,
+              "year_max": null,
+              "director": null,
+              "cast_member": null,
+              "excluded_genres": [],
+              "excluded_actors": [],
+              "runtime_max": null,
+              "rating_min": null
+            },
+            "no_repeat": false,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [],
+            "notes": "Initial retrieval with genre and audience"
+          }
+        },
+        {
+          "n": 4,
+          "user": "more",
+          "expect": {
+            "intent": "SEMANTIC_SEARCH",
+            "path": "retrieve",
+            "constraints": {
+              "mood": "scary",
+              "audience": "solo",
+              "genres": [
+                "Horror"
+              ],
+              "exact_year": null,
+              "year_min": null,
+              "year_max": null,
+              "director": null,
+              "cast_member": null,
+              "excluded_genres": [],
+              "excluded_actors": [],
+              "runtime_max": null,
+              "rating_min": null
+            },
+            "no_repeat": true,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [],
+            "notes": "First pagination turn under top-k pressure"
+          }
+        },
+        {
+          "n": 5,
+          "user": "others",
+          "expect": {
+            "intent": "SEMANTIC_SEARCH",
+            "path": "retrieve",
+            "constraints": {
+              "mood": "scary",
+              "audience": "solo",
+              "genres": [
+                "Horror"
+              ],
+              "exact_year": null,
+              "year_min": null,
+              "year_max": null,
+              "director": null,
+              "cast_member": null,
+              "excluded_genres": [],
+              "excluded_actors": [],
+              "runtime_max": null,
+              "rating_min": null
+            },
+            "no_repeat": true,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [],
+            "notes": "Second pagination turn under top-k pressure"
+          }
+        },
+        {
+          "n": 6,
+          "user": "different ones",
+          "expect": {
+            "intent": "SEMANTIC_SEARCH",
+            "path": "retrieve",
+            "constraints": {
+              "mood": "scary",
+              "audience": "solo",
+              "genres": [
+                "Horror"
+              ],
+              "exact_year": null,
+              "year_min": null,
+              "year_max": null,
+              "director": null,
+              "cast_member": null,
+              "excluded_genres": [],
+              "excluded_actors": [],
+              "runtime_max": null,
+              "rating_min": null
+            },
+            "no_repeat": true,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [],
+            "notes": "Third pagination turn under top-k pressure"
+          }
+        },
+        {
+          "n": 7,
+          "user": "keep going",
+          "expect": {
+            "intent": "SEMANTIC_SEARCH",
+            "path": "retrieve",
+            "constraints": {
+              "mood": "scary",
+              "audience": "solo",
+              "genres": [
+                "Horror"
+              ],
+              "exact_year": null,
+              "year_min": null,
+              "year_max": null,
+              "director": null,
+              "cast_member": null,
+              "excluded_genres": [],
+              "excluded_actors": [],
+              "runtime_max": null,
+              "rating_min": null
+            },
+            "no_repeat": true,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [],
+            "notes": "Fourth pagination turn under top-k pressure"
+          }
+        },
+        {
+          "n": 8,
+          "user": "how about the 1980s?",
+          "expect": {
+            "intent": "ATTRIBUTE_FILTER",
+            "path": "retrieve",
+            "constraints": {
+              "mood": "scary",
+              "audience": "solo",
+              "genres": [
+                "Horror"
+              ],
+              "exact_year": null,
+              "year_min": 1980,
+              "year_max": 1989,
+              "director": null,
+              "cast_member": null,
+              "excluded_genres": [],
+              "excluded_actors": [],
+              "runtime_max": null,
+              "rating_min": null
+            },
+            "no_repeat": true,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [],
+            "notes": "Decade tweak after deep pagination"
+          }
+        },
+        {
+          "n": 9,
+          "user": "more",
+          "expect": {
+            "intent": "SEMANTIC_SEARCH",
+            "path": "retrieve",
+            "constraints": {
+              "mood": "scary",
+              "audience": "solo",
+              "genres": [
+                "Horror"
+              ],
+              "exact_year": null,
+              "year_min": 1980,
+              "year_max": 1989,
+              "director": null,
+              "cast_member": null,
+              "excluded_genres": [],
+              "excluded_actors": [],
+              "runtime_max": null,
+              "rating_min": null
+            },
+            "no_repeat": true,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [],
+            "notes": "First more turn after decade filter"
+          }
+        },
+        {
+          "n": 10,
+          "user": "any others?",
+          "expect": {
+            "intent": "SEMANTIC_SEARCH",
+            "path": "retrieve",
+            "constraints": {
+              "mood": "scary",
+              "audience": "solo",
+              "genres": [
+                "Horror"
+              ],
+              "exact_year": null,
+              "year_min": 1980,
+              "year_max": 1989,
+              "director": null,
+              "cast_member": null,
+              "excluded_genres": [],
+              "excluded_actors": [],
+              "runtime_max": null,
+              "rating_min": null
+            },
+            "no_repeat": true,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [],
+            "notes": "Second more turn after decade filter"
+          }
+        }
+      ]
+    },
+    {
+      "id": "C16",
+      "tier": "C_reference",
+      "title": "Long Range Recall Movie Search",
+      "source": "authored",
+      "turns": [
+        {
+          "n": 1,
+          "user": "Show me some epic action movies",
+          "expect": {
+            "intent": "SEMANTIC_SEARCH",
+            "path": "retrieve",
+            "constraints": {
+              "mood": "epic",
+              "audience": null,
+              "genres": [
+                "Action"
+              ],
+              "exact_year": null,
+              "year_min": null,
+              "year_max": null,
+              "director": null,
+              "cast_member": null,
+              "excluded_genres": [],
+              "excluded_actors": [],
+              "runtime_max": null,
+              "rating_min": null
+            },
+            "no_repeat": false,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [],
+            "notes": "Initial retrieval with genre and mood"
+          }
+        },
+        {
+          "n": 2,
+          "user": "make them 1980s releases",
+          "expect": {
+            "intent": "ATTRIBUTE_FILTER",
+            "path": "retrieve",
+            "constraints": {
+              "mood": "epic",
+              "audience": null,
+              "genres": [
+                "Action"
+              ],
+              "exact_year": null,
+              "year_min": 1980,
+              "year_max": 1989,
+              "director": null,
+              "cast_member": null,
+              "excluded_genres": [],
+              "excluded_actors": [],
+              "runtime_max": null,
+              "rating_min": null
+            },
+            "no_repeat": true,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [],
+            "notes": "Refinement 1 decade filter"
+          }
+        },
+        {
+          "n": 3,
+          "user": "no science fiction",
+          "expect": {
+            "intent": "NEGATION_EXCLUSION",
+            "path": "retrieve",
+            "constraints": {
+              "mood": "epic",
+              "audience": null,
+              "genres": [
+                "Action"
+              ],
+              "exact_year": null,
+              "year_min": 1980,
+              "year_max": 1989,
+              "director": null,
+              "cast_member": null,
+              "excluded_genres": [
+                "Science Fiction"
+              ],
+              "excluded_actors": [],
+              "runtime_max": null,
+              "rating_min": null
+            },
+            "no_repeat": true,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [],
+            "notes": "Refinement 2 genre exclusion"
+          }
+        },
+        {
+          "n": 4,
+          "user": "keep it under 2 hours",
+          "expect": {
+            "intent": "ATTRIBUTE_FILTER",
+            "path": "retrieve",
+            "constraints": {
+              "mood": "epic",
+              "audience": null,
+              "genres": [
+                "Action"
+              ],
+              "exact_year": null,
+              "year_min": 1980,
+              "year_max": 1989,
+              "director": null,
+              "cast_member": null,
+              "excluded_genres": [
+                "Science Fiction"
+              ],
+              "excluded_actors": [],
+              "runtime_max": 120,
+              "rating_min": null
+            },
+            "no_repeat": true,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [],
+            "notes": "Refinement 3 runtime cap"
+          }
+        },
+        {
+          "n": 5,
+          "user": "something for date night",
+          "expect": {
+            "intent": "SEMANTIC_SEARCH",
+            "path": "retrieve",
+            "constraints": {
+              "mood": "epic",
+              "audience": "date night",
+              "genres": [
+                "Action"
+              ],
+              "exact_year": null,
+              "year_min": 1980,
+              "year_max": 1989,
+              "director": null,
+              "cast_member": null,
+              "excluded_genres": [
+                "Science Fiction"
+              ],
+              "excluded_actors": [],
+              "runtime_max": 120,
+              "rating_min": null
+            },
+            "no_repeat": true,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [],
+            "notes": "Refinement 4 audience target"
+          }
+        },
+        {
+          "n": 6,
+          "user": "with a rating of at least 7",
+          "expect": {
+            "intent": "ATTRIBUTE_FILTER",
+            "path": "retrieve",
+            "constraints": {
+              "mood": "epic",
+              "audience": "date night",
+              "genres": [
+                "Action"
+              ],
+              "exact_year": null,
+              "year_min": 1980,
+              "year_max": 1989,
+              "director": null,
+              "cast_member": null,
+              "excluded_genres": [
+                "Science Fiction"
+              ],
+              "excluded_actors": [],
+              "runtime_max": 120,
+              "rating_min": 7.0
+            },
+            "no_repeat": true,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [],
+            "notes": "Refinement 5 minimum rating"
+          }
+        },
+        {
+          "n": 7,
+          "user": "the first one you showed at the very start, who directed it",
+          "expect": {
+            "intent": "SEMANTIC_SEARCH",
+            "path": "converse",
+            "constraints": {
+              "mood": "epic",
+              "audience": "date night",
+              "genres": [
+                "Action"
+              ],
+              "exact_year": null,
+              "year_min": 1980,
+              "year_max": 1989,
+              "director": null,
+              "cast_member": null,
+              "excluded_genres": [
+                "Science Fiction"
+              ],
+              "excluded_actors": [],
+              "runtime_max": 120,
+              "rating_min": 7.0
+            },
+            "no_repeat": false,
+            "referenced_titles_from_shown": true,
+            "relevant_movie_ids": [],
+            "notes": "Long-range reference to turn 1 first title director"
+          }
+        },
+        {
+          "n": 8,
+          "user": "more like that one",
+          "expect": {
+            "intent": "SEMANTIC_SEARCH",
+            "path": "retrieve",
+            "constraints": {
+              "mood": "epic",
+              "audience": "date night",
+              "genres": [
+                "Action"
+              ],
+              "exact_year": null,
+              "year_min": 1980,
+              "year_max": 1989,
+              "director": null,
+              "cast_member": null,
+              "excluded_genres": [
+                "Science Fiction"
+              ],
+              "excluded_actors": [],
+              "runtime_max": 120,
+              "rating_min": 7.0
+            },
+            "no_repeat": true,
+            "referenced_titles_from_shown": true,
+            "relevant_movie_ids": [],
+            "notes": "Retrieve more titles similar to referenced movie"
+          }
+        },
+        {
+          "n": 9,
+          "user": "what year was the third one",
+          "expect": {
+            "intent": "SEMANTIC_SEARCH",
+            "path": "converse",
+            "constraints": {
+              "mood": "epic",
+              "audience": "date night",
+              "genres": [
+                "Action"
+              ],
+              "exact_year": null,
+              "year_min": 1980,
+              "year_max": 1989,
+              "director": null,
+              "cast_member": null,
+              "excluded_genres": [
+                "Science Fiction"
+              ],
+              "excluded_actors": [],
+              "runtime_max": 120,
+              "rating_min": 7.0
+            },
+            "no_repeat": false,
+            "referenced_titles_from_shown": true,
+            "relevant_movie_ids": [],
+            "notes": "Converse query on release year of third title shown in turn 8"
+          }
+        },
+        {
+          "n": 10,
+          "user": "who stars in it",
+          "expect": {
+            "intent": "SEMANTIC_SEARCH",
+            "path": "converse",
+            "constraints": {
+              "mood": "epic",
+              "audience": "date night",
+              "genres": [
+                "Action"
+              ],
+              "exact_year": null,
+              "year_min": 1980,
+              "year_max": 1989,
+              "director": null,
+              "cast_member": null,
+              "excluded_genres": [
+                "Science Fiction"
+              ],
+              "excluded_actors": [],
+              "runtime_max": 120,
+              "rating_min": 7.0
+            },
+            "no_repeat": false,
+            "referenced_titles_from_shown": true,
+            "relevant_movie_ids": [],
+            "notes": "Follow-up query about cast of the third title"
+          }
+        }
+      ]
+    },
+    {
+      "id": "C17",
+      "tier": "C_memory",
+      "title": "Shifting Eras Keep Earlier Filters",
+      "source": "authored",
+      "turns": [
+        {
+          "n": 1,
+          "user": "Looking for some good sci-fi movies",
+          "expect": {
+            "intent": "SEMANTIC_SEARCH",
+            "path": "retrieve",
+            "constraints": {
+              "mood": null,
+              "audience": null,
+              "genres": [
+                "Science Fiction"
+              ],
+              "exact_year": null,
+              "year_min": null,
+              "year_max": null,
+              "director": null,
+              "cast_member": null,
+              "excluded_genres": [],
+              "excluded_actors": [],
+              "runtime_max": null,
+              "rating_min": null
+            },
+            "no_repeat": false,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [],
+            "notes": "genre anchor established"
+          }
+        },
+        {
+          "n": 2,
+          "user": "no horror though, keep that out",
+          "expect": {
+            "intent": "NEGATION_EXCLUSION",
+            "path": "retrieve",
+            "constraints": {
+              "mood": null,
+              "audience": null,
+              "genres": [
+                "Science Fiction"
+              ],
+              "exact_year": null,
+              "year_min": null,
+              "year_max": null,
+              "director": null,
+              "cast_member": null,
+              "excluded_genres": [
+                "Horror"
+              ],
+              "excluded_actors": [],
+              "runtime_max": null,
+              "rating_min": null
+            },
+            "no_repeat": true,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [],
+            "notes": "exclusion added to persist across era shifts"
+          }
+        },
+        {
+          "n": 3,
+          "user": "actually stick to old movies",
+          "expect": {
+            "intent": "ATTRIBUTE_FILTER",
+            "path": "retrieve",
+            "constraints": {
+              "mood": null,
+              "audience": null,
+              "genres": [
+                "Science Fiction"
+              ],
+              "exact_year": null,
+              "year_min": null,
+              "year_max": 2000,
+              "director": null,
+              "cast_member": null,
+              "excluded_genres": [
+                "Horror"
+              ],
+              "excluded_actors": [],
+              "runtime_max": null,
+              "rating_min": null
+            },
+            "no_repeat": true,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [],
+            "notes": "old movies sets year_max=2000"
+          }
+        },
+        {
+          "n": 4,
+          "user": "change of plan, show me stuff from 2019",
+          "expect": {
+            "intent": "ATTRIBUTE_FILTER",
+            "path": "retrieve",
+            "constraints": {
+              "mood": null,
+              "audience": null,
+              "genres": [
+                "Science Fiction"
+              ],
+              "exact_year": 2019,
+              "year_min": null,
+              "year_max": null,
+              "director": null,
+              "cast_member": null,
+              "excluded_genres": [
+                "Horror"
+              ],
+              "excluded_actors": [],
+              "runtime_max": null,
+              "rating_min": null
+            },
+            "no_repeat": true,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [],
+            "notes": "exact year replaces previous range"
+          }
+        },
+        {
+          "n": 5,
+          "user": "no wait, the 90s",
+          "expect": {
+            "intent": "ATTRIBUTE_FILTER",
+            "path": "retrieve",
+            "constraints": {
+              "mood": null,
+              "audience": null,
+              "genres": [
+                "Science Fiction"
+              ],
+              "exact_year": null,
+              "year_min": 1990,
+              "year_max": 1999,
+              "director": null,
+              "cast_member": null,
+              "excluded_genres": [
+                "Horror"
+              ],
+              "excluded_actors": [],
+              "runtime_max": null,
+              "rating_min": null
+            },
+            "no_repeat": true,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [],
+            "notes": "decade range replaces exact year"
+          }
+        },
+        {
+          "n": 6,
+          "user": "let's switch to recent ones instead",
+          "expect": {
+            "intent": "ATTRIBUTE_FILTER",
+            "path": "retrieve",
+            "constraints": {
+              "mood": null,
+              "audience": null,
+              "genres": [
+                "Science Fiction"
+              ],
+              "exact_year": null,
+              "year_min": 2015,
+              "year_max": null,
+              "director": null,
+              "cast_member": null,
+              "excluded_genres": [
+                "Horror"
+              ],
+              "excluded_actors": [],
+              "runtime_max": null,
+              "rating_min": null
+            },
+            "no_repeat": true,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [],
+            "notes": "recent sets year_min=2015 without year_max"
+          }
+        },
+        {
+          "n": 7,
+          "user": "under 2 hours please",
+          "expect": {
+            "intent": "ATTRIBUTE_FILTER",
+            "path": "retrieve",
+            "constraints": {
+              "mood": null,
+              "audience": null,
+              "genres": [
+                "Science Fiction"
+              ],
+              "exact_year": null,
+              "year_min": 2015,
+              "year_max": null,
+              "director": null,
+              "cast_member": null,
+              "excluded_genres": [
+                "Horror"
+              ],
+              "excluded_actors": [],
+              "runtime_max": 120,
+              "rating_min": null
+            },
+            "no_repeat": true,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [],
+            "notes": "runtime constraint added while keeping persistent filters"
+          }
+        },
+        {
+          "n": 8,
+          "user": "more like these",
+          "expect": {
+            "intent": "SEMANTIC_SEARCH",
+            "path": "retrieve",
+            "constraints": {
+              "mood": null,
+              "audience": null,
+              "genres": [
+                "Science Fiction"
+              ],
+              "exact_year": null,
+              "year_min": 2015,
+              "year_max": null,
+              "director": null,
+              "cast_member": null,
+              "excluded_genres": [
+                "Horror"
+              ],
+              "excluded_actors": [],
+              "runtime_max": 120,
+              "rating_min": null
+            },
+            "no_repeat": true,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [],
+            "notes": "paging request retains all active constraints"
+          }
+        }
+      ]
+    },
+    {
+      "id": "C18",
+      "tier": "C_refinement",
+      "title": "Handling Scope Deflections and Refinements",
+      "source": "authored",
+      "turns": [
+        {
+          "n": 1,
+          "user": "Looking for some westerns to watch tonight.",
+          "expect": {
+            "intent": "SEMANTIC_SEARCH",
+            "path": "retrieve",
+            "constraints": {
+              "mood": null,
+              "audience": null,
+              "genres": [
+                "Western"
+              ],
+              "exact_year": null,
+              "year_min": null,
+              "year_max": null,
+              "director": null,
+              "cast_member": null,
+              "excluded_genres": [],
+              "excluded_actors": [],
+              "runtime_max": null,
+              "rating_min": null
+            },
+            "no_repeat": false,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [],
+            "notes": "Initial genre search for Westerns."
+          }
+        },
+        {
+          "n": 2,
+          "user": "Make it thrilling.",
+          "expect": {
+            "intent": "SEMANTIC_SEARCH",
+            "path": "retrieve",
+            "constraints": {
+              "mood": "thrilling",
+              "audience": null,
+              "genres": [
+                "Western"
+              ],
+              "exact_year": null,
+              "year_min": null,
+              "year_max": null,
+              "director": null,
+              "cast_member": null,
+              "excluded_genres": [],
+              "excluded_actors": [],
+              "runtime_max": null,
+              "rating_min": null
+            },
+            "no_repeat": true,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [],
+            "notes": "Adds thrilling mood constraint."
+          }
+        },
+        {
+          "n": 3,
+          "user": "how about 1950s westerns",
+          "expect": {
+            "intent": "OUT_OF_SCOPE",
+            "path": "pivot",
+            "constraints": {
+              "mood": "thrilling",
+              "audience": null,
+              "genres": [
+                "Western"
+              ],
+              "exact_year": null,
+              "year_min": null,
+              "year_max": null,
+              "director": null,
+              "cast_member": null,
+              "excluded_genres": [],
+              "excluded_actors": [],
+              "runtime_max": null,
+              "rating_min": null
+            },
+            "no_repeat": false,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [],
+            "notes": "Pre-1970 query triggers pivot while keeping constraints intact."
+          }
+        },
+        {
+          "n": 4,
+          "user": "ok 70s then",
+          "expect": {
+            "intent": "ATTRIBUTE_FILTER",
+            "path": "retrieve",
+            "constraints": {
+              "mood": "thrilling",
+              "audience": null,
+              "genres": [
+                "Western"
+              ],
+              "exact_year": null,
+              "year_min": 1970,
+              "year_max": 1979,
+              "director": null,
+              "cast_member": null,
+              "excluded_genres": [],
+              "excluded_actors": [],
+              "runtime_max": null,
+              "rating_min": null
+            },
+            "no_repeat": true,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [],
+            "notes": "Sets 1970s decade filter while keeping active constraints."
+          }
+        },
+        {
+          "n": 5,
+          "user": "can you recommend a book instead",
+          "expect": {
+            "intent": "OUT_OF_SCOPE",
+            "path": "pivot",
+            "constraints": {
+              "mood": "thrilling",
+              "audience": null,
+              "genres": [
+                "Western"
+              ],
+              "exact_year": null,
+              "year_min": 1970,
+              "year_max": 1979,
+              "director": null,
+              "cast_member": null,
+              "excluded_genres": [],
+              "excluded_actors": [],
+              "runtime_max": null,
+              "rating_min": null
+            },
+            "no_repeat": false,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [],
+            "notes": "Off-topic query triggers pivot leaving state intact."
+          }
+        },
+        {
+          "n": 6,
+          "user": "never mind, keep it under 2 hours",
+          "expect": {
+            "intent": "ATTRIBUTE_FILTER",
+            "path": "retrieve",
+            "constraints": {
+              "mood": "thrilling",
+              "audience": null,
+              "genres": [
+                "Western"
+              ],
+              "exact_year": null,
+              "year_min": 1970,
+              "year_max": 1979,
+              "director": null,
+              "cast_member": null,
+              "excluded_genres": [],
+              "excluded_actors": [],
+              "runtime_max": 120,
+              "rating_min": null
+            },
+            "no_repeat": true,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [],
+            "notes": "Adds runtime filter."
+          }
+        },
+        {
+          "n": 7,
+          "user": "without Clint Eastwood",
+          "expect": {
+            "intent": "NEGATION_EXCLUSION",
+            "path": "retrieve",
+            "constraints": {
+              "mood": "thrilling",
+              "audience": null,
+              "genres": [
+                "Western"
+              ],
+              "exact_year": null,
+              "year_min": 1970,
+              "year_max": 1979,
+              "director": null,
+              "cast_member": null,
+              "excluded_genres": [],
+              "excluded_actors": [
+                "Clint Eastwood"
+              ],
+              "runtime_max": 120,
+              "rating_min": null
+            },
+            "no_repeat": true,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [],
+            "notes": "Excludes specific actor."
+          }
+        },
+        {
+          "n": 8,
+          "user": "rated at least 7.5",
+          "expect": {
+            "intent": "ATTRIBUTE_FILTER",
+            "path": "retrieve",
+            "constraints": {
+              "mood": "thrilling",
+              "audience": null,
+              "genres": [
+                "Western"
+              ],
+              "exact_year": null,
+              "year_min": 1970,
+              "year_max": 1979,
+              "director": null,
+              "cast_member": null,
+              "excluded_genres": [],
+              "excluded_actors": [
+                "Clint Eastwood"
+              ],
+              "runtime_max": 120,
+              "rating_min": 7.5
+            },
+            "no_repeat": true,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [],
+            "notes": "Filters by minimum rating."
+          }
+        }
+      ]
+    },
+    {
+      "id": "C19",
+      "tier": "C_narrowing",
+      "title": "Handling Terse And Misspelled Requests",
+      "source": "authored",
+      "turns": [
+        {
+          "n": 1,
+          "user": "sumthing funy 4 kids",
+          "expect": {
+            "intent": "SEMANTIC_SEARCH",
+            "path": "retrieve",
+            "constraints": {
+              "mood": "funny",
+              "audience": "kids",
+              "genres": [],
+              "exact_year": null,
+              "year_min": null,
+              "year_max": null,
+              "director": null,
+              "cast_member": null,
+              "excluded_genres": [],
+              "excluded_actors": [],
+              "runtime_max": null,
+              "rating_min": null
+            },
+            "no_repeat": false,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [],
+            "notes": "Maps misspelled funny mood and kids audience to canonical values."
+          }
+        },
+        {
+          "n": 2,
+          "user": "yeh",
+          "expect": {
+            "intent": "SEMANTIC_SEARCH",
+            "path": "retrieve",
+            "constraints": {
+              "mood": "funny",
+              "audience": "kids",
+              "genres": [],
+              "exact_year": null,
+              "year_min": null,
+              "year_max": null,
+              "director": null,
+              "cast_member": null,
+              "excluded_genres": [],
+              "excluded_actors": [],
+              "runtime_max": null,
+              "rating_min": null
+            },
+            "no_repeat": true,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [],
+            "notes": "Terse affirmative confirmation keeps existing constraints and triggers next results."
+          }
+        },
+        {
+          "n": 3,
+          "user": "nah not that",
+          "expect": {
+            "intent": "SEMANTIC_SEARCH",
+            "path": "retrieve",
+            "constraints": {
+              "mood": "funny",
+              "audience": "kids",
+              "genres": [],
+              "exact_year": null,
+              "year_min": null,
+              "year_max": null,
+              "director": null,
+              "cast_member": null,
+              "excluded_genres": [],
+              "excluded_actors": [],
+              "runtime_max": null,
+              "rating_min": null
+            },
+            "no_repeat": true,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [],
+            "notes": "Rejection of batch advances retrieval without altering filters."
+          }
+        },
+        {
+          "n": 4,
+          "user": "moar",
+          "expect": {
+            "intent": "SEMANTIC_SEARCH",
+            "path": "retrieve",
+            "constraints": {
+              "mood": "funny",
+              "audience": "kids",
+              "genres": [],
+              "exact_year": null,
+              "year_min": null,
+              "year_max": null,
+              "director": null,
+              "cast_member": null,
+              "excluded_genres": [],
+              "excluded_actors": [],
+              "runtime_max": null,
+              "rating_min": null
+            },
+            "no_repeat": true,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [],
+            "notes": "Pagination request misspelled as moar."
+          }
+        },
+        {
+          "n": 5,
+          "user": "no horor pls",
+          "expect": {
+            "intent": "NEGATION_EXCLUSION",
+            "path": "retrieve",
+            "constraints": {
+              "mood": "funny",
+              "audience": "kids",
+              "genres": [],
+              "exact_year": null,
+              "year_min": null,
+              "year_max": null,
+              "director": null,
+              "cast_member": null,
+              "excluded_genres": [
+                "Horror"
+              ],
+              "excluded_actors": [],
+              "runtime_max": null,
+              "rating_min": null
+            },
+            "no_repeat": true,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [],
+            "notes": "Excludes horror genre with typo."
+          }
+        },
+        {
+          "n": 6,
+          "user": "animashun",
+          "expect": {
+            "intent": "SEMANTIC_SEARCH",
+            "path": "retrieve",
+            "constraints": {
+              "mood": "funny",
+              "audience": "kids",
+              "genres": [
+                "Animation"
+              ],
+              "exact_year": null,
+              "year_min": null,
+              "year_max": null,
+              "director": null,
+              "cast_member": null,
+              "excluded_genres": [
+                "Horror"
+              ],
+              "excluded_actors": [],
+              "runtime_max": null,
+              "rating_min": null
+            },
+            "no_repeat": true,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [],
+            "notes": "Phonetic spelling parsed as Animation genre."
+          }
+        },
+        {
+          "n": 7,
+          "user": "ok recent 1s",
+          "expect": {
+            "intent": "ATTRIBUTE_FILTER",
+            "path": "retrieve",
+            "constraints": {
+              "mood": "funny",
+              "audience": "kids",
+              "genres": [
+                "Animation"
+              ],
+              "exact_year": null,
+              "year_min": 2015,
+              "year_max": null,
+              "director": null,
+              "cast_member": null,
+              "excluded_genres": [
+                "Horror"
+              ],
+              "excluded_actors": [],
+              "runtime_max": null,
+              "rating_min": null
+            },
+            "no_repeat": true,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [],
+            "notes": "Slang recent mapped to year_min 2015."
+          }
+        },
+        {
+          "n": 8,
+          "user": "tell me bout the first 1",
+          "expect": {
+            "intent": "SEMANTIC_SEARCH",
+            "path": "converse",
+            "constraints": {
+              "mood": "funny",
+              "audience": "kids",
+              "genres": [
+                "Animation"
+              ],
+              "exact_year": null,
+              "year_min": 2015,
+              "year_max": null,
+              "director": null,
+              "cast_member": null,
+              "excluded_genres": [
+                "Horror"
+              ],
+              "excluded_actors": [],
+              "runtime_max": null,
+              "rating_min": null
+            },
+            "no_repeat": false,
+            "referenced_titles_from_shown": true,
+            "relevant_movie_ids": [],
+            "notes": "Ordinal query about a shown title."
+          }
+        }
+      ]
+    },
+    {
+      "id": "C20",
+      "tier": "C_refinement",
+      "title": "Genre Union Intersection And Reset",
+      "source": "authored",
+      "turns": [
+        {
+          "n": 1,
+          "user": "Looking for some good sci-fi or fantasy movies tonight",
+          "expect": {
+            "intent": "SEMANTIC_SEARCH",
+            "path": "retrieve",
+            "constraints": {
+              "mood": null,
+              "audience": null,
+              "genres": [
+                "Science Fiction",
+                "Fantasy"
+              ],
+              "exact_year": null,
+              "year_min": null,
+              "year_max": null,
+              "director": null,
+              "cast_member": null,
+              "excluded_genres": [],
+              "excluded_actors": [],
+              "runtime_max": null,
+              "rating_min": null
+            },
+            "no_repeat": false,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [],
+            "notes": "genre union of science fiction and fantasy"
+          }
+        },
+        {
+          "n": 2,
+          "user": "Make sure they're also thrillers",
+          "expect": {
+            "intent": "SEMANTIC_SEARCH",
+            "path": "retrieve",
+            "constraints": {
+              "mood": null,
+              "audience": null,
+              "genres": [
+                "Science Fiction",
+                "Fantasy",
+                "Thriller"
+              ],
+              "exact_year": null,
+              "year_min": null,
+              "year_max": null,
+              "director": null,
+              "cast_member": null,
+              "excluded_genres": [],
+              "excluded_actors": [],
+              "runtime_max": null,
+              "rating_min": null
+            },
+            "no_repeat": true,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [],
+            "notes": "adds thriller to genres"
+          }
+        },
+        {
+          "n": 3,
+          "user": "Actually drop fantasy, just keep sci-fi thrillers",
+          "expect": {
+            "intent": "SEMANTIC_SEARCH",
+            "path": "retrieve",
+            "constraints": {
+              "mood": null,
+              "audience": null,
+              "genres": [
+                "Science Fiction",
+                "Thriller"
+              ],
+              "exact_year": null,
+              "year_min": null,
+              "year_max": null,
+              "director": null,
+              "cast_member": null,
+              "excluded_genres": [],
+              "excluded_actors": [],
+              "runtime_max": null,
+              "rating_min": null
+            },
+            "no_repeat": true,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [],
+            "notes": "removes fantasy from active genres"
+          }
+        },
+        {
+          "n": 4,
+          "user": "Only show titles rated at least 7.5",
+          "expect": {
+            "intent": "ATTRIBUTE_FILTER",
+            "path": "retrieve",
+            "constraints": {
+              "mood": null,
+              "audience": null,
+              "genres": [
+                "Science Fiction",
+                "Thriller"
+              ],
+              "exact_year": null,
+              "year_min": null,
+              "year_max": null,
+              "director": null,
+              "cast_member": null,
+              "excluded_genres": [],
+              "excluded_actors": [],
+              "runtime_max": null,
+              "rating_min": 7.5
+            },
+            "no_repeat": true,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [],
+            "notes": "adds rating floor"
+          }
+        },
+        {
+          "n": 5,
+          "user": "Keep it under 2 hours",
+          "expect": {
+            "intent": "ATTRIBUTE_FILTER",
+            "path": "retrieve",
+            "constraints": {
+              "mood": null,
+              "audience": null,
+              "genres": [
+                "Science Fiction",
+                "Thriller"
+              ],
+              "exact_year": null,
+              "year_min": null,
+              "year_max": null,
+              "director": null,
+              "cast_member": null,
+              "excluded_genres": [],
+              "excluded_actors": [],
+              "runtime_max": 120,
+              "rating_min": 7.5
+            },
+            "no_repeat": true,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [],
+            "notes": "adds runtime constraint"
+          }
+        },
+        {
+          "n": 6,
+          "user": "Let's wipe the slate clean and start over",
+          "expect": {
+            "intent": "CAPABILITIES",
+            "path": "converse",
+            "constraints": {
+              "mood": null,
+              "audience": null,
+              "genres": [],
+              "exact_year": null,
+              "year_min": null,
+              "year_max": null,
+              "director": null,
+              "cast_member": null,
+              "excluded_genres": [],
+              "excluded_actors": [],
+              "runtime_max": null,
+              "rating_min": null
+            },
+            "no_repeat": false,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [],
+            "notes": "resets all active constraints"
+          }
+        },
+        {
+          "n": 7,
+          "user": "I want something recent",
+          "expect": {
+            "intent": "ATTRIBUTE_FILTER",
+            "path": "ask",
+            "constraints": {
+              "mood": null,
+              "audience": null,
+              "genres": [],
+              "exact_year": null,
+              "year_min": 2015,
+              "year_max": null,
+              "director": null,
+              "cast_member": null,
+              "excluded_genres": [],
+              "excluded_actors": [],
+              "runtime_max": null,
+              "rating_min": null
+            },
+            "no_repeat": false,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [],
+            "notes": "sets year_min to 2015"
+          }
+        },
+        {
+          "n": 8,
+          "user": "Make it funny",
+          "expect": {
+            "intent": "SEMANTIC_SEARCH",
+            "path": "retrieve",
+            "constraints": {
+              "mood": "funny",
+              "audience": null,
+              "genres": [],
+              "exact_year": null,
+              "year_min": 2015,
+              "year_max": null,
+              "director": null,
+              "cast_member": null,
+              "excluded_genres": [],
+              "excluded_actors": [],
+              "runtime_max": null,
+              "rating_min": null
+            },
+            "no_repeat": false,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [],
+            "notes": "adds funny mood, two axes known trigger retrieve"
+          }
+        },
+        {
+          "n": 9,
+          "user": "Specifically an action movie",
+          "expect": {
+            "intent": "SEMANTIC_SEARCH",
+            "path": "retrieve",
+            "constraints": {
+              "mood": "funny",
+              "audience": null,
+              "genres": [
+                "Action"
+              ],
+              "exact_year": null,
+              "year_min": 2015,
+              "year_max": null,
+              "director": null,
+              "cast_member": null,
+              "excluded_genres": [],
+              "excluded_actors": [],
+              "runtime_max": null,
+              "rating_min": null
+            },
+            "no_repeat": true,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [],
+            "notes": "adds Action genre"
+          }
+        },
+        {
+          "n": 10,
+          "user": "Can we also include crime films in the mix?",
+          "expect": {
+            "intent": "SEMANTIC_SEARCH",
+            "path": "retrieve",
+            "constraints": {
+              "mood": "funny",
+              "audience": null,
+              "genres": [
+                "Action",
+                "Crime"
+              ],
+              "exact_year": null,
+              "year_min": 2015,
+              "year_max": null,
+              "director": null,
+              "cast_member": null,
+              "excluded_genres": [],
+              "excluded_actors": [],
+              "runtime_max": null,
+              "rating_min": null
+            },
+            "no_repeat": true,
+            "referenced_titles_from_shown": false,
+            "relevant_movie_ids": [],
+            "notes": "rebuilds to two genres again with Crime added"
           }
         }
       ]
