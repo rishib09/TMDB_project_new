@@ -119,3 +119,14 @@ def test_turn_numbers_consecutive_is_accepted_for_ten_turns():
     ]
     convo = GoldenConversation(id="C10", tier="C_reference", title="t", source="authored", turns=turns)
     assert len(convo.turns) == 10
+
+
+def test_golden_file_loads_with_the_reviewed_counts():
+    """The promoted golden source (#86) is valid and complete: 23 conversations, six tiers."""
+    conversations = load_conversations()
+    assert len(conversations.conversations) == 23
+    assert sum(len(c.turns) for c in conversations.conversations) == 200
+    assert {c.tier for c in conversations.conversations} == {
+        "C_records", "C_memory", "C_narrowing", "C_refinement", "C_reference", "C_plot"
+    }
+    assert sum(1 for c in conversations.conversations if len(c.turns) == 10) == 8

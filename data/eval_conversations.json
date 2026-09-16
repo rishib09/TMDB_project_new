@@ -1,6 +1,6 @@
 {
   "version": "2026-09-16",
-  "description": "Maya multi-turn golden source, DRAFT for review on #86 (map #81 G1-G9): five recorded conversations continued by the model, authored coverage of exclusions, caveats, persons, narrowing, refinement, eras, and references, and hand-written plot and director identification with verified ids.",
+  "description": "Maya multi-turn golden source (map #81, G1-G9): five recorded conversations continued past their verbatim openings, authored coverage of exclusions, caveats, persons, narrowing, refinement, eras and references, and hand-written plot and director identification with ids verified against the dataset. Reviewed on #86; promoted 2026-09-16.",
   "conversations": [
     {
       "id": "C01",
