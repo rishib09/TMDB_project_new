@@ -28,6 +28,12 @@ class ExperimentConfig(BaseModel):
         "same always-newest alias as the router)",
     )
     reasoning_effort: str = Field(default="low", description="Reasoning effort: none, low, medium, high")
+    routing_stack: Literal["v1", "v2"] = Field(
+        default="v1",
+        description="Routing Stack in force (#83): v1 = gated router (production); "
+        "v2 = LLM Understanding (not yet built). Swept by the evaluation "
+        "harness (--stack), flippable locally via MAYA_ROUTING_STACK — never a Lab knob.",
+    )
     temperature: float = Field(default=0.0, ge=0.0, le=1.0, description="Sampling temperature")
 
     # Retrieval & Indexing Knobs
