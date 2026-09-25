@@ -57,6 +57,7 @@ def _session():
     session.feedback_log = {}
     session.graph = _CountingGraph()
     session._graph_sig = "x"
+    session._thread_id = "k-test"  # #93: turn() sends the message + thread id
     session.ensure_graph = lambda: session.graph
     return session
 

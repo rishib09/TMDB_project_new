@@ -133,6 +133,7 @@ def _bare_session():
     session.last_movies = []
     session.rag_version = "test"
     session.feedback_log = {}
+    session._thread_id = "adv-test"  # #93: turn() sends the message + thread id
     return session
 
 

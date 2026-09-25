@@ -112,6 +112,22 @@ def test_thread_carries_preferences_and_probe_count_without_resent_state():
     assert second["filters_applied"]["genres"] == ["Horror"]
 
 
+def test_persistent_exclusions_accumulate_in_thread():
+    """D16 seam fix: decision exclusions must persist in-graph — the old
+    session-side add_turn merge no longer runs to feed them back."""
+    router = ScriptedRouter([
+        _decision(filters=MetadataFilterCriteria(excluded_genres=["Horror"])),
+        _decision(filters=MetadataFilterCriteria(year_min=1990)),
+    ])
+    graph = _graph(router, RecordingEngine([_movie(1, "A")]))
+    cfg = _cfg("excl-1")
+
+    graph.invoke({"messages": [HumanMessage(content="funny but no horror")]}, cfg)
+    graph.invoke({"messages": [HumanMessage(content="older movies")]}, cfg)
+
+    assert graph.get_state(cfg).values["session_preferences"].excluded_genres == ["Horror"]
+
+
 def test_threads_are_isolated():
     router = ScriptedRouter([_decision(mood="scary"), _decision()])
     graph = _graph(router, RecordingEngine())

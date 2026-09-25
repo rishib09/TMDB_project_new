@@ -160,16 +160,26 @@ def build_maya_graph(
         )
         # Guided narrowing (#22/#24): mood/audience extracted by the router
         # itself (open vocabulary), with the deterministic vocab as fallback.
-        signals = UserSessionPreferences(
-            preferred_mood=(decision.mood or "").strip(),
-            audience=(decision.audience or "").strip(),
-        )
-        if not signals.preferred_mood or not signals.audience:
+        mood = (decision.mood or "").strip()
+        audience = (decision.audience or "").strip()
+        if not mood or not audience:
             vocab = extract_probe_answers(state.current_query)
-            signals = UserSessionPreferences(
-                preferred_mood=signals.preferred_mood or vocab.preferred_mood,
-                audience=signals.audience or vocab.audience,
-            )
+            mood = mood or vocab.preferred_mood
+            audience = audience or vocab.audience
+        # #93/D16: persistent exclusions accumulate IN-GRAPH now — the old
+        # session-side add_turn merge fed them back as next-turn input,
+        # a loop the checkpointer severed. Without this, "no Tom Cruise"
+        # would be forgotten by the next turn.
+        signals = UserSessionPreferences(
+            preferred_mood=mood,
+            audience=audience,
+            excluded_genres=(
+                list(decision.filters.excluded_genres) if decision.filters else []
+            ),
+            excluded_actors=(
+                list(decision.filters.excluded_actors) if decision.filters else []
+            ),
+        )
         # #56-F1: era words in a ROUTED query ("show me old classic") must not
         # be lost while the funnel probes other axes. Gated on requires_rag so
         # non-film turns ("how old are you") never pollute preferences.

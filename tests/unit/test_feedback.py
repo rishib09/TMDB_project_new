@@ -136,6 +136,7 @@ def test_turn_log_carries_trace_id_and_rag_version(monkeypatch):
     session.feedback_log = {}
     session.rag_version = "v1_1_enriched"
     session.turn_log = []
+    session._thread_id = "fb-test"  # #93: turn() sends the message + thread id
     # skip ensure_graph()'s rebuild: sig matches → prebuilt graph below is used
     session._graph_sig = session._graph_signature()
     session.graph = build_maya_graph(
