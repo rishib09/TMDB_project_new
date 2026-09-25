@@ -168,7 +168,9 @@ class ConversationTurnResult(BaseModel):
     user: str
     expected_intent: str
     observed_intent: str
-    intent_correct: bool
+    #: None = the stack produced no reading this turn (v1 funnel-answer
+    #: turns never route, G2 stack-neutrality) — excluded from aggregates.
+    intent_correct: bool | None = None
     expected_path: str
     observed_path: str
     path_correct: bool

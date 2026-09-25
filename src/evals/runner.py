@@ -712,6 +712,7 @@ def _run_one(
             print(f"[{label}] skipped — collection `{target}` is not built", file=sys.stderr)
             return None
         from langchain_core.callbacks import UsageMetadataCallbackHandler  # noqa: F401 — proven import
+        from src.graph.orchestrator import build_maya_graph
         from src.maya.agent import MayaSynthesizer
         from src.maya.router import MayaRouter
         from src.maya.guardrails import SessionTokenLimiter
