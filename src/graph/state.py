@@ -91,3 +91,7 @@ class MayaGraphState(BaseModel):
     retrieved_movies: list[MovieRecord] = Field(default_factory=list)
     synthesis_usage: SynthesisUsage | None = None
     final_response: str = ""
+    #: #93 (Q3 O1): the FINAL filters the retrieve node passed the engine —
+    #: None = engine never ran this turn, {} = ran with zero filters (the
+    #: engine-invoked signal for the conversation-mode path adapter).
+    filters_applied: dict | None = None
