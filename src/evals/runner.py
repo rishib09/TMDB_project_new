@@ -836,7 +836,7 @@ def main(argv: list[str] | None = None) -> int:
         "--router-model", default=None,
         help="override config.router_model (routing-mode A/B, #29)",
     )
-    parser.add_argument("--synthesis_model", help="override config.synthesis_model (#89 sweep)")
+    parser.add_argument("--synthesis-model", help="override config.synthesis_model (#89 sweep)")
     parser.add_argument(
         "--router-pin", action="store_true",
         help="#89: keep router_model verbatim via OpenRouter even under ZAI_API_KEY",
