@@ -271,17 +271,17 @@ def test_judge_failure_is_fail_open_and_recorded():
 
 def test_session_cap_can_be_disabled_for_the_harness():
     """#93: the conversation driver spans 23 scripted conversations on one
-    graph — the per-user 15,000-token session cap would refuse every turn
-    after the first ~4 retrievals (the t9 phantom refusal in the smoke).
-    cap=None disables it; the default stays 15,000 for the live app."""
-    from src.maya.guardrails import SessionTokenLimiter, GuardrailVerdict
+    graph — a per-user session cap would refuse every turn after the first
+    few retrievals. cap=None disables it; the default stays $0.10 for the
+    live app (#39)."""
+    from src.maya.guardrails import SessionCostLimiter, GuardrailVerdict
 
-    unlimited = SessionTokenLimiter(cap=None)
+    unlimited = SessionCostLimiter(cap=None)
     for _ in range(10):
-        unlimited.record("m", 5_000, 5_000)  # 100K tokens accumulated
+        unlimited.record("m", 10_000, 0)  # 10 × $0.01 = the $0.10 cap itself
     assert unlimited.check_current().verdict is GuardrailVerdict.CLEAN
 
-    default = SessionTokenLimiter()
-    for _ in range(3):
-        default.record("m", 5_000, 5_000)  # 30K > 15,000
+    default = SessionCostLimiter()
+    for _ in range(11):
+        default.record("m", 10_000, 0)  # $0.11 accumulated — 11th call clears the cap
     assert default.check_current().verdict is GuardrailVerdict.BLOCKED

@@ -10,7 +10,7 @@ from src.maya.guardrails import (
     GuardrailVerdict,
     InjectionFilter,
     OffTopicPivot,
-    SessionTokenLimiter,
+    SessionCostLimiter,
 )
 
 
@@ -21,7 +21,7 @@ def injection_filter():
 
 @pytest.fixture
 def limiter():
-    return SessionTokenLimiter()
+    return SessionCostLimiter()
 
 
 # --- prompt injection: BLOCKED -------------------------------------------------
@@ -147,20 +147,20 @@ def test_pivot_never_leaks_system_instructions():
         assert "instructions" not in response.lower()
 
 
-# --- session token limiter -------------------------------------------------------
+# --- session cost limiter (#39) ----------------------------------------------------
 
 
 @pytest.mark.adversarial
 def test_session_under_cap_allowed(limiter):
     state = ConversationState()
-    state.session_tokens = 5_000
+    state.session_cost_usd = 0.01
     assert limiter.check(state).verdict == GuardrailVerdict.CLEAN
 
 
 @pytest.mark.adversarial
 def test_session_near_cap_flags_wrapup(limiter):
     state = ConversationState()
-    state.session_tokens = int(15_000 * 0.9)
+    state.session_cost_usd = 0.09  # ≥ 80% of the $0.10 cap
     result = limiter.check(state)
     assert result.verdict == GuardrailVerdict.SUSPICIOUS
     assert "wrap up" in result.reason.lower()
@@ -169,7 +169,7 @@ def test_session_near_cap_flags_wrapup(limiter):
 @pytest.mark.adversarial
 def test_session_at_cap_blocked(limiter):
     state = ConversationState()
-    state.session_tokens = 15_000
+    state.session_cost_usd = 0.10
     result = limiter.check(state)
     assert result.verdict == GuardrailVerdict.BLOCKED
     assert "new session" in result.reason.lower()

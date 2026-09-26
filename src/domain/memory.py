@@ -182,6 +182,7 @@ class ConversationState(BaseModel):
     session_preferences: UserSessionPreferences = Field(default_factory=UserSessionPreferences)
     rolling_summary: str = ""
     session_tokens: int = 0
+    session_cost_usd: float = 0.0  # #39: estimated spend — what the session gate blocks on
     probe_count: int = 0  # guided narrowing (#22): persists across turns, caps probing
     funnel_active: bool = False  # #23: next message belongs to the funnel
     offered_genre_options: list[str] = Field(default_factory=list)  # #25 pending genre picks
@@ -193,6 +194,7 @@ class ConversationState(BaseModel):
         retrieved_movies: list[MovieRecord],
         decision: QueryRoutingDecision | None = None,
         tokens_used: int = 0,
+        cost_usd: float = 0.0,
         turn_ref: int | None = None,
         window: int = MESSAGE_WINDOW,
     ) -> None:
@@ -239,6 +241,7 @@ class ConversationState(BaseModel):
             self.session_preferences = merge_preferences(self.session_preferences, incoming)
 
         self.session_tokens += tokens_used
+        self.session_cost_usd += cost_usd
 
         if len(self.messages) > window:
             self.messages = self.messages[-window:]
@@ -252,3 +255,4 @@ class ConversationState(BaseModel):
         self.session_preferences = UserSessionPreferences()
         self.rolling_summary = ""
         self.session_tokens = 0
+        self.session_cost_usd = 0.0

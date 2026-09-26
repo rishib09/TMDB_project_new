@@ -15,7 +15,7 @@ Building reliable Retrieval-Augmented Generation (RAG) systems on cheap, cost-ef
 
 A modular, observable RAG application and Evaluation Harness specialized in US theatrical releases from **1970 to 2026**, powered by cost-effective OpenRouter models, orchestrated via **LangGraph**, and deployed on **Hugging Face Spaces (Streamlit)**:
 - **"Maya" Conversational Film Curator**: Features deterministic intent routing (`GREETING`, `CAPABILITIES`, `SEMANTIC_SEARCH`, `ATTRIBUTE_FILTER`, `SUPERLATIVE_RANKING`, `NEGATION_EXCLUSION`, `OUT_OF_SCOPE`), multi-turn memory state, an **8-pillar transparent meta-system prompt**, and zero-hallucination Closed-World Assumption (CWA) grounding with dynamic movie poster rendering.
-- **Security & Budget Protection Layer**: Sanitizes prompt injection attempts, deflects off-topic queries with graceful persona pivots, enforces a 15,000 session token cap, and tracks a persistent $5.00/week budget ceiling in SQLite with friendly throttling.
+- **Security & Budget Protection Layer**: Sanitizes prompt injection attempts, deflects off-topic queries with graceful persona pivots, enforces a $0.10/session estimated-cost cap, and tracks a persistent $10.00/week budget ceiling in SQLite (Monday–Sunday UTC weeks) with friendly throttling.
 - **In-App User Feedback**: Native Streamlit `st.feedback("thumbs")` linked to `trace_id` and RAG version, mirrored to Langfuse via `langfuse.score()` and tracked in SQLite.
 - **Evaluation & Benchmark Dashboard**: Tracks quantitative Information Retrieval metrics (Hit Rate@K, MRR@K, Context Precision) and LLM-as-a-judge generation metrics (Faithfulness, Relevancy) across versioned milestones (`v1.0-baseline`, `v1.1-enriched-metadata`, `v1.2-bge-hybrid`).
 - **Observability & Trace Inspector**: Dual-mode telemetry pushing traces to Langfuse Cloud while rendering an in-app interactive DAG waterfall and span inspector in Streamlit.
@@ -73,7 +73,7 @@ A modular, observable RAG application and Evaluation Harness specialized in US t
 
 ### 4. Security, Budget & User Feedback
 - **Sanitizer & Deflection**: Regex input sanitizer + polite film-curator persona pivots for off-topic/adversarial prompts.
-- **Token Cap & Budget Ceiling**: 15,000 token limit per session + persistent $5.00/week expenditure ceiling in SQLite table `budget_tracker`.
+- **Cost Cap & Budget Ceiling**: $0.10 estimated-spend limit per session + persistent $10.00/week expenditure ceiling (Monday–Sunday, UTC) in SQLite table `budget_tracker`.
 - **User Feedback**: Native Streamlit `st.feedback("thumbs")` logged to SQLite and pushed to Langfuse via `langfuse.score()`.
 
 ### 5. Multi-Turn Conversational Memory & Fallbacks

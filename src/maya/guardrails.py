@@ -134,25 +134,28 @@ class OffTopicPivot:
         return template.format(topic_adj=topic_adj)
 
 
-class SessionTokenLimiter:
-    """Throttles sessions that exceed the hard token cap (issue #8: 15,000).
+class SessionCostLimiter:
+    """Throttles sessions that exceed the per-session cost cap (#39: $0.10).
 
     The #5 orchestrator wires ``record()`` after every synthesis call;
-    ``check()`` gates each turn in the graph's guard node.
+    ``check_current()`` gates each turn in the graph's guard node. Cost comes
+    from the blended ``estimate_cost`` table — the same estimate the weekly
+    tracker records, so session and weekly spend tell one story. Token
+    accounting itself stays live for metrics (#93); only the GATE is
+    dollar-based now.
     """
 
-    SESSION_CAP: ClassVar[int] = 15_000
+    SESSION_CAP_USD: ClassVar[float] = 0.10
     #: Below the cap but close — allow the turn, flag for wrap-up messaging.
-    THROTTLE_RATIO: ClassVar[float] = 0.85
+    THROTTLE_RATIO: ClassVar[float] = 0.80
 
-    def __init__(self, cap: int | None = SESSION_CAP) -> None:
+    def __init__(self, cap: float | None = SESSION_CAP_USD) -> None:
         """``cap=None`` disables the session cap entirely (#93): the evaluation
         driver spans 23 scripted conversations on one graph instance — a
         per-user-session cap has no meaning there, and the weekly budget
-        tracker gates the run instead. Callers elsewhere get the unchanged
-        15,000 default."""
+        tracker gates the run instead. Callers elsewhere get the $0.10 default."""
         self._cap = cap
-        self._used_tokens = 0
+        self._cost_usd = 0.0
 
     #: Promised #8 interface: record(model, prompt, completion) -> BudgetStatus.
     #: BudgetStatus aliases GuardrailVerdict (CLEAN / SUSPICIOUS / BLOCKED map
@@ -161,43 +164,41 @@ class SessionTokenLimiter:
 
     def record(
         self, model: str, prompt_tokens: int, completion_tokens: int
-    ) -> "SessionTokenLimiter.BudgetStatus":
-        """Accumulates one LLM call's usage and returns the resulting budget state."""
-        del model  # per-model accounting is #6 territory; the cap is per-session
-        self._used_tokens += prompt_tokens + completion_tokens
-        return self.check_used(self._used_tokens).verdict
+    ) -> "SessionCostLimiter.BudgetStatus":
+        """Accumulates one LLM call's estimated cost and returns the resulting budget state."""
+        self._cost_usd += estimate_cost(model, prompt_tokens, completion_tokens)
+        return self.check_used(self._cost_usd).verdict
 
     def check(self, state: ConversationState) -> GuardrailResult:
         """Verdict for allowing another turn on this session."""
-        return self.check_used(state.session_tokens)
+        return self.check_used(state.session_cost_usd)
 
     def check_current(self) -> GuardrailResult:
-        """Verdict for the limiter's own accumulated usage (graph guard node)."""
-        return self.check_used(self._used_tokens)
+        """Verdict for the limiter's own accumulated cost (graph guard node)."""
+        return self.check_used(self._cost_usd)
 
-    def check_used(self, used_tokens: int) -> GuardrailResult:
-        """Verdict for a raw token count (shared by check() and record())."""
+    def check_used(self, cost_usd: float) -> GuardrailResult:
+        """Verdict for a raw dollar amount (shared by check() and record())."""
         if self._cap is None:  # #93: harness mode — the weekly tracker gates
             return GuardrailResult(
                 verdict=GuardrailVerdict.CLEAN, sanitized_query="", reason="session cap disabled",
             )
-        used = used_tokens
-        if used >= self.SESSION_CAP:
+        if cost_usd >= self._cap:
             return GuardrailResult(
                 verdict=GuardrailVerdict.BLOCKED,
                 sanitized_query="",
                 reason=(
-                    f"Session token budget exhausted ({used}/{self.SESSION_CAP}). "
+                    f"Session budget exhausted (${cost_usd:.2f}/${self._cap:.2f}). "
                     "Please start a new session."
                 ),
             )
-        if used >= self.SESSION_CAP * self.THROTTLE_RATIO:
+        if cost_usd >= self._cap * self.THROTTLE_RATIO:
             return GuardrailResult(
                 verdict=GuardrailVerdict.SUSPICIOUS,
                 sanitized_query="",
                 matched_patterns=["session_near_cap"],
                 reason=(
-                    f"Session nearing token cap ({used}/{self.SESSION_CAP}) — "
+                    f"Session nearing cost cap (${cost_usd:.2f}/${self._cap:.2f}) — "
                     "wrap up gracefully."
                 ),
             )

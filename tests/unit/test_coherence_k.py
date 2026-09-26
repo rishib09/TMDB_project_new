@@ -14,7 +14,7 @@ from src.domain.memory import (
 from src.domain.routing import IntentType, QueryRoutingDecision
 from src.graph.orchestrator import _no_retrieval_steer, build_maya_graph
 from src.graph.state import SynthesisUsage
-from src.maya.guardrails import SessionTokenLimiter
+from src.maya.guardrails import SessionCostLimiter
 from src.maya.probing import _is_confirmation, canonical_mood, is_fresh_start
 from src.observability.tracer import DualModeObservabilityManager
 from src.ui.chat_tab import resolve_turn_row
@@ -229,7 +229,7 @@ def test_cwa_gate_replaces_hallucinated_no_retrieval_response():
         FakeEngine(),
         _LyingSynthesizer(),
         DualModeObservabilityManager(session_id="g"),
-        limiter=SessionTokenLimiter(),
+        limiter=SessionCostLimiter(),
     )
     out = graph.invoke({"messages": [HumanMessage(content="hi")]})
     response = out["final_response"]
@@ -245,7 +245,7 @@ def test_cwa_gate_never_fires_on_clean_no_retrieval_turns():
         FakeEngine(),
         FakeSynthesizer(response="Hi there! What are you in the mood for?"),
         DualModeObservabilityManager(session_id="g2"),
-        limiter=SessionTokenLimiter(),
+        limiter=SessionCostLimiter(),
     )
     out = graph.invoke({"messages": [HumanMessage(content="hi")]})
     assert out["final_response"] == "Hi there! What are you in the mood for?" or \
@@ -261,7 +261,7 @@ def test_cwa_gate_never_fires_on_retrieval_turns():
         FakeEngine([_movie(title="The Shawshank Redemption")]),
         _LyingSynthesizer(),
         DualModeObservabilityManager(session_id="g3"),
-        limiter=SessionTokenLimiter(),
+        limiter=SessionCostLimiter(),
     )
     # >5 words: carries its own signal, bypasses the #29 genre-probe gate
     out = graph.invoke({
@@ -282,7 +282,7 @@ def test_funnel_survives_non_pick_reply_while_options_pending():
         FakeEngine(),
         FakeSynthesizer(),
         DualModeObservabilityManager(session_id="np"),
-        limiter=SessionTokenLimiter(),
+        limiter=SessionCostLimiter(),
     )
     out = graph.invoke({
         "messages": [HumanMessage(content="honestly no idea, just pick for me")],

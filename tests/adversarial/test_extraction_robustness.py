@@ -23,13 +23,13 @@ class ExplodingRouter:
 def test_extractor_failure_falls_back_to_vocab():
     """Router down mid-funnel → vocab still understands 'funny for kids'."""
     from src.graph.orchestrator import build_maya_graph
-    from src.maya.guardrails import SessionTokenLimiter
+    from src.maya.guardrails import SessionCostLimiter
     from tests.unit.test_orchestrator import FakeEngine, FakeSynthesizer
 
     graph = build_maya_graph(
         ExperimentConfig(), ExplodingRouter(), FakeEngine(movies=[]),
         FakeSynthesizer(), DualModeObservabilityManager(session_id="t"),
-        SessionTokenLimiter(),
+        SessionCostLimiter(),
     )
     out = graph.invoke({
         "messages": [HumanMessage(content="something funny for the kids")],
@@ -46,7 +46,7 @@ def test_extractor_failure_fallthrough_never_crashes():
     """Router degraded (heuristic fallback, per MayaRouter contract) + no vocab
     hit → clean fallthrough to normal routing."""
     from src.graph.orchestrator import build_maya_graph
-    from src.maya.guardrails import SessionTokenLimiter
+    from src.maya.guardrails import SessionCostLimiter
     from tests.unit.test_orchestrator import FakeEngine, FakeSynthesizer
 
     class DegradedRouter:
@@ -62,7 +62,7 @@ def test_extractor_failure_fallthrough_never_crashes():
     graph = build_maya_graph(
         ExperimentConfig(), DegradedRouter(), FakeEngine(movies=[]),
         FakeSynthesizer(), DualModeObservabilityManager(session_id="t"),
-        SessionTokenLimiter(),
+        SessionCostLimiter(),
     )
     out = graph.invoke({
         "messages": [HumanMessage(content="what about the 1990s")],
@@ -176,13 +176,13 @@ def test_genre_match_any_is_the_legacy_default(db):
 def test_confirmation_still_retrieves_without_extractor_call():
     """'go ahead' after confirm → confirmation check fires BEFORE the router."""
     from src.graph.orchestrator import build_maya_graph
-    from src.maya.guardrails import SessionTokenLimiter
+    from src.maya.guardrails import SessionCostLimiter
     from tests.unit.test_orchestrator import FakeEngine, FakeSynthesizer
 
     graph = build_maya_graph(
         ExperimentConfig(), ExplodingRouter(), FakeEngine(movies=[]),
         FakeSynthesizer(), DualModeObservabilityManager(session_id="t"),
-        SessionTokenLimiter(),
+        SessionCostLimiter(),
     )
     out = graph.invoke({
         "messages": [HumanMessage(content="go ahead")],

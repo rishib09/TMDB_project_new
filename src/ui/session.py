@@ -27,7 +27,7 @@ from src.indexing.embeddings import EmbeddingProvider, provider_from_profile
 from src.indexing.embeddings import collection_name, provider_from_profile
 from src.indexing.vector_store import MovieVectorStore
 from src.maya.agent import MayaSynthesizer
-from src.maya.guardrails import SessionTokenLimiter, WeeklyBudgetTracker
+from src.maya.guardrails import SessionCostLimiter, WeeklyBudgetTracker
 from src.maya.probing import preference_chips
 from src.maya.router import MayaRouter
 from src.observability.tracer import DualModeObservabilityManager
@@ -84,7 +84,7 @@ class MayaSession:
         self.config = ExperimentConfig()
         self.conversation = ConversationState()
         self.tracer = DualModeObservabilityManager(session_id=f"ui-{datetime.now(UTC):%H%M%S}")
-        self.limiter = SessionTokenLimiter()
+        self.limiter = SessionCostLimiter()
         self.db = shared_database()  # process-wide shared handle (#17): engine + budget sink
         self.budget_tracker = WeeklyBudgetTracker(self.db)  # weekly $ ceiling (#8)
         self.view = "Chat"  # sidebar navigation: Chat | Evals | Traces
@@ -225,6 +225,7 @@ class MayaSession:
             rag_version=self.rag_version,
             new_traces=slice_new_traces(ring_before, self.tracer.traces()),
             prev_tokens=self.conversation.session_tokens,
+            prev_cost=self.conversation.session_cost_usd,
         )
         row["recalled"] = recalled  # #48: replayed input, evaluated fresh
         movies = out.get("retrieved_movies", [])
@@ -245,6 +246,7 @@ class MayaSession:
         self.conversation.add_turn(
             query, row["response"], movies, out.get("routing_decision"),
             tokens_used=row["tokens"],
+            cost_usd=row["cost_usd"],
             turn_ref=len(self.turn_log),  # #26-K: identity join, stamped pre-append
             window=self.config.message_window,  # #93: read model trims with the knob
         )
@@ -272,6 +274,7 @@ class MayaSession:
         rag_version: str,
         new_traces: list[dict],
         prev_tokens: int,
+        prev_cost: float = 0.0,
     ) -> dict:
         """Pure, atomic turn_log row (#26-A) — unit-testable without a graph.
 
@@ -285,6 +288,7 @@ class MayaSession:
         stage = out.get("turn_stage", "")
         response = out["final_response"]
         tokens = max(out.get("session_tokens", 0) - prev_tokens, 0)
+        cost_usd = max(out.get("session_cost_usd", 0.0) - prev_cost, 0.0)
         route_traces = [t for t in new_traces if t["node"] == "route"]
         if decision is None:
             intent = f"FUNNEL_{(stage or 'probe').upper()}"
@@ -307,6 +311,7 @@ class MayaSession:
             "attempts": len(route_traces),
             "n_movies": len(out.get("retrieved_movies", [])),
             "tokens": tokens,
+            "cost_usd": cost_usd,
             "response": response,
             "probe": any(t["node"] == "probe" for t in new_traces),
             "narrowing": preference_chips(prefs) if prefs else [],

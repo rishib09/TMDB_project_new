@@ -93,7 +93,7 @@ def test_probe_count_cannot_extend_budget():
 def test_graph_full_probe_flow_bounded_and_deterministic():
     """End-to-end offline: broad → probe → broad → probe → probe cap reached."""
     from src.graph.orchestrator import build_maya_graph
-    from src.maya.guardrails import SessionTokenLimiter
+    from src.maya.guardrails import SessionCostLimiter
     from src.observability.tracer import DualModeObservabilityManager
     from tests.unit.test_orchestrator import FakeEngine, FakeRouter, FakeSynthesizer
 
@@ -101,7 +101,7 @@ def test_graph_full_probe_flow_bounded_and_deterministic():
     synth = FakeSynthesizer()
     graph = build_maya_graph(
         ExperimentConfig(), FakeRouter(decisions), FakeEngine(movies=[]),
-        synth, DualModeObservabilityManager(session_id="t"), SessionTokenLimiter(),
+        synth, DualModeObservabilityManager(session_id="t"), SessionCostLimiter(),
     )
     state = {"probe_count": 0}
     probe_turns = 0
@@ -148,7 +148,7 @@ def test_funnel_reply_can_never_pivot_out_of_scope():
 def test_confirm_then_retrieve_uses_funnel_query_not_router():
     """'go ahead' after confirm → deterministic retrieval, router skipped."""
     from src.graph.orchestrator import build_maya_graph
-    from src.maya.guardrails import SessionTokenLimiter
+    from src.maya.guardrails import SessionCostLimiter
     from src.observability.tracer import DualModeObservabilityManager
     from tests.unit.test_orchestrator import FakeEngine, FakeSynthesizer
 
@@ -160,7 +160,7 @@ def test_confirm_then_retrieve_uses_funnel_query_not_router():
     graph = build_maya_graph(
         ExperimentConfig(), ExplodingRouter(), FakeEngine(movies=[]),
         FakeSynthesizer(), DualModeObservabilityManager(session_id="t"),
-        SessionTokenLimiter(),
+        SessionCostLimiter(),
     )
     out = graph.invoke({
         "messages": [HumanMessage(content="go ahead")],
@@ -255,14 +255,14 @@ def test_negated_solo_phrasings_do_not_extract():
 
 def _funnel_graph(router_decisions, engine):
     from src.graph.orchestrator import build_maya_graph
-    from src.maya.guardrails import SessionTokenLimiter
+    from src.maya.guardrails import SessionCostLimiter
     from src.observability.tracer import DualModeObservabilityManager
     from tests.unit.test_orchestrator import FakeRouter, FakeSynthesizer
 
     return build_maya_graph(
         ExperimentConfig(), FakeRouter(router_decisions), engine,
         FakeSynthesizer(), DualModeObservabilityManager(session_id="t"),
-        SessionTokenLimiter(),
+        SessionCostLimiter(),
     )
 
 

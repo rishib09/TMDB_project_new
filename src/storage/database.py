@@ -2,10 +2,11 @@
 
 import json
 import sqlite3
-from datetime import date, timedelta
+from datetime import date
 from pathlib import Path
 from typing import Any
 
+from src.domain.budget import utc_today, week_bounds
 from src.domain.movie import MovieRecord
 from src.domain.routing import MetadataFilterCriteria
 
@@ -135,14 +136,29 @@ class MovieDatabase:
             return []
 
     def weekly_spend_usd(self, reference: date | None = None) -> float:
-        """Sum of cost_usd for the ISO week (Mon–Sun) containing ``reference``."""
-        ref = reference or date.today()
-        week_start = ref - timedelta(days=ref.weekday())
+        """Sum of cost_usd for the ISO week (Mon–Sun) containing ``reference``.
+
+        Both bounds (#39): the upper bound keeps future-dated rows (clock
+        skew, hostile entries) out, and a past ``reference`` returns that
+        week alone instead of everything since its Monday.
+        """
+        ref = reference or utc_today()
+        week_start, week_end = week_bounds(ref)
         with self._get_connection() as conn:
             row = conn.execute(
                 "SELECT COALESCE(SUM(cost_usd), 0) FROM budget_tracker "
-                "WHERE date_str >= ?",
-                (week_start.isoformat(),),
+                "WHERE date_str >= ? AND date_str <= ?",
+                (week_start.isoformat(), week_end.isoformat()),
+            ).fetchone()
+        return float(row[0])
+
+    def daily_spend_usd(self, reference: date | None = None) -> float:
+        """Sum of cost_usd for the single day ``reference`` (caption: today)."""
+        ref = reference or utc_today()
+        with self._get_connection() as conn:
+            row = conn.execute(
+                "SELECT COALESCE(SUM(cost_usd), 0) FROM budget_tracker WHERE date_str = ?",
+                (ref.isoformat(),),
             ).fetchone()
         return float(row[0])
 

@@ -65,6 +65,9 @@ class MayaGraphState(BaseModel):
     # 5. Session Metrics & Summary
     rolling_summary: str = ""
     session_tokens: Annotated[int, operator.add] = 0
+    #: #39: per-session estimated spend — the value the session gate blocks on.
+    #: Same currency as the weekly tracker (blended estimate_cost).
+    session_cost_usd: Annotated[float, operator.add] = 0.0
 
     # Transient per-turn pipeline artifacts
     current_query: str = ""  # sanitized by guard_input; consumed by route/retrieve/synthesize
