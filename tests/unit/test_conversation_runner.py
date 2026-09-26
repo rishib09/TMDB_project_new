@@ -240,3 +240,30 @@ def test_message_window_is_a_config_tunable():
     assert cfg.message_window == MESSAGE_WINDOW == 10
     cfg2 = ExperimentConfig(message_window=4)
     assert cfg2.message_window == 4
+
+
+def test_judge_failure_is_fail_open_and_recorded():
+    """Q19 (round-5 hardening): a malformed judge response must not kill the
+    run — the exact crash the first baseline attempt hit (truncated judge
+    JSON, the #74 class). Fail-open, recorded on the turn row."""
+    class ExplodingJudge:
+        def judge_faithfulness(self, query, response, movies):
+            raise ValueError("Invalid JSON: EOF while parsing an object")
+
+    # golden with a relevant-ids turn (t1) so the judge is invoked
+    golden = _golden().model_copy(update={"conversations": [
+        _golden().conversations[0].model_copy(update={"turns": [
+            t.model_copy(update={"expect": t.expect.model_copy(
+                deep=True, update={"relevant_movie_ids": [1]},
+            )}) for t in _golden().conversations[0].turns
+        ]}),
+    ]})
+    runner = _runner()
+    runner.judge = ExplodingJudge()
+    summary = runner.run_conversations(golden, "judge-fail-test")
+
+    t1 = summary.per_conversation[0].per_turn[0]
+    assert t1.hit_rate is not None      # IR metrics still computed
+    assert "EOF while parsing" in (t1.constraint_detail.get("judge_error") or "")
+    assert summary.judge_turns == 0     # no scores counted from the failure
+    assert summary.n_turns == 4         # the run itself completed

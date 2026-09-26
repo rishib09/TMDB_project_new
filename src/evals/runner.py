@@ -388,15 +388,29 @@ class BenchmarkRunner:
                 )
                 hit_rate = None
                 faith = None
+                judge_error = None
                 if expect.relevant_movie_ids:  # Q15: judge + IR only here
                     hit_rate = hit_rate_at_k(retrieved_ids, expect.relevant_movie_ids, K)
                     if self.judge is not None:
-                        faith = self.judge.judge_faithfulness(
-                            turn.user,
-                            strip_formatting(out.get("final_response", "")),
-                            out.get("retrieved_movies", []),
-                        ).score
-                        faithfulness_scores.append(faith)
+                        try:
+                            faith = self.judge.judge_faithfulness(
+                                turn.user,
+                                strip_formatting(out.get("final_response", "")),
+                                out.get("retrieved_movies", []),
+                            ).score
+                            faithfulness_scores.append(faith)
+                        except Exception as exc:  # noqa: BLE001 — judge failure is
+                            # fail-open, never fatal (Q19): malformed judge JSON
+                            # must not kill the run — recorded, turn continues.
+                            # The truncation class is #74's missing max_tokens cap.
+                            judge_error = str(exc)[:200]
+                            print(
+                                f"[judge] fail-open {convo.id} t{turn.n}: {judge_error}",
+                                file=sys.stderr,
+                            )
+
+                if judge_error:  # fail-open, on the record (AGENTS.md)
+                    detail = {**detail, "judge_error": judge_error}
 
                 row = ConversationTurnResult(
                     n=turn.n,
