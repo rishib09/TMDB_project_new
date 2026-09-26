@@ -109,7 +109,7 @@ class MayaSynthesizer:
         response = self._llm.invoke(messages)
         usage_meta = response.usage_metadata or {}
         usage = SynthesisUsage(
-            model=self.config.synthesis_model,
+            model=self._endpoint.wire_model,  # #97: wire id, so budget pricing hits the right provider row
             prompt_tokens=usage_meta.get("input_tokens", 0),
             completion_tokens=usage_meta.get("output_tokens", 0),
         )

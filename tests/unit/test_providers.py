@@ -88,3 +88,33 @@ def test_endpoint_is_frozen():
     ep = resolve_chat_endpoint("glm-5.3-flash", zai_api_key="zk1")
     with pytest.raises(Exception):
         ep.wire_model = "tampered"  # type: ignore[misc]
+
+
+def test_synthesis_usage_reports_wire_model(monkeypatch):
+    """#97 defect: budget attribution must carry the WIRE model, not the config id.
+
+    Under a z.ai key the config id is google/gemini-3.5-flash-lite but the call
+    is served by glm-5.3-flash — pricing (estimate_cost) keys off this string.
+    """
+    import os
+    import types
+
+    from src.domain.config import ExperimentConfig
+    from src.maya.agent import MayaSynthesizer
+
+    monkeypatch.setenv("ZAI_API_KEY", "zk1")
+    synth = MayaSynthesizer(ExperimentConfig())  # env-driven: ZAI key set, no explicit pin
+    assert synth._endpoint.wire_model == "glm-5.3-flash"  # swapped, not the config id
+
+    fake_response = types.SimpleNamespace(
+        usage_metadata={"input_tokens": 10, "output_tokens": 5}, text="ok"
+    )
+    monkeypatch.setattr(type(synth._llm), "invoke", lambda self, _messages: fake_response)
+    from src.domain.routing import QueryRoutingDecision
+
+    decision = QueryRoutingDecision(
+        intent="SEMANTIC_SEARCH", confidence=0.9,
+        standalone_query="a sci-fi movie", requires_rag=True,
+    )
+    _, usage = synth.synthesize("a sci-fi movie", decision, [], [])
+    assert usage.model == "glm-5.3-flash"
