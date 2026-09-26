@@ -23,7 +23,7 @@ from src.domain.movie import MovieRecord
 from src.domain.routing import QueryRoutingDecision
 from src.graph.state import SynthesisUsage
 from src.maya.prompts import build_system_prompt
-from src.maya.router import OPENROUTER_BASE_URL
+from src.maya.providers import DEFAULT_ZAI_BASE_URL, resolve_chat_endpoint
 
 TMDB_POSTER_BASE = "https://image.tmdb.org/t/p/w500"
 _CWA_TITLE_PATTERN = re.compile(r"\*\*(.+?)\s*\(\d{4}\)\*\*")
@@ -74,10 +74,17 @@ class MayaSynthesizer:
 
     def __init__(self, config: ExperimentConfig, api_key: str | None = None) -> None:
         self.config = config
+        self._endpoint = resolve_chat_endpoint(
+            config.synthesis_model,
+            zai_model=config.zai_model,
+            zai_api_key=os.getenv("ZAI_API_KEY") if api_key is None else None,
+            openrouter_api_key=api_key or os.getenv("OPENROUTER_API_KEY"),
+            zai_base_url=os.getenv("ZAI_BASE_URL") or DEFAULT_ZAI_BASE_URL,
+        )
         self._llm = ChatOpenAI(
-            model=config.synthesis_model,
-            base_url=OPENROUTER_BASE_URL,
-            api_key=api_key or os.getenv("OPENROUTER_API_KEY"),
+            model=self._endpoint.wire_model,
+            base_url=self._endpoint.base_url,
+            api_key=self._endpoint.api_key,
             temperature=config.temperature,
             # #93: bounded calls — see the router's note; D17 client ownership.
             request_timeout=120,

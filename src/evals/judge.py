@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field
 
 from src.domain.config import ExperimentConfig
 from src.domain.movie import MovieRecord
-from src.maya.router import OPENROUTER_BASE_URL
+from src.maya.providers import DEFAULT_ZAI_BASE_URL, resolve_chat_endpoint
 
 _FAITHFULNESS_PROMPT = """You are a strict evaluation judge. Given a USER QUERY, an
 ASSISTANT RESPONSE about movies, and the RETRIEVED CONTEXT (the only movies the
@@ -70,10 +70,18 @@ class MayaJudge:
 
     def __init__(self, config: ExperimentConfig, api_key: str | None = None) -> None:
         self.config = config
+        # the judge goes through the same seam; its llama id is not in the
+        # swappable family, so the endpoint is always OpenRouter (#97 guard)
+        self._endpoint = resolve_chat_endpoint(
+            config.judge_model,
+            zai_api_key=os.getenv("ZAI_API_KEY") if api_key is None else None,
+            openrouter_api_key=api_key or os.getenv("OPENROUTER_API_KEY"),
+            zai_base_url=os.getenv("ZAI_BASE_URL") or DEFAULT_ZAI_BASE_URL,
+        )
         self._llm = ChatOpenAI(
-            model=config.judge_model,
-            base_url=OPENROUTER_BASE_URL,
-            api_key=api_key or os.getenv("OPENROUTER_API_KEY"),
+            model=self._endpoint.wire_model,
+            base_url=self._endpoint.base_url,
+            api_key=self._endpoint.api_key,
             temperature=0.0,
             # #93: bounded calls — see the router's note; D17 client ownership.
             request_timeout=120,
