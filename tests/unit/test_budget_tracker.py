@@ -126,3 +126,8 @@ def test_record_and_verdict_at_cap_block_next_turn(db):
     db.record_budget_entry(date.today().isoformat(), 10.00, 1, "any")
     assert tracker.current_verdict() is GuardrailVerdict.BLOCKED
     assert tracker.record("meta-llama/llama-3.2-3b-instruct", 10, 10) is GuardrailVerdict.BLOCKED
+
+def test_estimate_cost_glm_row_pinned():
+    # #97: glm-5.3-flash @ $0.25/1M blended (z.ai list 0.15 in / 0.50 out)
+    assert estimate_cost("glm-5.3-flash", 1_000_000, 0) == pytest.approx(0.25)
+    assert estimate_cost("z-ai/glm-5.3-flash", 500_000, 500_000) == pytest.approx(0.25)

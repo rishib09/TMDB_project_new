@@ -225,6 +225,9 @@ MODEL_PRICES_PER_MTOK: ClassVar[list[tuple[str, float]]] = [
     ("llama-3.2-3b", 0.06),
     ("llama-3.3-70b", 0.20),
     ("flash-lite", 0.12),
+    # z.ai list $0.15/M in · $0.50/M out (#97); blended estimate. The same
+    # row matches the OpenRouter fallback id z-ai/glm-5.3-flash (similar rate).
+    ("glm-5.3-flash", 0.25),
 ]
 DEFAULT_PRICE_PER_MTOK: ClassVar[float] = 1.00
 

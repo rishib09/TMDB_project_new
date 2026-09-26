@@ -17,6 +17,7 @@ from src.domain.routing import (
     SuperlativeCriteria,
 )
 from src.maya.agent import MayaSynthesizer
+from src.maya.providers import OPENROUTER_BASE_URL, ProviderEndpoint
 
 pytestmark = pytest.mark.unit
 
@@ -66,6 +67,12 @@ def synthesizer(monkeypatch):
     synth = MayaSynthesizer.__new__(MayaSynthesizer)
     synth.config = ExperimentConfig()
     synth._llm = fake
+    # #97: real __init__ resolves this via the provider seam; the stub pins
+    # OpenRouter so wire model == config id (what these tests assert).
+    synth._endpoint = ProviderEndpoint(
+        base_url=OPENROUTER_BASE_URL, api_key=None,
+        wire_model=synth.config.synthesis_model, provider="openrouter",
+    )
     return synth
 
 
