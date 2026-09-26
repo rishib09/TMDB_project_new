@@ -825,6 +825,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--limit", type=int, default=None, help="first N queries (smoke runs)")
     parser.add_argument("--push-langfuse", action="store_true")
     parser.add_argument(
+        "--no-langfuse", action="store_true",
+        help="strip LANGFUSE keys before anything runs: local trace ring only. "
+        "A dead/slow Langfuse endpoint must never stall a baseline run "
+        "(observed: OTel exporter DNS failure + rate-limit backoffs).",
+    )
+    parser.add_argument(
         "--router-model", default=None,
         help="override config.router_model (routing-mode A/B, #29)",
     )
@@ -837,6 +843,12 @@ def main(argv: list[str] | None = None) -> int:
         help="run the 6 ADR 0008 column×profile cells (= --sweep embedding_combo)",
     )
     args = parser.parse_args(argv)
+
+    if args.no_langfuse:  # before ANY tracer is constructed: local ring only
+        os.environ.pop("LANGFUSE_PUBLIC_KEY", None)
+        os.environ.pop("LANGFUSE_SECRET_KEY", None)
+        os.environ.pop("LANGFUSE_HOST", None)
+        print("[trace] cloud disabled — local ring only (--no-langfuse)")
 
     queries = load_dataset(args.dataset)
     if args.limit:
