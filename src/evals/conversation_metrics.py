@@ -69,16 +69,22 @@ def observed_path_v1(out: dict) -> str:
 
     ``filters_applied`` is the engine-invoked signal: non-None means the
     retrieve node ran, **even with 0 rows** (#21: a 0-row retrieve must not
-    read as an ask).
+    read as an ask). ``turn_stage`` is checked BEFORE the decision branches:
+    a routed turn that ends in a probe (decision set, stage "probe") is an
+    ask, not a retrieve — the smoke run's C01 t1 false failure.
     """
     guard = out.get("guardrail_result")
     if guard is not None and getattr(guard, "verdict", None) is GuardrailVerdict.BLOCKED:
         return "refuse"
     if out.get("filters_applied") is not None:
         return "retrieve"
+    if out.get("turn_stage") in {"probe", "confirm", "confirm_genres"}:
+        return "ask"  # deterministic funnel stage ended the turn
+        # ("fallthrough" is absent: routing continues past the funnel, so the
+        # decision branches below decide that turn)
     decision = out.get("routing_decision")
     if decision is None:
-        return "ask"  # funnel probe/confirm/genre-confirm turn
+        return "ask"  # funnel-owned turn, router never ran
     if decision.intent in {IntentType.GREETING, IntentType.CAPABILITIES}:
         return "converse"
     if decision.intent is IntentType.OUT_OF_SCOPE:

@@ -208,7 +208,6 @@ class MayaSession:
             # #48 telemetry: recall usage must be observable (ADR 0009) — the
             # evidence base for ever revisiting a latency cache.
             self.tracer.record_local("recall", {"query": query})
-        prev_tokens = self.conversation.session_tokens
         out = graph.invoke(
             {"messages": [HumanMessage(content=query)]},
             # cloud tracing was silently inactive in the UI before #9 — wired

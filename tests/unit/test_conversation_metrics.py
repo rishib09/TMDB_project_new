@@ -120,10 +120,21 @@ def test_observed_path_v1_mapping():
     assert observed_path_v1({
         "filters_applied": {}, "routing_decision": _decision(), "retrieved_movies": [],
     }) == "retrieve"
-    # funnel probe turn: no decision, no engine
+    # routed turn that ENDED in a probe: decision set, stage probe, no engine —
+    # the smoke run's C01 t1 false failure (spec review P1)
+    assert observed_path_v1({
+        "routing_decision": _decision(), "turn_stage": "probe",
+        "filters_applied": None, "final_response": "What mood?",
+    }) == "ask"
+    # funnel-owned turn: no decision, no engine
     assert observed_path_v1({
         "routing_decision": None, "turn_stage": "probe", "final_response": "What mood?",
     }) == "ask"
+    # fallthrough must NOT read as ask — routing continues and decides
+    assert observed_path_v1({
+        "routing_decision": _decision(IntentType.OUT_OF_SCOPE, requires_rag=False),
+        "turn_stage": "fallthrough", "filters_applied": None,
+    }) == "pivot"
     assert observed_path_v1({
         "routing_decision": _decision(IntentType.OUT_OF_SCOPE, requires_rag=False),
     }) == "pivot"

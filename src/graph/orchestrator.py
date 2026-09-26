@@ -549,18 +549,20 @@ def build_maya_graph(
             return "funnel"
         return "route"
 
-    def route_after_funnel(state: MayaGraphState) -> Literal["route", "retrieve", "__end__"]:
+    def route_after_funnel(state: MayaGraphState) -> Literal["route", "retrieve", "trim"]:
         """#23/#25: probe & confirm responses END the turn — never re-route.
 
         Walkthrough-defect fix: without the END branch the deterministic
         probe/confirm/genre-confirmation response fell through to ``route``,
         letting a second routing pass overwrite it (the 'edge of the seat'
-        GREETING overwrite). Fallthrough still routes on.
+        GREETING overwrite). Fallthrough still routes on. Deterministic turns
+        route to ``trim`` (#93): every terminal path passes the window trim,
+        funnel turns included.
         """
         if state.routing_decision is not None:  # funnel confirmed retrieval
             return "retrieve"
         if state.final_response and state.funnel_active:  # probe/confirm ready
-            return END
+            return "trim"
         return "route"  # fallthrough — normal routing takes over
 
     def route_after_router(state: MayaGraphState) -> Literal["route", "retrieve", "synthesize", "pivot", "probe"]:
@@ -591,9 +593,13 @@ def build_maya_graph(
             return "probe"
         return "retrieve"
 
+    def trim_node(state: MayaGraphState) -> dict:
+        """#93/D16: the window rides Experiment Config (ADR 0004)."""
+        return trim_messages(state, config.message_window)
+
     graph = StateGraph(MayaGraphState)
     graph.add_node("begin_turn", begin_turn_node)
-    graph.add_node("trim", trim_window_node)
+    graph.add_node("trim", trim_node)
     graph.add_node("guard_input", guard_input_node)
     graph.add_node("route", route_node)
     graph.add_node("retrieve", retrieve_node)
@@ -632,8 +638,19 @@ def _refusal_text(reason: str) -> str:
 #: Echo cap for the zero-retrieval response — a hostile query must not be
 #: able to balloon the deterministic reply.
 
-#: #93/D16: the conversation message window kept inside the thread.
-MESSAGE_WINDOW = 10
+#: #93/D16: the conversation message window kept inside the thread. The
+#: tunable lives on ExperimentConfig.message_window; this is the pure helper
+#: the trim node calls (module-level for testability).
+
+
+def trim_messages(state: MayaGraphState, window: int) -> dict:
+    """Keeps the last ``window`` messages inside the thread.
+
+    ``add_messages`` resolves ``RemoveMessage`` by id, so the window is
+    maintained by the same reducer that appends — no separate list juggling.
+    """
+    overflow = state.messages[: max(len(state.messages) - window, 0)]
+    return {"messages": [RemoveMessage(id=m.id) for m in overflow if m.id]}
 
 
 def begin_turn_node(state: MayaGraphState) -> dict:
@@ -658,14 +675,6 @@ def begin_turn_node(state: MayaGraphState) -> dict:
     }
 
 
-def trim_window_node(state: MayaGraphState) -> dict:
-    """#93/D16: keeps the last MESSAGE_WINDOW messages inside the thread.
-
-    ``add_messages`` resolves ``RemoveMessage`` by id, so the window is
-    maintained by the same reducer that appends — no separate list juggling.
-    """
-    overflow = state.messages[: max(len(state.messages) - MESSAGE_WINDOW, 0)]
-    return {"messages": [RemoveMessage(id=m.id) for m in overflow if m.id]}
 _EMPTY_QUERY_ECHO_CAP = 120
 _SMUGGLED_MARKUP_RE = re.compile(r"</?\s*\w+\s*/?>|```.*?```", re.DOTALL)
 

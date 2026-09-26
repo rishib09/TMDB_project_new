@@ -28,7 +28,11 @@ from langgraph.checkpoint.memory import InMemorySaver
 from src.domain.config import ExperimentConfig, PresetType
 from src.domain.memory import UserSessionPreferences
 from src.domain.routing import IntentType, QueryRoutingDecision, SuperlativeCriteria
-from src.evals.conversations import ConversationSet, load_conversations
+from src.evals.conversations import (
+    DEFAULT_CONVERSATIONS,
+    ConversationSet,
+    load_conversations,
+)
 from src.evals.conversation_metrics import (
     ConversationResult,
     ConversationRunSummary,
@@ -54,7 +58,6 @@ from src.retrieval.hybrid_engine import HybridRetrievalEngine
 from src.storage.database import MovieDatabase
 
 DEFAULT_DATASET = Path("data/eval_benchmark_dataset.json")
-DEFAULT_CONVERSATIONS = Path("data/eval_conversations.json")
 RESULTS_DIR = Path("evals/results")
 K = 5  # benchmark reports @5 throughout (matches the #4 close-out numbers)
 
@@ -304,23 +307,41 @@ class BenchmarkRunner:
                 self._budget_check()
                 ring_before = len(tracer.traces())
                 trace_id = tracer.new_turn_trace()
-                shown_before = list(
-                    self.graph.get_state(cfg).values.get("shown_movie_ids", [])
-                )
-                usage_handler = UsageMetadataCallbackHandler()
-                out = self.graph.invoke(
-                    {"messages": [HumanMessage(content=turn.user)]},
-                    {
-                        **cfg,
-                        "callbacks": [usage_handler, *tracer.callbacks()],
-                        "metadata": {
-                            **tracer.metadata(),
-                            "eval_run": hash8,
-                            "conversation_id": convo.id,
-                            "turn": turn.n,
+                try:
+                    shown_before = list(
+                        self.graph.get_state(cfg).values.get("shown_movie_ids", [])
+                    )
+                    usage_handler = UsageMetadataCallbackHandler()
+                    out = self.graph.invoke(
+                        {"messages": [HumanMessage(content=turn.user)]},
+                        {
+                            **cfg,
+                            "callbacks": [usage_handler, *tracer.callbacks()],
+                            "metadata": {
+                                **tracer.metadata(),
+                                "eval_run": hash8,
+                                "conversation_id": convo.id,
+                                "turn": turn.n,
+                            },
                         },
-                    },
-                )
+                    )
+                except Exception as exc:  # noqa: BLE001 — Q19: the fixed script continues
+                    # A per-turn failure (API error, schema crash) is recorded,
+                    # never fatal. The two abort conditions are raised by OUR
+                    # code OUTSIDE this try: _budget_check before the turn and
+                    # _refuse_dense_loss after it.
+                    turn_rows.append(ConversationTurnResult(
+                        n=turn.n, user=turn.user,
+                        expected_intent=turn.expect.intent.value, observed_intent="ERROR",
+                        intent_correct=False,
+                        expected_path=turn.expect.path, observed_path="error",
+                        path_correct=False,
+                        constraint_detail={"error": str(exc)[:300],
+                                           "trace_slice": _bound_traces(tracer.traces()[ring_before:])},
+                        trace_id=trace_id,
+                    ))
+                    continue
+                self._refuse_dense_loss(convo.id)  # Q19/#65: never baseline BM25-only rows
                 prefs = (
                     self.graph.get_state(cfg).values.get("session_preferences")
                     or UserSessionPreferences()
@@ -342,6 +363,10 @@ class BenchmarkRunner:
                 intent_correct = (
                     observed_intent == expect.intent.value if decision is not None else None
                 )
+                # Q19: a fallback decision scores intent-incorrect even when the
+                # label coincidentally matches — that is the visitor's experience.
+                if intent_correct and decision is not None and decision.is_fallback:
+                    intent_correct = False
                 observed_path = observed_path_v1(out)
                 if observed_path in ("retrieve", "ask"):
                     effective = composite_effective(out, prefs)
@@ -392,7 +417,8 @@ class BenchmarkRunner:
                     no_repeat_violation_ids=sorted(
                         set(retrieved_ids) & set(shown_before)
                     ) if expect.no_repeat else [],
-                    reference_check=None if expect.referenced_titles_from_shown else None,
+                    reference_check=None,  # v1 has no referenced-titles mechanism (C10 lands with v2);
+                                          # turns asserting the flag stay None — never a silent pass
                     ranked_ids=retrieved_ids,
                     relevant_ids=expect.relevant_movie_ids,
                     hit_rate=hit_rate,
@@ -402,15 +428,7 @@ class BenchmarkRunner:
                     trace_id=trace_id,
                 )
                 turn_rows.append(row)
-                row_failed = (
-                    row.intent_correct is False
-                    or not row.path_correct
-                    or detail["intersection_failure"]
-                    or any(not ok for ok in detail["keys"].values())
-                    or detail["violations"]
-                    or bool(row.no_repeat_violation_ids)
-                )
-                if row_failed:  # Q18: slice captured at turn time, bounded
+                if _turn_failed(row):  # Q18: slice captured at turn time, bounded
                     row.constraint_detail = {
                         **detail,
                         "trace_slice": _bound_traces(
@@ -425,14 +443,7 @@ class BenchmarkRunner:
                 intent_accuracy=(sum(intents) / len(intents)) if intents else 1.0,
                 path_accuracy=aggregate([float(t.path_correct) for t in turn_rows]),
                 fidelity=aggregate([t.fidelity for t in turn_rows if t.fidelity is not None]),
-                failed=any(
-                    t.intent_correct is False or not t.path_correct
-                    or (t.constraint_detail.get("violations")
-                        or t.constraint_detail.get("intersection_failure")
-                        or any(not ok for ok in t.constraint_detail.get("keys", {}).values()))
-                    or bool(t.no_repeat_violation_ids)
-                    for t in turn_rows
-                ),
+                failed=any(_turn_failed(t) for t in turn_rows),
             ))
 
         all_turns = [t for c in convo_results for t in c.per_turn]
@@ -543,6 +554,20 @@ def _bound_traces(traces: list[dict], chars: int = 200) -> list[dict]:
     def _bound(value):
         return value[:chars] + "…" if isinstance(value, str) and len(value) > chars else value
     return [{k: _bound(v) for k, v in trace.items()} for trace in traces]
+
+
+def _turn_failed(turn: ConversationTurnResult) -> bool:
+    """One failure predicate, shared by the row and the conversation roll-up."""
+    detail = turn.constraint_detail or {}
+    return bool(
+        turn.intent_correct is False
+        or not turn.path_correct
+        or detail.get("intersection_failure")
+        or detail.get("error")
+        or any(not ok for ok in detail.get("keys", {}).values())
+        or detail.get("violations")
+        or turn.no_repeat_violation_ids
+    )
 
 
 def _write_run(
@@ -711,7 +736,6 @@ def _run_one(
         if not store.has_collection(target):
             print(f"[{label}] skipped — collection `{target}` is not built", file=sys.stderr)
             return None
-        from langchain_core.callbacks import UsageMetadataCallbackHandler  # noqa: F401 — proven import
         from src.graph.orchestrator import build_maya_graph
         from src.maya.agent import MayaSynthesizer
         from src.maya.router import MayaRouter

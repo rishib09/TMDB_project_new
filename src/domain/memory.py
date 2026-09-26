@@ -13,6 +13,11 @@ from pydantic import BaseModel, Field
 from src.domain.movie import MovieRecord
 from src.domain.routing import QueryRoutingDecision
 
+#: #93/D16: the conversation message window — the ONE named constant. The
+#: trim node reads it through ExperimentConfig.message_window (ADR 0004);
+#: the read model below trims to the same size.
+MESSAGE_WINDOW = 10
+
 
 class ChatMessage(BaseModel):
     """Represents a single message turn in the conversation history."""
@@ -232,8 +237,8 @@ class ConversationState(BaseModel):
 
         self.session_tokens += tokens_used
 
-        if len(self.messages) > 10:
-            self.messages = self.messages[-10:]
+        if len(self.messages) > MESSAGE_WINDOW:
+            self.messages = self.messages[-MESSAGE_WINDOW:]
 
     def clear(self) -> None:
         """Reset conversation state to a clean slate."""

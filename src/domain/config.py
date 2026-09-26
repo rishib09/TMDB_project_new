@@ -5,6 +5,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
+from src.domain.memory import MESSAGE_WINDOW  # window default lives in domain memory
+
 
 class PresetType(StrEnum):
     """Predefined Architecture Presets."""
@@ -78,6 +80,12 @@ class ExperimentConfig(BaseModel):
         "measured: iterative re-routing resolves a share of routing failures (#12)",
     )
     memory_strategy: str = Field(default="sliding_window_with_entity", description="Memory retention strategy")
+    #: #93/D16: the in-thread message window (trim node + read model).
+    message_window: int = Field(
+        default=MESSAGE_WINDOW, ge=2,
+        description="Conversation message window kept in the LangGraph thread "
+        "(trim node, #93/D16); the read model trims to the same size",
+    )
     confidence_threshold: float = Field(
         default=0.5,
         ge=0.0,

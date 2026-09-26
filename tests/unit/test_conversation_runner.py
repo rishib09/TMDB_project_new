@@ -142,3 +142,101 @@ def test_save_conversations_writes_identity_and_delta(tmp_path):
     payload = json.loads(path2.read_text(encoding="utf-8"))
     assert payload["delta"], "second run of the same hash+mode must carry a delta"
     assert path1.name.split("_")[1] == path2.name.split("_")[1]  # same config hash
+
+
+def test_turn_error_is_isolated_and_run_continues():
+    """Q19 (spec review P1): an API error on one turn must not kill the run —
+    the fixed script continues; only budget-blocked and dense-loss abort."""
+    class ExplodingSynthesizer(StubSynthesizer):
+        calls = 0
+
+        def synthesize(self, query, decision, movies, history):
+            ExplodingSynthesizer.calls += 1
+            if ExplodingSynthesizer.calls == 2:  # turn 2's synthesis dies
+                raise RuntimeError("synthesis API error")
+            return super().synthesize(query, decision, movies, history)
+
+    from langgraph.checkpoint.memory import InMemorySaver
+    router = ScriptedRouter([
+        QueryRoutingDecision(intent=IntentType.SEMANTIC_SEARCH, confidence=0.95,
+                             standalone_query="recent", requires_rag=True,
+                             filters=MetadataFilterCriteria(year_min=2015)),
+        QueryRoutingDecision(intent=IntentType.SEMANTIC_SEARCH, confidence=0.95,
+                             standalone_query="older", requires_rag=True,
+                             filters=MetadataFilterCriteria(year_min=1990)),
+        QueryRoutingDecision(intent=IntentType.OUT_OF_SCOPE, confidence=0.99,
+                             standalone_query="a joke", requires_rag=False),
+        QueryRoutingDecision(intent=IntentType.SEMANTIC_SEARCH, confidence=0.95,
+                             standalone_query="even older", requires_rag=True,
+                             filters=MetadataFilterCriteria(year_min=1980)),
+    ])
+    tracer = DualModeObservabilityManager(session_id="err-test")
+    graph = build_maya_graph(
+        ExperimentConfig(), router, PoolEngine([1, 2]), ExplodingSynthesizer(),
+        tracer, checkpointer=InMemorySaver(),
+    )
+    runner = BenchmarkRunner(ExperimentConfig(), engine=None, graph=graph, tracer=tracer)
+    summary = runner.run_conversations(_golden(), "err-test")
+
+    turns = summary.per_conversation[0].per_turn
+    assert len(turns) == 4                      # all scripted turns ran
+    assert turns[1].observed_path == "error"    # the failed turn is recorded
+    assert turns[1].path_correct is False
+    assert "synthesis API error" in turns[1].constraint_detail["error"]
+    assert turns[3].observed_path == "retrieve"  # and the run continued
+
+
+def test_fallback_decision_scores_intent_incorrect():
+    """Q19: a fallback's coincidentally-correct label is still a miss.
+
+    The fallback trips the bounded re-route cycle (#12), so the router is
+    queried again for the same turn — the scripted fallback repeats until
+    the attempt budget runs out and the turn ends on the fallback decision.
+    """
+    older = QueryRoutingDecision(intent=IntentType.SEMANTIC_SEARCH, confidence=0.95,
+                                 standalone_query="older", requires_rag=True,
+                                 filters=MetadataFilterCriteria(year_min=1990))
+
+    class FallbackRouter(ScriptedRouter):
+        def route(self, query, state, feedback=None):
+            if query == "older movies":  # always a fallback — re-routes included
+                return older.model_copy(update={
+                    "is_fallback": True, "confidence": 0.1,
+                    "fallback_reason": "api_error",
+                })
+            return super().route(query, state, feedback)
+
+    from langgraph.checkpoint.memory import InMemorySaver
+    router = FallbackRouter([
+        QueryRoutingDecision(intent=IntentType.SEMANTIC_SEARCH, confidence=0.95,
+                             standalone_query="recent", requires_rag=True,
+                             filters=MetadataFilterCriteria(year_min=2015)),
+        QueryRoutingDecision(intent=IntentType.OUT_OF_SCOPE, confidence=0.99,
+                             standalone_query="a joke", requires_rag=False),
+        QueryRoutingDecision(intent=IntentType.SEMANTIC_SEARCH, confidence=0.95,
+                             standalone_query="even older", requires_rag=True,
+                             filters=MetadataFilterCriteria(year_min=1980)),
+    ])
+    tracer = DualModeObservabilityManager(session_id="fb-test")
+    graph = build_maya_graph(
+        ExperimentConfig(), router, PoolEngine([1, 2]), StubSynthesizer(),
+        tracer, checkpointer=InMemorySaver(),
+    )
+    runner = BenchmarkRunner(ExperimentConfig(), engine=None, graph=graph, tracer=tracer)
+    summary = runner.run_conversations(_golden(), "fb-test")
+
+    t2 = summary.per_conversation[0].per_turn[1]
+    assert t2.observed_intent == "SEMANTIC_SEARCH"  # label matches…
+    assert t2.is_fallback is True
+    assert t2.intent_correct is False                # …but still a miss (Q19)
+
+
+def test_message_window_is_a_config_tunable():
+    """ADR 0004 (standards review P1): the window rides ExperimentConfig."""
+    from src.domain.config import ExperimentConfig
+    from src.domain.memory import MESSAGE_WINDOW
+
+    cfg = ExperimentConfig()
+    assert cfg.message_window == MESSAGE_WINDOW == 10
+    cfg2 = ExperimentConfig(message_window=4)
+    assert cfg2.message_window == 4
