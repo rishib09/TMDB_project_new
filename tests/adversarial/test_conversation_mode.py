@@ -232,3 +232,33 @@ def test_zero_result_retrieve_still_signals_engine_invoked():
     # non-None filters_applied, not movie count (Q12: 0-row retrieve ≠ ask).
     assert out["filters_applied"]["year_min"] == 2026
     assert out["retrieved_movies"] == []
+
+
+def test_relaxation_retry_records_final_match_mode():
+    """#93 review round 3 (spec P1): the all->any relaxation retry must leave
+    `decision` on the RELAXED routing — filters_applied records what the
+    engine actually ran, never a phantom intersection."""
+    class MatchSensitiveEngine:
+        """Empty on intersection ("all"), results on union ("any")."""
+        last_dense_failure = None
+
+        def retrieve(self, query, routing, top_k=8, candidate_pool=50):
+            if routing.filters.genre_match == "all":
+                return []
+            return [
+                type("R", (), {"movie": _movie(1, "A"), "score": 1.0, "source": "sql"})()
+            ]
+
+    router = ScriptedRouter([
+        _decision(filters=MetadataFilterCriteria(
+            genres=["Comedy", "Romance"], genre_match="all", year_min=2000,
+        )),
+    ])
+    graph = _graph(router, MatchSensitiveEngine())
+    out = graph.invoke(
+        {"messages": [HumanMessage(content="comedy romance hybrids")]},
+        _cfg("relax-1"),
+    )
+    assert out["filters_applied"]["genre_match"] == "any"  # the FINAL routing
+    assert out["filters_applied"]["genres"] == ["Comedy", "Romance"]
+    assert len(out["retrieved_movies"]) == 1

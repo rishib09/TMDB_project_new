@@ -167,21 +167,6 @@ def match_mode_rule(expected: ExpectedConstraints, effective: dict) -> bool:
     return effective.get("genre_match") == "all" and _present(effective.get("genres"))
 
 
-def turn_failed(turn: ConversationTurnResult) -> bool:
-    """One failure predicate, shared by the runner (row slice + conversation
-    roll-up) and the Evals tab (failed-turn tables) — #93 review round 2."""
-    detail = turn.constraint_detail or {}
-    return bool(
-        turn.intent_correct is False
-        or not turn.path_correct
-        or detail.get("intersection_failure")
-        or detail.get("error")
-        or any(not ok for ok in detail.get("keys", {}).values())
-        or detail.get("violations")
-        or turn.no_repeat_violation_ids
-    )
-
-
 # --- result models (Q14) ------------------------------------------------------
 
 class ConversationTurnResult(BaseModel):
@@ -250,3 +235,18 @@ class ConversationRunSummary(BaseModel):
     total_cost_usd: float = 0.0
     per_conversation: list[ConversationResult] = Field(default_factory=list)
     delta: dict | None = None
+
+
+def turn_failed(turn: ConversationTurnResult) -> bool:
+    """One failure predicate, shared by the runner (row slice + conversation
+    roll-up) and the Evals tab (failed-turn tables) — #93 review round 2."""
+    detail = turn.constraint_detail or {}
+    return bool(
+        turn.intent_correct is False
+        or not turn.path_correct
+        or detail.get("intersection_failure")
+        or detail.get("error")
+        or any(not ok for ok in detail.get("keys", {}).values())
+        or detail.get("violations")
+        or turn.no_repeat_violation_ids
+    )

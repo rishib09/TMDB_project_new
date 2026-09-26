@@ -425,6 +425,8 @@ def build_maya_graph(
                 routing=relaxed,
                 top_k=config.retrieval_top_k,
             )
+            decision = relaxed  # #93 Q13: filters_applied must record the FINAL
+                                # post-relaxation routing — the engine ran "any"
             tracer.record_local("retrieve", {"genre_match_relaxed": True})
         movies = [r.movie for r in results]
         dense_failure = getattr(engine, "last_dense_failure", None)

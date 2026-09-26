@@ -260,7 +260,7 @@ def render_conversations_section(runs: list[dict]) -> None:
             "run": f"{r.get('config_hash', '?')[:8]} · {r.get('timestamp', '?')[:16]}",
             "convs": r.get("n_conversations", 0),
             "turns": r.get("n_turns", 0),
-            "intent": r.get("intent_accuracy", 0.0),
+            "intent": r["intent_accuracy"] if r.get("intent_accuracy") is not None else "n/a",
             "path": r.get("path_accuracy", 0.0),
             "fidelity": r.get("constraint_fidelity", 0.0),
             "no-repeat": r.get("no_repeat_rate", 0.0),
@@ -275,7 +275,7 @@ def render_conversations_section(runs: list[dict]) -> None:
         for convo in by_stack[stack].get("per_conversation", []):
             tier_rows.append({
                 "stack": stack, "tier": convo["tier"], "id": convo["id"],
-                "intent": convo.get("intent_accuracy", 0.0),
+                "intent": convo["intent_accuracy"] if convo.get("intent_accuracy") is not None else "n/a",
                 "path": convo.get("path_accuracy", 0.0),
                 "fidelity": convo.get("fidelity", 0.0),
                 "failed": convo.get("failed", False),
@@ -359,7 +359,10 @@ def render_evals(session=None, results_dir: Path = RESULTS_DIR) -> None:
     render_conversations_section(runs)
 
     st.markdown("#### Per-run scorecards")
-    for run in selected_runs:
+    # Conversation runs have no n_queries/per_query — they render entirely in
+    # their own section above (#93 review round 3: including them here
+    # KeyErrors the page the moment a baseline file lands).
+    for run in [r for r in selected_runs if r.get("mode") != "conversation"]:
         with st.expander(
             f"**{run_display_name(run)}** — {run['mode']} · n={run['n_queries']} · "
             f"{run.get('timestamp', '?')[:19]}",
