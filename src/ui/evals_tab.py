@@ -227,6 +227,102 @@ def render_feedback_section(store: FeedbackStore | None = None) -> None:
         st.plotly_chart(fig, use_container_width=True)
 
 
+def scorecard_runs(selected_runs: list[dict]) -> list[dict]:
+    """Runs eligible for the per-run scorecards (#93 round-3 fix).
+
+    Pure helper so the conversation-run skip is test-pinned: conversation
+    runs have no ``n_queries``/``per_query`` and render entirely in their own
+    section — including them here KeyErrors the page.
+    """
+    return [r for r in selected_runs if r.get("mode") != "conversation"]
+
+
+def render_conversations_section(runs: list[dict]) -> None:
+    """#93 (D11): the multi-turn golden source, beside the single-turn source.
+
+    Composition/styling stays map #64's — this fixes the data contract: two
+    conversation runs (defaults: newest per routing_stack on the newest
+    conversations version) joined side by side, per-tier rows, expandable
+    per-conversation turn tables. Read-only: nothing here invites a visitor
+    to run anything.
+    """
+    conv_runs = [r for r in runs if r.get("mode") == "conversation"]
+    if not conv_runs:
+        return
+    st.markdown("#### Conversations (multi-turn golden source)")
+    newest_version = max(r.get("dataset_version", "") for r in conv_runs)
+    version_runs = [r for r in conv_runs if r.get("dataset_version", "") == newest_version]
+    by_stack: dict[str, dict] = {}
+    for run in version_runs:  # newest per stack wins
+        stack = run.get("routing_stack", "v1")
+        if stack not in by_stack or run.get("timestamp", "") > by_stack[stack].get("timestamp", ""):
+            by_stack[stack] = run
+    stacks = sorted(by_stack)
+    st.caption(
+        f"Golden conversations `{newest_version}` · stacks compared: {', '.join(stacks)}"
+    )
+
+    metric_rows = []
+    for stack in stacks:
+        r = by_stack[stack]
+        metric_rows.append({
+            "stack": stack,
+            "run": f"{r.get('config_hash', '?')[:8]} · {r.get('timestamp', '?')[:16]}",
+            "convs": r.get("n_conversations", 0),
+            "turns": r.get("n_turns", 0),
+            "intent": r["intent_accuracy"] if r.get("intent_accuracy") is not None else "n/a",
+            "path": r.get("path_accuracy", 0.0),
+            "fidelity": r.get("constraint_fidelity", 0.0),
+            "no-repeat": r.get("no_repeat_rate", 0.0),
+            "intersections": r.get("intersection_failures", 0),
+            "tokens": r.get("total_tokens", 0),
+        })
+    st.dataframe(pd.DataFrame(metric_rows), use_container_width=True, hide_index=True)
+
+    # per-tier rows across the compared runs
+    tier_rows = []
+    for stack in stacks:
+        for convo in by_stack[stack].get("per_conversation", []):
+            tier_rows.append({
+                "stack": stack, "tier": convo["tier"], "id": convo["id"],
+                "intent": convo["intent_accuracy"] if convo.get("intent_accuracy") is not None else "n/a",
+                "path": convo.get("path_accuracy", 0.0),
+                "fidelity": convo.get("fidelity", 0.0),
+                "failed": convo.get("failed", False),
+            })
+    if tier_rows:
+        st.dataframe(pd.DataFrame(tier_rows), use_container_width=True, hide_index=True)
+
+    for stack in stacks:
+        run = by_stack[stack]
+        for convo in run.get("per_conversation", []):
+            if not convo.get("failed"):
+                continue
+            with st.expander(f"[{stack}] {convo['id']} · {convo['title']} — failed turns"):
+                from src.evals.conversation_metrics import ConversationTurnResult, turn_failed
+                rows = []
+                for t in convo.get("per_turn", []):
+                    # one predicate, same as the runner — a key-miss failure
+                    # (the C01 carry-miss class) must not render an empty table
+                    if not turn_failed(ConversationTurnResult(**t)):
+                        continue
+                    rows.append({
+                        "n": t["n"], "user": t["user"],
+                        "intent": f"{t.get('expected_intent')} → {t.get('observed_intent')}",
+                        "path": f"{t.get('expected_path')} → {t.get('observed_path')}",
+                        "fidelity": t.get("fidelity"),
+                        "violations": ", ".join((t.get("constraint_detail") or {}).get("violations", [])),
+                        "missed keys": ", ".join(
+                            k for k, ok in (t.get("constraint_detail") or {}).get("keys", {}).items()
+                            if not ok
+                        ),
+                        "no-repeat": t.get("no_repeat_violation_ids") or "",
+                        "trace": t.get("trace_id", "")[:12],
+                    })
+                if rows:
+                    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+
 def render_evals(session=None, results_dir: Path = RESULTS_DIR) -> None:
     st.header("Evals")
     st.caption(
@@ -270,9 +366,10 @@ def render_evals(session=None, results_dir: Path = RESULTS_DIR) -> None:
 
     render_history_chart(selected_runs)
     render_sweep_section(runs)
+    render_conversations_section(runs)
 
     st.markdown("#### Per-run scorecards")
-    for run in selected_runs:
+    for run in scorecard_runs(selected_runs):
         with st.expander(
             f"**{run_display_name(run)}** — {run['mode']} · n={run['n_queries']} · "
             f"{run.get('timestamp', '?')[:19]}",

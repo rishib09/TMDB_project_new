@@ -7,10 +7,12 @@ Pure logic lives here so it is testable without a Streamlit runtime.
 """
 
 import logging
+import uuid
 from datetime import UTC, datetime
 
 import streamlit as st
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
+from langchain_core.messages import HumanMessage
+from langgraph.checkpoint.memory import InMemorySaver
 
 from src.domain.config import ExperimentConfig, PresetType
 from src.domain.memory import ConversationState
@@ -66,17 +68,6 @@ def shared_search_provider(profile: str) -> EmbeddingProvider:
     return provider_from_profile(profile)
 
 
-def _to_lc_messages(history) -> list[BaseMessage]:
-    """Projects domain ChatMessage history onto LangChain message types."""
-    out: list[BaseMessage] = []
-    for msg in history:
-        if msg.role == "user":
-            out.append(HumanMessage(content=msg.content))
-        elif msg.role == "assistant":
-            out.append(AIMessage(content=msg.content))
-    return out
-
-
 def slice_new_traces(ring_before: int, traces: list[dict]) -> list[dict]:
     """Pure helper (issue #18): only the traces produced during this turn.
 
@@ -124,6 +115,10 @@ class MayaSession:
         self.config_version = 0  # bumped on preset apply → knob widgets remount
         self.turn_log: list[dict] = []  # one row per turn for badges/trace
         self.last_movies = []  # MovieRecords from the most recent retrieval
+        # #93/D16: the graph's memory — one saver + one thread per browser
+        # session; every turn sends only the new message (see turn()).
+        self._saver = InMemorySaver()
+        self._thread_id = uuid.uuid4().hex
         self._graph_sig = ""
         self.graph = self._build_graph()
 
@@ -154,6 +149,7 @@ class MayaSession:
             self.tracer,
             limiter=self.limiter,
             budget_tracker=self.budget_tracker,
+            checkpointer=self._saver,
         )
 
     def _graph_signature(self) -> str:
@@ -192,6 +188,14 @@ class MayaSession:
     def turn(self, query: str, *, recalled: bool = False) -> None:
         """One full Maya turn: guard → route/funnel → retrieve → synthesize.
 
+        D16 (#93): the graph owns conversation state — the compiled
+        checkpointer carries every persistent field across turns on
+        ``self._thread_id``, so this method sends ONLY the new message. The
+        hand-copied field round-trip (and its bug class — the session
+        forgetting shown ids and funnel flags, #80) is gone by construction.
+        ``ConversationState`` below is a read model for the transcript and
+        turn rows.
+
         The turn_log row is built ATOMICALLY by ``_build_turn_row`` from the
         graph's output alone (#26-A) — chip metadata, response, movie count
         and token count can never come from different turns, even on funnel
@@ -204,21 +208,14 @@ class MayaSession:
             # #48 telemetry: recall usage must be observable (ADR 0009) — the
             # evidence base for ever revisiting a latency cache.
             self.tracer.record_local("recall", {"query": query})
-        history = _to_lc_messages(self.conversation.messages)
         out = graph.invoke(
-            {
-                "messages": [*history, HumanMessage(content=query)],
-                "session_preferences": self.conversation.session_preferences,
-                "session_tokens": self.conversation.session_tokens,
-                "probe_count": self.conversation.probe_count,
-                "funnel_active": self.conversation.funnel_active,
-                "offered_genre_options": self.conversation.offered_genre_options,
-            },
+            {"messages": [HumanMessage(content=query)]},
             # cloud tracing was silently inactive in the UI before #9 — wired
             # every turn now so the trace id and the run actually correlate
             config={
                 "callbacks": self.tracer.callbacks(),
                 "metadata": self.tracer.metadata(),  # v4 session grouping
+                "configurable": {"thread_id": self._thread_id},
             },
         )
         row = self._build_turn_row(
@@ -249,6 +246,7 @@ class MayaSession:
             query, row["response"], movies, out.get("routing_decision"),
             tokens_used=row["tokens"],
             turn_ref=len(self.turn_log),  # #26-K: identity join, stamped pre-append
+            window=self.config.message_window,  # #93: read model trims with the knob
         )
         self.turn_log.append(row)
 

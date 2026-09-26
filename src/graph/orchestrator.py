@@ -22,12 +22,18 @@ updates that LangGraph applies through the Annotated reducers.
 import re
 from typing import Literal
 
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, RemoveMessage
+from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
 from src.domain.config import ExperimentConfig
-from src.domain.memory import ConversationState, UserSessionPreferences, merge_preferences
+from src.domain.memory import (
+    ConversationState,
+    FocusedMovieEntity,
+    UserSessionPreferences,
+    merge_preferences,
+)
 from src.domain.routing import IntentType, MetadataFilterCriteria, QueryRoutingDecision
 from src.graph.state import MayaGraphState
 from src.maya.agent import MayaSynthesizer
@@ -66,6 +72,7 @@ def build_maya_graph(
     tracer: DualModeObservabilityManager,
     limiter: SessionTokenLimiter | None = None,
     budget_tracker: WeeklyBudgetTracker | None = None,
+    checkpointer: InMemorySaver | None = None,
 ) -> CompiledStateGraph:
     """Compiles the Maya workflow with injected components (DI-friendly).
 
@@ -153,16 +160,26 @@ def build_maya_graph(
         )
         # Guided narrowing (#22/#24): mood/audience extracted by the router
         # itself (open vocabulary), with the deterministic vocab as fallback.
-        signals = UserSessionPreferences(
-            preferred_mood=(decision.mood or "").strip(),
-            audience=(decision.audience or "").strip(),
-        )
-        if not signals.preferred_mood or not signals.audience:
+        mood = (decision.mood or "").strip()
+        audience = (decision.audience or "").strip()
+        if not mood or not audience:
             vocab = extract_probe_answers(state.current_query)
-            signals = UserSessionPreferences(
-                preferred_mood=signals.preferred_mood or vocab.preferred_mood,
-                audience=signals.audience or vocab.audience,
-            )
+            mood = mood or vocab.preferred_mood
+            audience = audience or vocab.audience
+        # #93/D16: persistent exclusions accumulate IN-GRAPH now — the old
+        # session-side add_turn merge fed them back as next-turn input,
+        # a loop the checkpointer severed. Without this, "no Tom Cruise"
+        # would be forgotten by the next turn.
+        signals = UserSessionPreferences(
+            preferred_mood=mood,
+            audience=audience,
+            excluded_genres=(
+                list(decision.filters.excluded_genres) if decision.filters else []
+            ),
+            excluded_actors=(
+                list(decision.filters.excluded_actors) if decision.filters else []
+            ),
+        )
         # #56-F1: era words in a ROUTED query ("show me old classic") must not
         # be lost while the funnel probes other axes. Gated on requires_rag so
         # non-film turns ("how old are you") never pollute preferences.
@@ -408,13 +425,35 @@ def build_maya_graph(
                 routing=relaxed,
                 top_k=config.retrieval_top_k,
             )
+            decision = relaxed  # #93 Q13: filters_applied must record the FINAL
+                                # post-relaxation routing — the engine ran "any"
             tracer.record_local("retrieve", {"genre_match_relaxed": True})
         movies = [r.movie for r in results]
         dense_failure = getattr(engine, "last_dense_failure", None)
         if dense_failure:  # #65: BM25-only fallback is explicit in the Trace
             tracer.record_local("retrieve", {"dense_failed": True, "error": dense_failure})
-        tracer.record_local("retrieve", {"count": len(movies), "ids": [m.id for m in movies]})
-        return {"retrieved_movies": movies, "shown_movie_ids": [m.id for m in movies]}
+        # #93 (Q3 O1): the FINAL effective filters — post genre-merge, post
+        # relaxation retry — so the conversation-mode scorer grades what the
+        # engine actually saw. None = engine never ran; {} = ran, zero filters.
+        filters_applied = decision.filters.model_dump() if decision.filters else {}
+        tracer.record_local(
+            "retrieve",
+            {"count": len(movies), "ids": [m.id for m in movies],
+             "filters_applied": filters_applied},
+        )
+        # D16: entity focus lives in the thread now — the session-side
+        # hand-copy that used to set it never reached the graph, so the
+        # router's focused-entity context was silently dead in the UI path.
+        focus = FocusedMovieEntity(
+            id=movies[0].id, title=movies[0].title,
+            release_year=movies[0].release_year, director=movies[0].director,
+        ) if movies else None
+        return {
+            "retrieved_movies": movies,
+            "shown_movie_ids": [m.id for m in movies],
+            "filters_applied": filters_applied,
+            "focused_entity": focus,
+        }
 
     def synthesize_node(state: MayaGraphState) -> dict:
         """CWA-grounded synthesis; usage recorded into the session budget (#8).
@@ -512,18 +551,20 @@ def build_maya_graph(
             return "funnel"
         return "route"
 
-    def route_after_funnel(state: MayaGraphState) -> Literal["route", "retrieve", "__end__"]:
+    def route_after_funnel(state: MayaGraphState) -> Literal["route", "retrieve", "trim"]:
         """#23/#25: probe & confirm responses END the turn — never re-route.
 
         Walkthrough-defect fix: without the END branch the deterministic
         probe/confirm/genre-confirmation response fell through to ``route``,
         letting a second routing pass overwrite it (the 'edge of the seat'
-        GREETING overwrite). Fallthrough still routes on.
+        GREETING overwrite). Fallthrough still routes on. Deterministic turns
+        route to ``trim`` (#93): every terminal path passes the window trim,
+        funnel turns included.
         """
         if state.routing_decision is not None:  # funnel confirmed retrieval
             return "retrieve"
         if state.final_response and state.funnel_active:  # probe/confirm ready
-            return END
+            return "trim"
         return "route"  # fallthrough — normal routing takes over
 
     def route_after_router(state: MayaGraphState) -> Literal["route", "retrieve", "synthesize", "pivot", "probe"]:
@@ -554,7 +595,13 @@ def build_maya_graph(
             return "probe"
         return "retrieve"
 
+    def trim_node(state: MayaGraphState) -> dict:
+        """#93/D16: the window rides Experiment Config (ADR 0004)."""
+        return trim_message_window(state, config.message_window)
+
     graph = StateGraph(MayaGraphState)
+    graph.add_node("begin_turn", begin_turn_node)
+    graph.add_node("trim", trim_node)
     graph.add_node("guard_input", guard_input_node)
     graph.add_node("route", route_node)
     graph.add_node("retrieve", retrieve_node)
@@ -564,18 +611,20 @@ def build_maya_graph(
     graph.add_node("probe", probe_node)
     graph.add_node("funnel", funnel_node)
 
-    graph.add_edge(START, "guard_input")
+    graph.add_edge(START, "begin_turn")
+    graph.add_edge("begin_turn", "guard_input")
     graph.add_conditional_edges("guard_input", route_after_guard)
     graph.add_conditional_edges("funnel", route_after_funnel)
     graph.add_conditional_edges("route", route_after_router)
     # The route→route cycle is implicit: route_after_router may return "route".
     graph.add_edge("retrieve", "synthesize")
-    graph.add_edge("synthesize", END)
-    graph.add_edge("refusal", END)
-    graph.add_edge("pivot", END)
-    graph.add_edge("probe", END)
+    graph.add_edge("synthesize", "trim")
+    graph.add_edge("trim", END)
+    graph.add_edge("refusal", "trim")
+    graph.add_edge("pivot", "trim")
+    graph.add_edge("probe", "trim")
 
-    return graph.compile()
+    return graph.compile(checkpointer=checkpointer)
 
 
 # --- helpers (pure, module-level for testability) ---
@@ -588,9 +637,48 @@ def _refusal_text(reason: str) -> str:
     )
 
 
-#: Echo cap for the zero-retrieval response — a hostile query must not be
-#: able to balloon the deterministic reply.
-_EMPTY_QUERY_ECHO_CAP = 120
+_EMPTY_QUERY_ECHO_CAP = 120  #: Echo cap for the zero-retrieval response —
+                             #: a hostile query must not balloon the reply.
+
+#: #93/D16: the conversation message window kept inside the thread. The
+#: tunable lives on ExperimentConfig.message_window; this is the pure helper
+#: the trim node calls (module-level for testability).
+
+
+def trim_message_window(state: MayaGraphState, window: int) -> dict:
+    """Keeps the last ``window`` messages inside the thread.
+
+    ``add_messages`` resolves ``RemoveMessage`` by id, so the window is
+    maintained by the same reducer that appends — no separate list juggling.
+    (Named trim_message_window, not trim_messages: langchain_core's
+    ``messages.trim_messages`` has different semantics — token budget.)
+    """
+    overflow = state.messages[: max(len(state.messages) - window, 0)]
+    return {"messages": [RemoveMessage(id=m.id) for m in overflow if m.id]}
+
+
+def begin_turn_node(state: MayaGraphState) -> dict:
+    """#93/D16: resets per-turn scratch before any pipeline node runs.
+
+    What must NOT be reset lives outside this list: probe_count,
+    funnel_active, offered_genre_options (they carry funnel state ACROSS
+    turns by design), plus every reducer-backed field (messages,
+    shown_movie_ids, session_preferences, session_tokens).
+    """
+    return {
+        "current_query": "",
+        "guardrail_result": None,
+        "routing_decision": None,
+        "route_attempts": 0,
+        "from_funnel": False,
+        "turn_stage": "",
+        "retrieved_movies": [],
+        "synthesis_usage": None,
+        "final_response": "",
+        "filters_applied": None,
+    }
+
+
 _SMUGGLED_MARKUP_RE = re.compile(r"</?\s*\w+\s*/?>|```.*?```", re.DOTALL)
 
 

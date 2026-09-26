@@ -75,6 +75,9 @@ class MayaJudge:
             base_url=OPENROUTER_BASE_URL,
             api_key=api_key or os.getenv("OPENROUTER_API_KEY"),
             temperature=0.0,
+            # #93: bounded calls — see the router's note; D17 client ownership.
+            request_timeout=120,
+            max_retries=1,
         )
         self._faithfulness_chain = self._llm.with_structured_output(FaithfulnessVerdict)
         self._relevancy_chain = self._llm.with_structured_output(RelevancyVerdict)

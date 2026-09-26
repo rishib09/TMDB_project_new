@@ -15,14 +15,33 @@ run as a Langfuse dataset experiment (zero new dependencies).
 
 import argparse
 import json
+import os
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
+from uuid import uuid4
 
+from langchain_core.callbacks import UsageMetadataCallbackHandler
 from langchain_core.messages import HumanMessage
+from langgraph.checkpoint.memory import InMemorySaver
 
 from src.domain.config import ExperimentConfig, PresetType
+from src.domain.memory import UserSessionPreferences
 from src.domain.routing import IntentType, QueryRoutingDecision, SuperlativeCriteria
+from src.evals.conversations import (
+    DEFAULT_CONVERSATIONS,
+    ConversationSet,
+    load_conversations,
+)
+from src.evals.conversation_metrics import (
+    ConversationResult,
+    ConversationRunSummary,
+    ConversationTurnResult,
+    composite_effective,
+    observed_path_v1,
+    score_constraints,
+    turn_failed,
+)
 from src.evals.identity import config_hash, preset_slug
 from src.evals.judge import MayaJudge, strip_formatting
 from src.evals.metrics import (
@@ -130,9 +149,10 @@ class BenchmarkRunner:
         config: ExperimentConfig,
         engine: HybridRetrievalEngine,
         judge: MayaJudge | None = None,
-        graph=None,  # CompiledStateGraph — required for full mode
+        graph=None,  # CompiledStateGraph — required for full/conversation modes
         budget_tracker=None,  # WeeklyBudgetTracker — gates live modes (#59)
         dataset_version: str = "",
+        tracer=None,  # DualModeObservabilityManager — conversation mode (#93)
     ) -> None:
         self.config = config
         self.engine = engine
@@ -140,6 +160,7 @@ class BenchmarkRunner:
         self.graph = graph
         self.budget_tracker = budget_tracker
         self.dataset_version = dataset_version
+        self.tracer = tracer
 
     def _budget_check(self) -> None:
         """Aborts a live run when the weekly cap is exhausted (#54 grill D6).
@@ -254,6 +275,228 @@ class BenchmarkRunner:
         summary.fallback_count = sum(1 for r in results if r.is_fallback)
         return summary
 
+    # --- conversation mode (#93, decisions #87 Q5–Q19) ------------------------
+
+    def run_conversations(
+        self, conversations: ConversationSet, label: str
+    ) -> ConversationRunSummary:
+        """Replays the golden conversations turn by turn and scores each turn.
+
+        One fresh ``thread_id`` per conversation (D16); the fixed script
+        never adapts to what the stack asks (G2 stack-neutrality); the budget
+        gate fires between turns (Q16); usage is exact per turn from the
+        UsageMetadataCallbackHandler (Q11/O1); failing turns embed their
+        trace slice, captured at turn time — the ring would evict early
+        turns on a 200-turn run (Q18).
+        """
+        if self.graph is None:
+            raise ValueError("conversation mode requires the compiled graph")
+        from src.observability.tracer import DualModeObservabilityManager
+
+        tracer = self.tracer or DualModeObservabilityManager(session_id="benchmark")
+        hash8 = config_hash(self.config)
+        spend_before = (
+            self.budget_tracker.weekly_spend() if self.budget_tracker is not None else None
+        )
+        convo_results: list[ConversationResult] = []
+        faithfulness_scores: list[float] = []
+
+        for convo in conversations.conversations:
+            cfg = {"configurable": {"thread_id": uuid4().hex}}
+            turn_rows: list[ConversationTurnResult] = []
+            for turn in convo.turns:
+                self._budget_check()
+                ring_before = len(tracer.traces())
+                trace_id = tracer.new_turn_trace()
+                try:
+                    shown_before = list(
+                        self.graph.get_state(cfg).values.get("shown_movie_ids", [])
+                    )
+                    usage_handler = UsageMetadataCallbackHandler()
+                    out = self.graph.invoke(
+                        {"messages": [HumanMessage(content=turn.user)]},
+                        {
+                            **cfg,
+                            "callbacks": [usage_handler, *tracer.callbacks()],
+                            "metadata": {
+                                **tracer.metadata(),
+                                "eval_run": hash8,
+                                "conversation_id": convo.id,
+                                "turn": turn.n,
+                            },
+                        },
+                    )
+                except Exception as exc:  # noqa: BLE001 — Q19: the fixed script continues
+                    # A per-turn failure (API error, schema crash) is recorded,
+                    # never fatal. The two abort conditions are raised by OUR
+                    # code OUTSIDE this try: _budget_check before the turn and
+                    # _refuse_dense_loss after it.
+                    turn_rows.append(ConversationTurnResult(
+                        n=turn.n, user=turn.user,
+                        expected_intent=turn.expect.intent.value, observed_intent="ERROR",
+                        intent_correct=False,
+                        expected_path=turn.expect.path, observed_path="error",
+                        path_correct=False,
+                        constraint_detail={"error": str(exc)[:300],
+                                           "trace_slice": _bound_traces(tracer.traces()[ring_before:])},
+                        trace_id=trace_id,
+                    ))
+                    continue
+                self._refuse_dense_loss(convo.id)  # Q19/#65: never baseline BM25-only rows
+                prefs = (
+                    self.graph.get_state(cfg).values.get("session_preferences")
+                    or UserSessionPreferences()
+                )
+                tokens = sum(
+                    (u.get("total_tokens") or (u.get("input_tokens", 0) + u.get("output_tokens", 0)))
+                    for u in usage_handler.usage_metadata.values()
+                )
+
+                expect = turn.expect
+                decision = out.get("routing_decision")
+                observed_intent = (
+                    decision.intent.value
+                    if decision is not None
+                    else f"FUNNEL_{(out.get('turn_stage') or 'probe').upper()}"
+                )
+                # Stack-neutral (G2): v1 never routes funnel-answer turns — an
+                # absent reading is None, never a wrong answer.
+                intent_correct = (
+                    observed_intent == expect.intent.value if decision is not None else None
+                )
+                # Q19: a fallback decision scores intent-incorrect even when the
+                # label coincidentally matches — that is the visitor's experience.
+                if intent_correct and decision is not None and decision.is_fallback:
+                    intent_correct = False
+                observed_path = observed_path_v1(out)
+                if observed_path in ("retrieve", "ask"):
+                    effective = composite_effective(out, prefs)
+                    detail = score_constraints(expect.constraints, effective)
+                else:
+                    # Q13: constraints are the turn's business only when
+                    # something must reach the engine (retrieve) or accumulate
+                    # for it (ask). A pivot/converse/refuse turn deflected —
+                    # the carry is not asserted by the golden row, and scoring
+                    # it would conflate deflection with state pollution.
+                    effective = {}
+                    detail = {"fidelity": None, "keys": {}, "informational": [],
+                              "violations": [], "intersection_failure": False}
+                retrieved_ids = [m.id for m in out.get("retrieved_movies", [])]
+                no_repeat_pass = (
+                    not (set(retrieved_ids) & set(shown_before))
+                    if expect.no_repeat else None
+                )
+                hit_rate = None
+                faith = None
+                judge_error = None
+                if expect.relevant_movie_ids:  # Q15: judge + IR only here
+                    hit_rate = hit_rate_at_k(retrieved_ids, expect.relevant_movie_ids, K)
+                    if self.judge is not None:
+                        try:
+                            faith = self.judge.judge_faithfulness(
+                                turn.user,
+                                strip_formatting(out.get("final_response", "")),
+                                out.get("retrieved_movies", []),
+                            ).score
+                            faithfulness_scores.append(faith)
+                        except Exception as exc:  # noqa: BLE001 — judge failure is
+                            # fail-open, never fatal (Q19): malformed judge JSON
+                            # must not kill the run — recorded, turn continues.
+                            # The truncation class is #74's missing max_tokens cap.
+                            judge_error = str(exc)[:200]
+                            print(
+                                f"[judge] fail-open {convo.id} t{turn.n}: {judge_error}",
+                                file=sys.stderr,
+                            )
+
+                if judge_error:  # fail-open, on the record (AGENTS.md)
+                    detail = {**detail, "judge_error": judge_error}
+
+                row = ConversationTurnResult(
+                    n=turn.n,
+                    user=turn.user,
+                    expected_intent=expect.intent.value,
+                    observed_intent=observed_intent,
+                    intent_correct=intent_correct,
+                    expected_path=expect.path,
+                    observed_path=observed_path,
+                    path_correct=observed_path == expect.path,
+                    expected_constraints={
+                        k: v for k, v in expect.constraints.model_dump().items()
+                        if v not in (None, [], "")
+                    },
+                    effective=effective,
+                    constraint_detail=detail,
+                    fidelity=detail["fidelity"],
+                    no_repeat=no_repeat_pass,
+                    no_repeat_violation_ids=sorted(
+                        set(retrieved_ids) & set(shown_before)
+                    ) if expect.no_repeat else [],
+                    reference_check=None,  # v1 has no referenced-titles mechanism (C10 lands with v2);
+                                          # turns asserting the flag stay None — never a silent pass
+                    ranked_ids=retrieved_ids,
+                    relevant_ids=expect.relevant_movie_ids,
+                    hit_rate=hit_rate,
+                    tokens=tokens,
+                    is_fallback=bool(decision is not None and decision.is_fallback),
+                    fallback_reason=(decision.fallback_reason or "") if decision is not None else "",
+                    trace_id=trace_id,
+                )
+                turn_rows.append(row)
+                if turn_failed(row):  # Q18: slice captured at turn time, bounded
+                    row.constraint_detail = {
+                        **detail,
+                        "trace_slice": _bound_traces(
+                            tracer.traces()[ring_before:]
+                        ),
+                    }
+
+            intents = [t.intent_correct for t in turn_rows if t.intent_correct is not None]
+            convo_results.append(ConversationResult(
+                id=convo.id, tier=convo.tier, title=convo.title,
+                n_turns=len(turn_rows), per_turn=turn_rows,
+                intent_accuracy=(sum(intents) / len(intents)) if intents else None,
+                path_accuracy=aggregate([float(t.path_correct) for t in turn_rows]),
+                fidelity=aggregate([t.fidelity for t in turn_rows if t.fidelity is not None]),
+                failed=any(turn_failed(t) for t in turn_rows),
+            ))
+
+        all_turns = [t for c in convo_results for t in c.per_turn]
+        intents = [t.intent_correct for t in all_turns if t.intent_correct is not None]
+        no_repeat_turns = [t.no_repeat for t in all_turns if t.no_repeat is not None]
+        spend_now = (
+            self.budget_tracker.weekly_spend() if self.budget_tracker is not None else None
+        )
+        return ConversationRunSummary(
+            label=label,
+            config_snapshot=self.config.model_dump(),
+            config_hash=hash8,
+            preset=preset_slug(self.config),
+            dataset_version=conversations.version,
+            routing_stack=self.config.routing_stack,
+            n_conversations=len(convo_results),
+            n_turns=len(all_turns),
+            intent_accuracy=(sum(intents) / len(intents)) if intents else None,
+            path_accuracy=aggregate([float(t.path_correct) for t in all_turns]),
+            constraint_fidelity=aggregate(
+                [t.fidelity for t in all_turns if t.fidelity is not None]
+            ),
+            no_repeat_rate=(
+                aggregate([float(v) for v in no_repeat_turns]) if no_repeat_turns else None
+            ) or 0.0,
+            intersection_failures=sum(
+                1 for t in all_turns if t.constraint_detail.get("intersection_failure")
+            ),
+            judge_turns=len(faithfulness_scores),
+            faithfulness=(
+                aggregate(faithfulness_scores) if faithfulness_scores else None
+            ),
+            total_tokens=sum(t.tokens for t in all_turns),
+            total_cost_usd=(spend_now - spend_before)
+            if spend_before is not None and spend_now is not None else 0.0,
+            per_conversation=convo_results,
+        )
+
     def _ir_result(self, row: dict, ranked_ids: list[int]) -> QueryEvalResult:
         relevant = row["relevant_movie_ids"]
         return QueryEvalResult(
@@ -298,27 +541,60 @@ class BenchmarkRunner:
         label. Legacy `<label>.json` artifacts don't match the glob and are
         left untouched (history, #54 grill D2).
         """
-        out_dir.mkdir(parents=True, exist_ok=True)
-        now = datetime.now(UTC)
-        out_path = out_dir / f"{summary.preset}_{summary.config_hash}_{now:%Y%m%dT%H%M%SZ}.json"
-        payload = summary.model_dump()
-        payload["timestamp"] = now.isoformat()
-        prior = sorted(out_dir.glob(f"*_{summary.config_hash}_*.json"))
-        prior_same_mode = None
-        for path in reversed(prior):
-            candidate = json.loads(path.read_text(encoding="utf-8"))
-            if candidate.get("mode") == summary.mode:
-                prior_same_mode = candidate
-                break
-        if prior_same_mode is not None:
-            summary.delta = {
-                metric: round(payload[metric] - prior_same_mode.get(metric, 0.0), 4)
-                for metric in ("hit_rate", "mrr", "context_precision", "faithfulness", "relevancy", "routing_accuracy")
-                if payload.get(metric) is not None and prior_same_mode.get(metric) is not None
-            }
-            payload["delta"] = summary.delta
-        out_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
-        return out_path
+        return _write_run(
+            summary.model_dump(),
+            preset=summary.preset, config_hash8=summary.config_hash,
+            mode=summary.mode,
+            delta_metrics=("hit_rate", "mrr", "context_precision", "faithfulness",
+                           "relevancy", "routing_accuracy"),
+            out_dir=out_dir,
+        )
+
+    def save_conversations(
+        self, summary: ConversationRunSummary, out_dir: Path = RESULTS_DIR
+    ) -> Path:
+        """Same identity/delta contract as save(), mode="conversation" (#93)."""
+        return _write_run(
+            summary.model_dump(),
+            preset=summary.preset, config_hash8=summary.config_hash,
+            mode=summary.mode,
+            delta_metrics=("intent_accuracy", "path_accuracy", "constraint_fidelity",
+                           "no_repeat_rate", "intersection_failures"),
+            out_dir=out_dir,
+        )
+
+
+def _bound_traces(traces: list[dict], chars: int = 200) -> list[dict]:
+    """Q18: failing-turn trace slices embedded in the result file, bounded."""
+    def _bound(value):
+        return value[:chars] + "…" if isinstance(value, str) and len(value) > chars else value
+    return [{k: _bound(v) for k, v in trace.items()} for trace in traces]
+
+
+def _write_run(
+    payload: dict, *, preset: str, config_hash8: str, mode: str,
+    delta_metrics: tuple[str, ...], out_dir: Path,
+) -> Path:
+    """Shared #59 writer: filename identity + delta vs prior same hash+mode."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    now = datetime.now(UTC)
+    out_path = out_dir / f"{preset}_{config_hash8}_{now:%Y%m%dT%H%M%SZ}.json"
+    payload["timestamp"] = now.isoformat()
+    prior = sorted(out_dir.glob(f"*_{config_hash8}_*.json"))
+    prior_same_mode = None
+    for path in reversed(prior):
+        candidate = json.loads(path.read_text(encoding="utf-8"))
+        if candidate.get("mode") == mode:
+            prior_same_mode = candidate
+            break
+    if prior_same_mode is not None:
+        payload["delta"] = {
+            metric: round(payload[metric] - prior_same_mode.get(metric, 0.0), 4)
+            for metric in delta_metrics
+            if payload.get(metric) is not None and prior_same_mode.get(metric) is not None
+        }
+    out_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    return out_path
 
 
 def _push_langfuse(summary: BenchmarkSummary, dataset_name: str = "maya-benchmark") -> None:
@@ -344,6 +620,50 @@ def _push_langfuse(summary: BenchmarkSummary, dataset_name: str = "maya-benchmar
         print(f"[langfuse] skipped: {exc}", file=sys.stderr)
 
 
+def _push_langfuse_conversations(
+    summary: ConversationRunSummary, dataset_name: str = "maya-conversations"
+) -> None:
+    """Records the run in Langfuse (optional, best-effort, #93 Q18).
+
+    Uses ONLY the installed 4.15.1 client surface: ``create_dataset`` +
+    ``create_dataset_item`` + ``create_score`` attached to the turn's own
+    trace id (the one the driver minted per turn) — the v2-era fluent
+    dataset.item()/run().observe() API does not exist on this pin (round-4
+    review finding). Baseline comparison (v1 vs v2) is Langfuse's scores/
+    traces view; no custom comparison code.
+    """
+    try:
+        from langfuse import Langfuse
+
+        lf = Langfuse()
+        lf.create_dataset(name=dataset_name)
+        for convo in summary.per_conversation:
+            for turn in convo.per_turn:
+                lf.create_dataset_item(
+                    dataset_name=dataset_name,
+                    input=turn.user,
+                    expected_output={"intent": turn.expected_intent, "path": turn.expected_path},
+                    metadata={"conversation_id": convo.id, "turn": turn.n, "tier": convo.tier},
+                )
+                if not turn.trace_id:
+                    continue
+                scores = [("fidelity", turn.fidelity)]
+                if turn.intent_correct is not None:
+                    scores.append(("intent_correct", float(turn.intent_correct)))
+                scores.append(("path_correct", float(turn.path_correct)))
+                for name, value in scores:
+                    if value is None:
+                        continue
+                    lf.create_score(
+                        trace_id=turn.trace_id, name=name, value=value,
+                        data_type="NUMERIC",
+                        comment=f"{convo.id} t{turn.n} stack={summary.routing_stack}",
+                    )
+        print(f"[langfuse] conversation scores recorded on {summary.n_turns} turn traces")
+    except Exception as exc:  # noqa: BLE001 — telemetry must never break a run
+        print(f"[langfuse] skipped: {exc}", file=sys.stderr)
+
+
 def _engine_for(config: ExperimentConfig, db: MovieDatabase, store: MovieVectorStore) -> HybridRetrievalEngine:
     """#59: the dense pair derives from config — collection AND query embedder."""
     return HybridRetrievalEngine(
@@ -359,7 +679,20 @@ def _engine_for(config: ExperimentConfig, db: MovieDatabase, store: MovieVectorS
 
 def _report(summary: BenchmarkSummary, path: Path) -> None:
     label = summary.label
-    if summary.mode == "routing":
+    if getattr(summary, "mode", "") == "conversation":
+        intent = summary.intent_accuracy
+        intent_txt = f"{intent:.2f}" if intent is not None else "n/a"
+        print(
+            f"[{label}] conversation stack={summary.routing_stack} "
+            f"convs={summary.n_conversations} turns={summary.n_turns} "
+            f"intent={intent_txt} "
+            f"path={summary.path_accuracy:.2f} "
+            f"fidelity={summary.constraint_fidelity:.2f} "
+            f"no_repeat={summary.no_repeat_rate:.2f} "
+            f"intersections={summary.intersection_failures} "
+            f"tokens={summary.total_tokens}"
+        )
+    elif summary.mode == "routing":
         print(
             f"[{label}] routing n={summary.n_queries} "
             f"accuracy={summary.routing_accuracy:.2f} fallbacks={summary.fallback_count}"
@@ -383,7 +716,8 @@ def _report(summary: BenchmarkSummary, path: Path) -> None:
 def _run_one(
     config: ExperimentConfig, mode: str, queries: list[dict], label: str,
     dataset_version: str, db: MovieDatabase, store: MovieVectorStore,
-) -> BenchmarkSummary | None:
+    conversations: ConversationSet | None = None,
+) -> BenchmarkSummary | ConversationRunSummary | None:
     """One run of one config. Returns None when the collection isn't built.
 
     Availability guard (#30 rule): a combo without a built Chroma collection
@@ -391,7 +725,54 @@ def _run_one(
     """
     from src.maya.guardrails import WeeklyBudgetTracker
 
-    tracker = WeeklyBudgetTracker(db) if mode in ("routing", "full") else None
+    tracker = (
+        WeeklyBudgetTracker(db) if mode in ("routing", "full", "conversation") else None
+    )
+    if mode == "conversation":
+        # #93: fresh checkpointer + thread per conversation; the tracer's
+        # session IS the run (one trace per turn, Q18).
+        if conversations is None:
+            raise ValueError("conversation mode requires the golden conversations")
+        if config.routing_stack == "v2":
+            print(
+                "conversation mode: the v2 routing stack does not exist yet (#83) "
+                "— the baseline is v1",
+                file=sys.stderr,
+            )
+            return None
+        target = collection_name(config.column_preset, config.embedding_profile)
+        if not store.has_collection(target):
+            print(f"[{label}] skipped — collection `{target}` is not built", file=sys.stderr)
+            return None
+        from src.graph.orchestrator import build_maya_graph
+        from src.maya.agent import MayaSynthesizer
+        from src.maya.router import MayaRouter
+        from src.maya.guardrails import SessionTokenLimiter
+        from src.observability.tracer import DualModeObservabilityManager
+
+        tracer = DualModeObservabilityManager(session_id=f"eval-{config_hash(config)}")
+        engine = _engine_for(config, db, store)
+        runner = BenchmarkRunner(
+            config, engine,
+            judge=MayaJudge(config),
+            graph=build_maya_graph(
+                config,
+                MayaRouter(config, genre_vocabulary=db.distinct_genres()),
+                engine,
+                MayaSynthesizer(config),
+                tracer,
+                # cap=None (#93): 23 scripted conversations share this graph —
+                # a per-user-session token cap would refuse every turn after
+                # the first ~4 retrievals. The weekly tracker gates the run.
+                limiter=SessionTokenLimiter(cap=None),
+                budget_tracker=tracker,
+                checkpointer=InMemorySaver(),
+            ),
+            budget_tracker=tracker,
+            dataset_version=conversations.version,
+            tracer=tracer,
+        )
+        return runner.run_conversations(conversations, label)
     if mode == "routing":
         # Routing mode needs no retrieval stack — router + dataset only (#29).
         from src.maya.router import MayaRouter
@@ -428,12 +809,27 @@ def _run_one(
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Maya benchmark runner (#6, #59)")
-    parser.add_argument("--mode", choices=["retrieval", "full", "routing"], default="retrieval")
+    parser = argparse.ArgumentParser(description="Maya benchmark runner (#6, #59, #93)")
+    parser.add_argument("--mode", choices=["retrieval", "full", "routing", "conversation"], default="retrieval")
     parser.add_argument("--label", default=None, help="display label (default: preset slug)")
     parser.add_argument("--dataset", type=Path, default=DEFAULT_DATASET)
+    parser.add_argument("--conversations", type=Path, default=DEFAULT_CONVERSATIONS,
+                        help="golden conversations file (conversation mode)")
+    parser.add_argument("--ids", default=None,
+                        help="comma-separated conversation ids (smoke runs, e.g. C01,C02)")
+    parser.add_argument("--tier", default=None,
+                        help="filter by golden tier (conversation mode)")
+    parser.add_argument("--stack", choices=["v1", "v2"],
+                        default=os.getenv("MAYA_ROUTING_STACK", "v1"),
+                        help="routing stack under test (#83; v2 not yet built)")
     parser.add_argument("--limit", type=int, default=None, help="first N queries (smoke runs)")
     parser.add_argument("--push-langfuse", action="store_true")
+    parser.add_argument(
+        "--no-langfuse", action="store_true",
+        help="strip LANGFUSE keys before anything runs: local trace ring only. "
+        "A dead/slow Langfuse endpoint must never stall a baseline run "
+        "(observed: OTel exporter DNS failure + rate-limit backoffs).",
+    )
     parser.add_argument(
         "--router-model", default=None,
         help="override config.router_model (routing-mode A/B, #29)",
@@ -447,6 +843,12 @@ def main(argv: list[str] | None = None) -> int:
         help="run the 6 ADR 0008 column×profile cells (= --sweep embedding_combo)",
     )
     args = parser.parse_args(argv)
+
+    if args.no_langfuse:  # before ANY tracer is constructed: local ring only
+        os.environ.pop("LANGFUSE_PUBLIC_KEY", None)
+        os.environ.pop("LANGFUSE_SECRET_KEY", None)
+        os.environ.pop("LANGFUSE_HOST", None)
+        print("[trace] cloud disabled — local ring only (--no-langfuse)")
 
     queries = load_dataset(args.dataset)
     if args.limit:
@@ -476,18 +878,43 @@ def main(argv: list[str] | None = None) -> int:
     config = ExperimentConfig()
     if args.router_model:
         config = config.model_copy(update={"router_model": args.router_model})
+    if args.mode == "conversation":
+        config = config.model_copy(update={"routing_stack": args.stack})
+        conversations = load_conversations(args.conversations)
+        if args.ids:
+            wanted = {c.strip().upper() for c in args.ids.split(",")}
+            conversations = conversations.model_copy(update={
+                "conversations": [c for c in conversations.conversations if c.id.upper() in wanted]
+            })
+        if args.tier:
+            conversations = conversations.model_copy(update={
+                "conversations": [c for c in conversations.conversations if c.tier == args.tier]
+            })
+        if not conversations.conversations:
+            print("no conversations matched the given --ids/--tier filters", file=sys.stderr)
+            return 1
+    else:
+        conversations = None
     label = args.label or (
-        f"routing_{config.router_model.split('/')[-1]}" if args.mode == "routing"
+        f"conv-{config.routing_stack}" if args.mode == "conversation"
+        else f"routing_{config.router_model.split('/')[-1]}" if args.mode == "routing"
         else preset_slug(config)
     )
-    summary = _run_one(config, args.mode, queries, label, dataset_version, db, store)
+    summary = _run_one(config, args.mode, queries, label, dataset_version, db, store,
+                       conversations=conversations)
     if summary is None:
         return 1
     runner = BenchmarkRunner(config, engine=None)
-    path = runner.save(summary)
+    path = (
+        runner.save_conversations(summary)
+        if args.mode == "conversation" else runner.save(summary)
+    )
     _report(summary, path)
     if args.push_langfuse:
-        _push_langfuse(summary)
+        if args.mode == "conversation":
+            _push_langfuse_conversations(summary)
+        else:
+            _push_langfuse(summary)
     return 0
 
 

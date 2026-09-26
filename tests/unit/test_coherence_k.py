@@ -51,12 +51,14 @@ def _session():
     session = MayaSession.__new__(MayaSession)
     session.tracer = DualModeObservabilityManager(session_id="k")
     session.conversation = ConversationState()
+    session.config = ExperimentConfig()  # #93: add_turn reads message_window from it
     session.turn_log = []
     session.last_movies = []
     session.rag_version = "test"
     session.feedback_log = {}
     session.graph = _CountingGraph()
     session._graph_sig = "x"
+    session._thread_id = "k-test"  # #93: turn() sends the message + thread id
     session.ensure_graph = lambda: session.graph
     return session
 

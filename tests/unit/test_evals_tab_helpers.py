@@ -49,3 +49,19 @@ def test_sweep_baseline_labels_match_production():
     assert sweep_baseline_label("reranker") == "off"
     assert sweep_baseline_label("embedding_combo") == "full_gemini_embedding_2"
     assert sweep_baseline_label("router_model") == "~google/gemini-flash-latest"
+
+
+def test_scorecard_runs_exclude_conversation_runs():
+    """#93 round-3 fix, pinned: conversation runs have no n_queries/per_query —
+    including them in the per-run scorecard loop KeyErrors the page."""
+    from src.ui.evals_tab import scorecard_runs
+
+    runs = [
+        {"mode": "retrieval", "n_queries": 10, "label": "a"},
+        {"mode": "conversation", "n_conversations": 23, "label": "b"},  # no n_queries
+        {"mode": "full", "n_queries": 5, "label": "c"},
+        {"mode": "conversation", "n_conversations": 1, "label": "d"},
+    ]
+    kept = scorecard_runs(runs)
+    assert [r["label"] for r in kept] == ["a", "c"]
+    assert all("n_queries" in r for r in kept)  # the invariant the loop relies on
