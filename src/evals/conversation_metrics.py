@@ -167,6 +167,21 @@ def match_mode_rule(expected: ExpectedConstraints, effective: dict) -> bool:
     return effective.get("genre_match") == "all" and _present(effective.get("genres"))
 
 
+def turn_failed(turn: ConversationTurnResult) -> bool:
+    """One failure predicate, shared by the runner (row slice + conversation
+    roll-up) and the Evals tab (failed-turn tables) — #93 review round 2."""
+    detail = turn.constraint_detail or {}
+    return bool(
+        turn.intent_correct is False
+        or not turn.path_correct
+        or detail.get("intersection_failure")
+        or detail.get("error")
+        or any(not ok for ok in detail.get("keys", {}).values())
+        or detail.get("violations")
+        or turn.no_repeat_violation_ids
+    )
+
+
 # --- result models (Q14) ------------------------------------------------------
 
 class ConversationTurnResult(BaseModel):
@@ -202,7 +217,8 @@ class ConversationResult(BaseModel):
     title: str
     n_turns: int
     per_turn: list[ConversationTurnResult] = Field(default_factory=list)
-    intent_accuracy: float = 0.0
+    #: None when the stack produced no readings at all (all turns funnel-owned)
+    intent_accuracy: float | None = None
     path_accuracy: float = 0.0
     fidelity: float = 0.0
     failed: bool = False
@@ -220,7 +236,9 @@ class ConversationRunSummary(BaseModel):
     routing_stack: str = "v1"
     n_conversations: int = 0
     n_turns: int = 0
-    intent_accuracy: float = 0.0
+    #: None when no turn produced a reading (all funnel-owned) — never a
+    #: vacuous 1.0 (#93 review round 2)
+    intent_accuracy: float | None = None
     path_accuracy: float = 0.0
     constraint_fidelity: float = 0.0
     no_repeat_rate: float = 0.0

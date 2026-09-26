@@ -246,6 +246,7 @@ class MayaSession:
             query, row["response"], movies, out.get("routing_decision"),
             tokens_used=row["tokens"],
             turn_ref=len(self.turn_log),  # #26-K: identity join, stamped pre-append
+            window=self.config.message_window,  # #93: read model trims with the knob
         )
         self.turn_log.append(row)
 

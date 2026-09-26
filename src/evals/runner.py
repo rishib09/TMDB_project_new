@@ -40,6 +40,7 @@ from src.evals.conversation_metrics import (
     composite_effective,
     observed_path_v1,
     score_constraints,
+    turn_failed,
 )
 from src.evals.identity import config_hash, preset_slug
 from src.evals.judge import MayaJudge, strip_formatting
@@ -428,7 +429,7 @@ class BenchmarkRunner:
                     trace_id=trace_id,
                 )
                 turn_rows.append(row)
-                if _turn_failed(row):  # Q18: slice captured at turn time, bounded
+                if turn_failed(row):  # Q18: slice captured at turn time, bounded
                     row.constraint_detail = {
                         **detail,
                         "trace_slice": _bound_traces(
@@ -440,10 +441,10 @@ class BenchmarkRunner:
             convo_results.append(ConversationResult(
                 id=convo.id, tier=convo.tier, title=convo.title,
                 n_turns=len(turn_rows), per_turn=turn_rows,
-                intent_accuracy=(sum(intents) / len(intents)) if intents else 1.0,
+                intent_accuracy=(sum(intents) / len(intents)) if intents else None,
                 path_accuracy=aggregate([float(t.path_correct) for t in turn_rows]),
                 fidelity=aggregate([t.fidelity for t in turn_rows if t.fidelity is not None]),
-                failed=any(_turn_failed(t) for t in turn_rows),
+                failed=any(turn_failed(t) for t in turn_rows),
             ))
 
         all_turns = [t for c in convo_results for t in c.per_turn]
@@ -461,7 +462,7 @@ class BenchmarkRunner:
             routing_stack=self.config.routing_stack,
             n_conversations=len(convo_results),
             n_turns=len(all_turns),
-            intent_accuracy=(sum(intents) / len(intents)) if intents else 1.0,
+            intent_accuracy=(sum(intents) / len(intents)) if intents else None,
             path_accuracy=aggregate([float(t.path_correct) for t in all_turns]),
             constraint_fidelity=aggregate(
                 [t.fidelity for t in all_turns if t.fidelity is not None]
@@ -554,20 +555,6 @@ def _bound_traces(traces: list[dict], chars: int = 200) -> list[dict]:
     def _bound(value):
         return value[:chars] + "…" if isinstance(value, str) and len(value) > chars else value
     return [{k: _bound(v) for k, v in trace.items()} for trace in traces]
-
-
-def _turn_failed(turn: ConversationTurnResult) -> bool:
-    """One failure predicate, shared by the row and the conversation roll-up."""
-    detail = turn.constraint_detail or {}
-    return bool(
-        turn.intent_correct is False
-        or not turn.path_correct
-        or detail.get("intersection_failure")
-        or detail.get("error")
-        or any(not ok for ok in detail.get("keys", {}).values())
-        or detail.get("violations")
-        or turn.no_repeat_violation_ids
-    )
 
 
 def _write_run(
@@ -675,10 +662,13 @@ def _engine_for(config: ExperimentConfig, db: MovieDatabase, store: MovieVectorS
 def _report(summary: BenchmarkSummary, path: Path) -> None:
     label = summary.label
     if getattr(summary, "mode", "") == "conversation":
+        intent = summary.intent_accuracy
+        intent_txt = f"{intent:.2f}" if intent is not None else "n/a"
         print(
             f"[{label}] conversation stack={summary.routing_stack} "
             f"convs={summary.n_conversations} turns={summary.n_turns} "
-            f"intent={summary.intent_accuracy:.2f} path={summary.path_accuracy:.2f} "
+            f"intent={intent_txt} "
+            f"path={summary.path_accuracy:.2f} "
             f"fidelity={summary.constraint_fidelity:.2f} "
             f"no_repeat={summary.no_repeat_rate:.2f} "
             f"intersections={summary.intersection_failures} "

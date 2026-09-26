@@ -289,15 +289,12 @@ def render_conversations_section(runs: list[dict]) -> None:
             if not convo.get("failed"):
                 continue
             with st.expander(f"[{stack}] {convo['id']} · {convo['title']} — failed turns"):
+                from src.evals.conversation_metrics import ConversationTurnResult, turn_failed
                 rows = []
                 for t in convo.get("per_turn", []):
-                    if not (
-                        t.get("intent_correct") is False
-                        or not t.get("path_correct")
-                        or t.get("no_repeat_violation_ids")
-                        or (t.get("constraint_detail") or {}).get("violations")
-                        or (t.get("constraint_detail") or {}).get("intersection_failure")
-                    ):
+                    # one predicate, same as the runner — a key-miss failure
+                    # (the C01 carry-miss class) must not render an empty table
+                    if not turn_failed(ConversationTurnResult(**t)):
                         continue
                     rows.append({
                         "n": t["n"], "user": t["user"],

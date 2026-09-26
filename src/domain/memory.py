@@ -194,12 +194,15 @@ class ConversationState(BaseModel):
         decision: QueryRoutingDecision | None = None,
         tokens_used: int = 0,
         turn_ref: int | None = None,
+        window: int = MESSAGE_WINDOW,
     ) -> None:
         """Updates conversational state with new turn, entity focus, and shown IDs.
 
         ``turn_ref`` (#26-K): the turn_log index this exchange corresponds to
         — stamped on the assistant message so badges/feedback survive the
-        sliding message window.
+        sliding message window. ``window`` (#93): the caller passes
+        ``ExperimentConfig.message_window`` so the read model trims to the
+        SAME size as the graph's trim node (ADR 0004 — the knob holds).
         """
         user_intent_str = decision.intent.value if decision else None
         retrieved_ids = [m.id for m in retrieved_movies]
@@ -237,8 +240,8 @@ class ConversationState(BaseModel):
 
         self.session_tokens += tokens_used
 
-        if len(self.messages) > MESSAGE_WINDOW:
-            self.messages = self.messages[-MESSAGE_WINDOW:]
+        if len(self.messages) > window:
+            self.messages = self.messages[-window:]
 
     def clear(self) -> None:
         """Reset conversation state to a clean slate."""

@@ -595,7 +595,7 @@ def build_maya_graph(
 
     def trim_node(state: MayaGraphState) -> dict:
         """#93/D16: the window rides Experiment Config (ADR 0004)."""
-        return trim_messages(state, config.message_window)
+        return trim_message_window(state, config.message_window)
 
     graph = StateGraph(MayaGraphState)
     graph.add_node("begin_turn", begin_turn_node)
@@ -635,19 +635,21 @@ def _refusal_text(reason: str) -> str:
     )
 
 
-#: Echo cap for the zero-retrieval response — a hostile query must not be
-#: able to balloon the deterministic reply.
+_EMPTY_QUERY_ECHO_CAP = 120  #: Echo cap for the zero-retrieval response —
+                             #: a hostile query must not balloon the reply.
 
 #: #93/D16: the conversation message window kept inside the thread. The
 #: tunable lives on ExperimentConfig.message_window; this is the pure helper
 #: the trim node calls (module-level for testability).
 
 
-def trim_messages(state: MayaGraphState, window: int) -> dict:
+def trim_message_window(state: MayaGraphState, window: int) -> dict:
     """Keeps the last ``window`` messages inside the thread.
 
     ``add_messages`` resolves ``RemoveMessage`` by id, so the window is
     maintained by the same reducer that appends — no separate list juggling.
+    (Named trim_message_window, not trim_messages: langchain_core's
+    ``messages.trim_messages`` has different semantics — token budget.)
     """
     overflow = state.messages[: max(len(state.messages) - window, 0)]
     return {"messages": [RemoveMessage(id=m.id) for m in overflow if m.id]}
@@ -675,7 +677,6 @@ def begin_turn_node(state: MayaGraphState) -> dict:
     }
 
 
-_EMPTY_QUERY_ECHO_CAP = 120
 _SMUGGLED_MARKUP_RE = re.compile(r"</?\s*\w+\s*/?>|```.*?```", re.DOTALL)
 
 

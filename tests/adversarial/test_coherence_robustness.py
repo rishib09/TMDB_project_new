@@ -129,6 +129,7 @@ def _bare_session():
     session = MayaSession.__new__(MayaSession)
     session.tracer = DualModeObservabilityManager(session_id="adv")
     session.conversation = ConversationState()
+    session.config = ExperimentConfig()  # #93: add_turn reads message_window from it
     session.turn_log = []
     session.last_movies = []
     session.rag_version = "test"
