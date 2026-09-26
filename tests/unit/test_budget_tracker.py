@@ -4,6 +4,7 @@ from datetime import date
 
 import pytest
 
+from src.domain.budget import utc_today
 from src.maya.guardrails import (
     GuardrailVerdict,
     WeeklyBudgetTracker,
@@ -24,7 +25,7 @@ class FakeSink:
         self.rows.append((date_str, cost_usd, tokens_used, model_name))
 
     def weekly_spend_usd(self, reference=None):
-        ref = reference or date.today()
+        ref = reference or utc_today()
         week_start = ref.toordinal() - ref.weekday()
         return sum(
             cost for (d, cost, _, _) in self.rows
@@ -78,7 +79,7 @@ def test_record_appends_row_and_accumulates(db):
 def test_week_rollover_resets_spend(db):
     from datetime import timedelta
 
-    old_date = (date.today() - timedelta(days=date.today().weekday() + 3)).isoformat()
+    old_date = (utc_today() - timedelta(days=utc_today().weekday() + 3)).isoformat()
     db.record_budget_entry(old_date, 9.99, 1, "old-model")  # last week
     tracker = WeeklyBudgetTracker(db)
     assert tracker.current_verdict() is GuardrailVerdict.CLEAN  # old spend ignored
@@ -123,7 +124,7 @@ def test_guard_node_blocks_at_weekly_cap():
 def test_record_and_verdict_at_cap_block_next_turn(db):
     tracker = WeeklyBudgetTracker(db)
     # simulate a week that's already at cap
-    db.record_budget_entry(date.today().isoformat(), 10.00, 1, "any")
+    db.record_budget_entry(utc_today().isoformat(), 10.00, 1, "any")
     assert tracker.current_verdict() is GuardrailVerdict.BLOCKED
     assert tracker.record("meta-llama/llama-3.2-3b-instruct", 10, 10) is GuardrailVerdict.BLOCKED
 

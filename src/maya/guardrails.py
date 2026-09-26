@@ -12,12 +12,12 @@ before routing. Design notes:
 
 import logging
 import re
-from datetime import date
 from enum import StrEnum
 from typing import ClassVar, Protocol
 
 from pydantic import BaseModel, Field
 
+from src.domain.budget import utc_today
 from src.domain.memory import ConversationState
 
 logger = logging.getLogger(__name__)
@@ -264,7 +264,7 @@ class WeeklyBudgetTracker:
         cost = estimate_cost(model, prompt_tokens, completion_tokens)
         try:
             self._sink.record_budget_entry(
-                date.today().isoformat(), cost, prompt_tokens + completion_tokens, model
+                utc_today().isoformat(), cost, prompt_tokens + completion_tokens, model
             )
             spend = self._sink.weekly_spend_usd()
         except Exception:  # noqa: BLE001 — fail-open, see class docstring

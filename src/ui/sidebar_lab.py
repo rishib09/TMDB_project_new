@@ -11,6 +11,7 @@ only while the config matches it exactly — any manual edit clears it.
 """
 
 import json
+import logging
 import urllib.request
 from datetime import date, timedelta
 from functools import lru_cache
@@ -21,6 +22,8 @@ from src.domain.budget import utc_today, week_bounds
 from src.domain.config import ExperimentConfig, PresetType, matching_preset
 from src.indexing.embeddings import MODEL_PROFILES, collection_name
 from src.maya.guardrails import SessionCostLimiter
+
+logger = logging.getLogger(__name__)
 
 _ROUTER_MODELS = [
     "~google/gemini-flash-latest",  # #29 upgrade (~ = OpenRouter newest-Flash alias)
@@ -261,13 +264,14 @@ def knob_editor(
 
 
 def format_week_caption(
-    weekly_spend: float, weekly_cap: float, week_start: date, today_spend: float
+    weekly_spend: float, weekly_cap: float, reference: date, today_spend: float
 ) -> str:
     """Pure caption for the weekly meter (#39): which week, reset, today.
 
     Module-level and streamlit-free so the window text is unit-testable.
+    Derives the bounds through week_bounds — the ONE week definition.
     """
-    week_end = week_start + timedelta(days=6)
+    week_start, week_end = week_bounds(reference)
     reset_date = week_end + timedelta(days=1)
     return (
         f"Weekly API spend: ${weekly_spend:.2f} / ${weekly_cap:.2f} — "
@@ -289,12 +293,13 @@ def render_budget_meter(session) -> None:
     try:
         weekly_spend = tracker.weekly_spend()
         today_spend = session.db.daily_spend_usd()
-    except Exception:  # sink read failure must not break the sidebar
+    except Exception:  # noqa: BLE001 — fail-open (AGENTS.md: explicit + recorded)
+        logger.warning("budget sink read failed; meter shows session only", exc_info=True)
         return
     spend_ratio = min(weekly_spend / tracker.WEEKLY_CAP_USD, 1.0)
     st.progress(spend_ratio, text=f"Weekly API spend: ${weekly_spend:.2f} / ${tracker.WEEKLY_CAP_USD:.2f}")
     st.caption(format_week_caption(
-        weekly_spend, tracker.WEEKLY_CAP_USD, week_bounds(utc_today())[0], today_spend
+        weekly_spend, tracker.WEEKLY_CAP_USD, utc_today(), today_spend
     ))
     weekly_verdict = tracker.verdict_for(weekly_spend)
     if weekly_verdict.value == "suspicious":
