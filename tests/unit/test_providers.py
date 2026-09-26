@@ -118,3 +118,36 @@ def test_synthesis_usage_reports_wire_model(monkeypatch):
     )
     _, usage = synth.synthesize("a sci-fi movie", decision, [], [])
     assert usage.model == "glm-5.3-flash"
+
+
+def test_allow_swap_false_pins_google_family_verbatim():
+    """#97 review P1: the judge must be able to opt out of the family swap —
+    a Gemini judge_model id stays verbatim on OpenRouter even under a z.ai key."""
+    for mid in ("google/gemini-3.5-flash-lite", "~google/gemini-flash-latest"):
+        ep = resolve_chat_endpoint(mid, zai_api_key="zk1", allow_swap=False)
+        assert (ep.provider, ep.wire_model) == ("openrouter", mid)
+
+
+def test_allow_swap_does_not_affect_glm_provider_choice():
+    """allow_swap gates the family MODEL swap only; glm ids still route by key."""
+    zai = resolve_chat_endpoint("glm-5.3-flash", zai_api_key="zk1", allow_swap=False)
+    assert zai.provider == "zai"
+    fallback = resolve_chat_endpoint("glm-5.3-flash", allow_swap=False)
+    assert (fallback.provider, fallback.wire_model) == ("openrouter", "z-ai/glm-5.3-flash")
+
+
+def test_judge_with_gemini_id_stays_openrouter_under_zai_key(monkeypatch):
+    """The guard, enforced at the judge call site: even a Gemini judge_model
+    must not silently swap while ZAI_API_KEY is set."""
+    from src.domain.config import ExperimentConfig
+    from src.evals.judge import MayaJudge
+
+    monkeypatch.setenv("ZAI_API_KEY", "zk1")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "or-key")  # client construction needs a key
+    cfg = ExperimentConfig().model_copy(
+        update={"judge_model": "google/gemini-3.5-flash-lite"}
+    )
+    judge = MayaJudge(cfg)
+    assert (judge._endpoint.provider, judge._endpoint.wire_model) == (
+        "openrouter", "google/gemini-3.5-flash-lite",
+    )

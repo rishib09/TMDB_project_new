@@ -17,7 +17,8 @@ Resolution rules (user decision #97):
   ``google/gemini-3.5-flash-lite``, verified 2026-09-26).
 - Everything else (e.g. the judge's ``meta-llama/...``) always goes to
   OpenRouter verbatim, z.ai key or not — the judge comparability guard
-  (#97 requirement 4) is structural, not conventional.
+  (#97 requirement 4) is structural, not conventional: the judge call site
+  passes ``allow_swap=False``, so even a Gemini judge id can never swap.
 
 An explicitly passed ``openrouter_api_key`` (the constructors' pre-existing
 ``api_key`` argument, used by tests and tools) pins OpenRouter: callers
@@ -25,6 +26,7 @@ only offer the z.ai key when no explicit key was given.
 """
 
 from dataclasses import dataclass
+from typing import Literal
 
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 DEFAULT_ZAI_BASE_URL = "https://api.z.ai/api/paas/v4"
@@ -37,7 +39,7 @@ class ProviderEndpoint:
     base_url: str
     api_key: str | None
     wire_model: str
-    provider: str  # "zai" | "openrouter" — budget attribution
+    provider: Literal["zai", "openrouter"]  # budget attribution
 
 
 def resolve_chat_endpoint(
@@ -47,6 +49,7 @@ def resolve_chat_endpoint(
     zai_api_key: str | None = None,
     openrouter_api_key: str | None = None,
     zai_base_url: str = DEFAULT_ZAI_BASE_URL,
+    allow_swap: bool = True,  # False: config id passes through verbatim (judge guard)
 ) -> ProviderEndpoint:
     """Resolve one model call to (base_url, api_key, wire_model, provider).
 
@@ -58,8 +61,12 @@ def resolve_chat_endpoint(
         return ProviderEndpoint(
             OPENROUTER_BASE_URL, openrouter_api_key, f"z-ai/{model_id}", "openrouter"
         )
-    if zai_api_key and (
-        model_id.startswith("~google/") or model_id.startswith("google/gemini")
+    if (
+        allow_swap
+        and zai_api_key
+        and (
+            model_id.startswith("~google/") or model_id.startswith("google/gemini")
+        )
     ):
         return ProviderEndpoint(zai_base_url, zai_api_key, zai_model, "zai")
     return ProviderEndpoint(

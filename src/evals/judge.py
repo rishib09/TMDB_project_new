@@ -70,13 +70,15 @@ class MayaJudge:
 
     def __init__(self, config: ExperimentConfig, api_key: str | None = None) -> None:
         self.config = config
-        # the judge goes through the same seam; its llama id is not in the
-        # swappable family, so the endpoint is always OpenRouter (#97 guard)
+        # the judge goes through the same seam with allow_swap=False: NO model
+        # substitution, ever (#97 requirement 4, review P1 — structural now,
+        # not conventional). glm ids still route to z.ai for cheaper transport.
         self._endpoint = resolve_chat_endpoint(
             config.judge_model,
             zai_api_key=os.getenv("ZAI_API_KEY") if api_key is None else None,
             openrouter_api_key=api_key or os.getenv("OPENROUTER_API_KEY"),
             zai_base_url=os.getenv("ZAI_BASE_URL") or DEFAULT_ZAI_BASE_URL,
+            allow_swap=False,
         )
         self._llm = ChatOpenAI(
             model=self._endpoint.wire_model,
