@@ -42,8 +42,9 @@ from src.maya.guardrails import (
     GuardrailVerdict,
     InjectionFilter,
     OffTopicPivot,
-    SessionTokenLimiter,
+    SessionCostLimiter,
     WeeklyBudgetTracker,
+    estimate_cost,
 )
 from src.maya.probing import (
     build_filter_carryover_notice,
@@ -70,7 +71,7 @@ def build_maya_graph(
     engine: HybridRetrievalEngine,
     synthesizer: MayaSynthesizer,
     tracer: DualModeObservabilityManager,
-    limiter: SessionTokenLimiter | None = None,
+    limiter: SessionCostLimiter | None = None,
     budget_tracker: WeeklyBudgetTracker | None = None,
     checkpointer: InMemorySaver | None = None,
 ) -> CompiledStateGraph:
@@ -80,7 +81,7 @@ def build_maya_graph(
     the caller — the graph itself owns only sequencing and conditional edges,
     which is what makes the unit tests mock-free at the component level.
     """
-    limiter = limiter or SessionTokenLimiter()
+    limiter = limiter or SessionCostLimiter()
     injection_filter = InjectionFilter()
     pivot = OffTopicPivot()
 
@@ -529,6 +530,9 @@ def build_maya_graph(
             "synthesis_usage": usage,
             "messages": [AIMessage(content=response_text)],
             "session_tokens": tokens_used,
+            "session_cost_usd": estimate_cost(
+                usage.model, usage.prompt_tokens, usage.completion_tokens
+            ),
             "rolling_summary": _update_summary(state, decision),
         }
 
@@ -756,6 +760,7 @@ def _to_conversation_state(state: MayaGraphState) -> ConversationState:
     """Projection of the graph state onto the router's ConversationState input."""
     conversation = ConversationState(
         session_tokens=state.session_tokens,
+        session_cost_usd=state.session_cost_usd,
         focused_entity=state.focused_entity,
         focused_person=state.focused_person,
     )

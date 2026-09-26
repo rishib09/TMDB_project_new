@@ -15,7 +15,7 @@ from src.domain.movie import MovieRecord
 from src.domain.routing import IntentType, QueryRoutingDecision
 from src.graph.orchestrator import build_maya_graph
 from src.graph.state import SynthesisUsage
-from src.maya.guardrails import SessionTokenLimiter
+from src.maya.guardrails import SessionCostLimiter
 from src.observability.tracer import DualModeObservabilityManager
 from src.retrieval.hybrid_engine import RetrievalResult
 
@@ -225,8 +225,9 @@ def test_injection_refused_before_router(tracer):
 
 
 def test_budget_exhaustion_refuses_turn(tracer):
-    limiter = SessionTokenLimiter()
-    limiter.record("fake-model", SessionTokenLimiter.SESSION_CAP, 0)
+    limiter = SessionCostLimiter()
+    # 100k tokens on the $1/MTok unknown-model fallback = the $0.10 cap (#39)
+    limiter.record("fake-model", int(SessionCostLimiter.SESSION_CAP_USD * 1_000_000), 0)
     graph = build_maya_graph(ExperimentConfig(), FakeRouter([]), FakeEngine(),
                              FakeSynthesizer(), tracer, limiter=limiter)
 
@@ -352,7 +353,7 @@ def test_zero_retrieval_response_asks_refinement_question():
 
 def test_zero_retrieval_no_usage_no_budget_charge():
     """#21: no LLM call → no synthesis usage, no session-token charge."""
-    limiter = SessionTokenLimiter()
+    limiter = SessionCostLimiter()
     graph = build_maya_graph(
         ExperimentConfig(), FakeRouter([_decision()]), FakeEngine(movies=[]),
         FakeSynthesizer(), DualModeObservabilityManager(session_id="t"), limiter,

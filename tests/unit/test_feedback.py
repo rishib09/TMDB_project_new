@@ -106,7 +106,7 @@ def test_turn_log_carries_trace_id_and_rag_version(monkeypatch):
     from src.domain.routing import IntentType, QueryRoutingDecision
     from src.graph.orchestrator import build_maya_graph
     from src.graph.state import SynthesisUsage
-    from src.maya.guardrails import SessionTokenLimiter
+    from src.maya.guardrails import SessionCostLimiter
     from src.observability.tracer import DualModeObservabilityManager
     from src.retrieval.hybrid_engine import RetrievalResult
     from src.ui.session import MayaSession
@@ -131,7 +131,7 @@ def test_turn_log_carries_trace_id_and_rag_version(monkeypatch):
     session.config = ExperimentConfig()
     session.conversation = ConversationState()
     session.tracer = DualModeObservabilityManager(session_id="t")
-    session.limiter = SessionTokenLimiter()
+    session.limiter = SessionCostLimiter()
     session.feedback_store = FeedbackStore(":memory:")
     session.feedback_log = {}
     session.rag_version = "v1_1_enriched"

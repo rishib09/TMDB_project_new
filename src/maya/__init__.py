@@ -5,7 +5,7 @@ from src.maya.guardrails import (
     GuardrailVerdict,
     InjectionFilter,
     OffTopicPivot,
-    SessionTokenLimiter,
+    SessionCostLimiter,
 )
 from src.maya.router import MayaRouter
 
@@ -15,5 +15,5 @@ __all__ = [
     "InjectionFilter",
     "MayaRouter",
     "OffTopicPivot",
-    "SessionTokenLimiter",
+    "SessionCostLimiter",
 ]

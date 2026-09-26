@@ -12,7 +12,7 @@ from src.domain.memory import (
 )
 from src.domain.routing import IntentType, MetadataFilterCriteria, QueryRoutingDecision
 from src.graph.orchestrator import build_maya_graph
-from src.maya.guardrails import SessionTokenLimiter
+from src.maya.guardrails import SessionCostLimiter
 from src.maya.probing import (
     build_filter_carryover_notice,
     extract_probe_answers,
@@ -232,7 +232,7 @@ def test_guard_resets_preferences_even_mid_funnel():
         FakeEngine(),
         FakeSynthesizer(),
         DualModeObservabilityManager(session_id="t"),
-        limiter=SessionTokenLimiter(),
+        limiter=SessionCostLimiter(),
     )
     out = graph.invoke({
         "messages": [HumanMessage(content="something completely different")],
@@ -254,7 +254,7 @@ def test_first_funnel_recommendation_announces_carried_filters():
         FakeEngine([_movie()]),
         FakeSynthesizer(response="Here are five films."),
         DualModeObservabilityManager(session_id="t"),
-        limiter=SessionTokenLimiter(),
+        limiter=SessionCostLimiter(),
     )
     out = graph.invoke({
         "messages": [HumanMessage(content="go ahead")],

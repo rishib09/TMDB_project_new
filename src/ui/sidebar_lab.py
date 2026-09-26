@@ -11,14 +11,19 @@ only while the config matches it exactly — any manual edit clears it.
 """
 
 import json
+import logging
 import urllib.request
+from datetime import date, timedelta
 from functools import lru_cache
 
 import streamlit as st
 
+from src.domain.budget import utc_today, week_bounds
 from src.domain.config import ExperimentConfig, PresetType, matching_preset
 from src.indexing.embeddings import MODEL_PROFILES, collection_name
-from src.maya.guardrails import SessionTokenLimiter
+from src.maya.guardrails import SessionCostLimiter
+
+logger = logging.getLogger(__name__)
 
 _ROUTER_MODELS = [
     "glm-5.3-flash",  # #97: z.ai native (used automatically under ZAI_API_KEY)
@@ -262,24 +267,44 @@ def knob_editor(
     return edited if changed else None
 
 
+def format_week_caption(
+    weekly_spend: float, weekly_cap: float, reference: date, today_spend: float
+) -> str:
+    """Pure caption for the weekly meter (#39): which week, reset, today.
+
+    Module-level and streamlit-free so the window text is unit-testable.
+    Derives the bounds through week_bounds — the ONE week definition.
+    """
+    week_start, week_end = week_bounds(reference)
+    reset_date = week_end + timedelta(days=1)
+    return (
+        f"Weekly API spend: ${weekly_spend:.2f} / ${weekly_cap:.2f} — "
+        f"window Mon {week_start:%d %b} – Sun {week_end:%d %b}, "
+        f"resets Mon {reset_date:%d %b}, today ${today_spend:.2f}"
+    )
+
+
 def render_budget_meter(session) -> None:
-    """Session tokens vs the 15k cap + weekly $ spend vs the $10 cap (#8)."""
-    used = session.conversation.session_tokens
-    ratio = min(used / SessionTokenLimiter.SESSION_CAP, 1.0)
-    st.progress(ratio, text=f"Session tokens: {used:,} / {SessionTokenLimiter.SESSION_CAP:,}")
+    """Session $ spend vs the $0.10 cap + weekly $ spend vs the $10 cap (#39)."""
+    used_cost = session.conversation.session_cost_usd
+    cap = SessionCostLimiter.SESSION_CAP_USD
+    ratio = min(used_cost / cap, 1.0)
+    st.progress(ratio, text=f"Session spend: ${used_cost:.2f} / ${cap:.2f} — resets on new session")
     if session.limiter.check_current().verdict.value == "suspicious":
-        st.warning("Near the session token cap — wrap up this session soon.")
+        st.warning("Near the session cost cap — wrap up this session soon.")
 
     tracker = session.budget_tracker
     try:
         weekly_spend = tracker.weekly_spend()
-    except Exception:  # sink read failure must not break the sidebar
+        today_spend = session.db.daily_spend_usd()
+    except Exception:  # noqa: BLE001 — fail-open (AGENTS.md: explicit + recorded)
+        logger.warning("budget sink read failed; meter shows session only", exc_info=True)
         return
     spend_ratio = min(weekly_spend / tracker.WEEKLY_CAP_USD, 1.0)
-    st.progress(
-        spend_ratio,
-        text=f"Weekly API spend: ${weekly_spend:.2f} / ${tracker.WEEKLY_CAP_USD:.2f}",
-    )
+    st.progress(spend_ratio, text=f"Weekly API spend: ${weekly_spend:.2f} / ${tracker.WEEKLY_CAP_USD:.2f}")
+    st.caption(format_week_caption(
+        weekly_spend, tracker.WEEKLY_CAP_USD, utc_today(), today_spend
+    ))
     weekly_verdict = tracker.verdict_for(weekly_spend)
     if weekly_verdict.value == "suspicious":
         st.warning("Weekly API budget nearing its cap — Maya will pause when it's exhausted.")

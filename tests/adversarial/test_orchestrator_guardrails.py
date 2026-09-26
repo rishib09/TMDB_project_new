@@ -14,7 +14,7 @@ from src.domain.movie import MovieRecord
 from src.domain.routing import IntentType, QueryRoutingDecision
 from src.graph.orchestrator import build_maya_graph
 from src.graph.state import SynthesisUsage
-from src.maya.guardrails import SessionTokenLimiter
+from src.maya.guardrails import SessionCostLimiter
 from src.observability.tracer import DualModeObservabilityManager
 
 pytestmark = pytest.mark.adversarial
@@ -154,20 +154,20 @@ def test_cwa_violation_detection_via_synthesizer_verifier():
 
 
 def test_budget_cap_stops_runaway_sessions():
-    limiter = SessionTokenLimiter()
+    limiter = SessionCostLimiter()
     graph = _graph(limiter=limiter)
     # burn the budget turn by turn through the graph itself
-    for _ in range(200):
-        limiter.record("fake", 80, 0)  # 200 x 80 = 16,000 > 15,000 cap
-        if limiter.check_current().verdict.value == "blocked":
+    for _ in range(100):
+        limiter.record("fake", 10_000, 0)  # $0.01/call at the $1/MTok fallback
+        if limiter.check_current().verdict.value == "blocked":  # ≥ $0.10 cap
             break
     out = graph.invoke({"messages": [HumanMessage(content="another movie")]})
     assert "budget exhausted" in out["final_response"]
 
 
 def test_throttle_threshold_still_serves_but_flags():
-    limiter = SessionTokenLimiter()
-    limiter.record("fake", int(SessionTokenLimiter.SESSION_CAP * 0.9), 0)
+    limiter = SessionCostLimiter()
+    limiter.record("fake", 90_000, 0)  # $0.09 ≥ 80% of the $0.10 cap
     status = limiter.check_current()
     assert status.verdict.value == "suspicious"  # near cap: flag, don't block
 

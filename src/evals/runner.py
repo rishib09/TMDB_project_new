@@ -749,7 +749,7 @@ def _run_one(
         from src.graph.orchestrator import build_maya_graph
         from src.maya.agent import MayaSynthesizer
         from src.maya.router import MayaRouter
-        from src.maya.guardrails import SessionTokenLimiter
+        from src.maya.guardrails import SessionCostLimiter
         from src.observability.tracer import DualModeObservabilityManager
 
         tracer = DualModeObservabilityManager(session_id=f"eval-{config_hash(config)}")
@@ -764,9 +764,9 @@ def _run_one(
                 MayaSynthesizer(config),
                 tracer,
                 # cap=None (#93): 23 scripted conversations share this graph —
-                # a per-user-session token cap would refuse every turn after
-                # the first ~4 retrievals. The weekly tracker gates the run.
-                limiter=SessionTokenLimiter(cap=None),
+                # a per-user-session cap would refuse every turn after the
+                # first few retrievals. The weekly tracker gates the run.
+                limiter=SessionCostLimiter(cap=None),
                 budget_tracker=tracker,
                 checkpointer=InMemorySaver(),
             ),
@@ -797,14 +797,14 @@ def _run_one(
 
     from src.graph.orchestrator import build_maya_graph
     from src.maya.agent import MayaSynthesizer
-    from src.maya.guardrails import SessionTokenLimiter
+    from src.maya.guardrails import SessionCostLimiter
     from src.maya.router import MayaRouter
     from src.observability.tracer import DualModeObservabilityManager
 
     runner.graph = build_maya_graph(
         config, MayaRouter(config), engine, MayaSynthesizer(config),
         DualModeObservabilityManager(session_id="benchmark"),
-        limiter=SessionTokenLimiter(),
+        limiter=SessionCostLimiter(),
     )
     runner.judge = MayaJudge(config)
     return runner.run_full(queries, label)

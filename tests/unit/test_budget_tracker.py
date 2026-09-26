@@ -4,6 +4,7 @@ from datetime import date
 
 import pytest
 
+from src.domain.budget import utc_today
 from src.maya.guardrails import (
     GuardrailVerdict,
     WeeklyBudgetTracker,
@@ -24,7 +25,7 @@ class FakeSink:
         self.rows.append((date_str, cost_usd, tokens_used, model_name))
 
     def weekly_spend_usd(self, reference=None):
-        ref = reference or date.today()
+        ref = reference or utc_today()
         week_start = ref.toordinal() - ref.weekday()
         return sum(
             cost for (d, cost, _, _) in self.rows
@@ -78,7 +79,7 @@ def test_record_appends_row_and_accumulates(db):
 def test_week_rollover_resets_spend(db):
     from datetime import timedelta
 
-    old_date = (date.today() - timedelta(days=date.today().weekday() + 3)).isoformat()
+    old_date = (utc_today() - timedelta(days=utc_today().weekday() + 3)).isoformat()
     db.record_budget_entry(old_date, 9.99, 1, "old-model")  # last week
     tracker = WeeklyBudgetTracker(db)
     assert tracker.current_verdict() is GuardrailVerdict.CLEAN  # old spend ignored
@@ -123,9 +124,85 @@ def test_guard_node_blocks_at_weekly_cap():
 def test_record_and_verdict_at_cap_block_next_turn(db):
     tracker = WeeklyBudgetTracker(db)
     # simulate a week that's already at cap
-    db.record_budget_entry(date.today().isoformat(), 10.00, 1, "any")
+    db.record_budget_entry(utc_today().isoformat(), 10.00, 1, "any")
     assert tracker.current_verdict() is GuardrailVerdict.BLOCKED
     assert tracker.record("meta-llama/llama-3.2-3b-instruct", 10, 10) is GuardrailVerdict.BLOCKED
+
+
+# --- session cost limiter (#39) ---------------------------------------------
+
+def test_session_cost_limiter_thresholds():
+    """Under $0.08 clean, ≥ $0.08 warn, ≥ $0.10 block ("m" prices at the $1/MTok
+    fallback; +1 tokens keep the sums clear of float-equality at the lines)."""
+    from src.maya.guardrails import SessionCostLimiter
+
+    limiter = SessionCostLimiter()
+    assert limiter.record("m", 50_000, 0) is GuardrailVerdict.CLEAN       # $0.05
+    assert limiter.record("m", 30_001, 0) is GuardrailVerdict.SUSPICIOUS  # $0.080001
+    assert limiter.record("m", 20_001, 0) is GuardrailVerdict.BLOCKED     # $0.100002
+
+
+def test_session_cost_accumulates_blended_estimate():
+    """Per-session cost uses the SAME blended table as the weekly tracker."""
+    from src.maya.guardrails import SessionCostLimiter
+
+    limiter = SessionCostLimiter()
+    limiter.record("meta-llama/llama-3.3-70b-instruct", 1_000_000, 0)      # $0.20
+    assert limiter.record("meta-llama/llama-3.3-70b-instruct", 3_000_000, 0) is GuardrailVerdict.BLOCKED
+
+
+# --- week window (#39) --------------------------------------------------------
+
+def test_week_bounds_always_monday_to_sunday():
+    from datetime import date, timedelta
+
+    from src.domain.budget import week_bounds
+
+    monday = date(2026, 9, 21)
+    for offset in range(7):
+        start, end = week_bounds(monday + timedelta(days=offset))
+        assert start == monday and end == date(2026, 9, 27)
+        assert start.weekday() == 0 and end.weekday() == 6
+
+
+def test_week_boundary_sunday_in_monday_out(db):
+    """The Mon 23:59 entry belongs to this week; Mon 00:00 starts fresh."""
+    from datetime import timedelta
+
+    from src.domain.budget import utc_today
+
+    today = utc_today()
+    monday = today - timedelta(days=today.weekday())
+    sunday = monday + timedelta(days=6)
+    next_monday = sunday + timedelta(days=1)
+    db.record_budget_entry(sunday.isoformat(), 4.00, 1, "sun")
+    db.record_budget_entry(next_monday.isoformat(), 6.00, 1, "next-mon")
+    assert db.weekly_spend_usd(reference=monday) == pytest.approx(4.00)
+    assert db.weekly_spend_usd(reference=next_monday) == pytest.approx(6.00)
+
+
+def test_daily_spend_usd_counts_only_that_day(db):
+    from datetime import timedelta
+
+    from src.domain.budget import utc_today
+
+    today = utc_today()
+    db.record_budget_entry(today.isoformat(), 1.00, 1, "a")
+    db.record_budget_entry(today.isoformat(), 0.50, 1, "b")
+    db.record_budget_entry((today - timedelta(days=1)).isoformat(), 9.00, 1, "yesterday")
+    assert db.daily_spend_usd() == pytest.approx(1.50)
+
+
+def test_format_week_caption_names_window_reset_and_today():
+    from datetime import date
+
+    from src.ui.sidebar_lab import format_week_caption
+
+    caption = format_week_caption(1.23, 10.0, date(2026, 9, 21), 0.40)
+    assert "Mon 21 Sep" in caption and "Sun 27 Sep" in caption
+    assert "resets Mon 28 Sep" in caption
+    assert "$1.23" in caption and "$0.40" in caption
+
 
 def test_estimate_cost_glm_row_pinned():
     # #97: glm-5.3-flash @ $0.25/1M blended (z.ai list 0.15 in / 0.50 out)
