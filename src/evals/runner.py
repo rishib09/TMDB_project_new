@@ -75,7 +75,9 @@ SWEEPS: dict[str, list] = {
     "retrieval_top_k": [3, 5, 10],
     "embedding_combo": ADR_0008_COMBOS,
     "router_model": [
-        "~google/gemini-flash-latest",
+        "glm-5.3-flash",  # #97 z.ai native
+        "google/gemini-3.5-flash-lite",  # #97 notch-down — the new pristine default
+        "~google/gemini-flash-latest",  # former default (alias → gemini-3.8-flash), kept for A/B
         "meta-llama/llama-3.3-70b-instruct",
         "meta-llama/llama-3.2-3b-instruct",
     ],

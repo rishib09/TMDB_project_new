@@ -26,11 +26,15 @@ from src.maya.guardrails import SessionCostLimiter
 logger = logging.getLogger(__name__)
 
 _ROUTER_MODELS = [
-    "~google/gemini-flash-latest",  # #29 upgrade (~ = OpenRouter newest-Flash alias)
+    "glm-5.3-flash",  # #97: z.ai native (used automatically under ZAI_API_KEY)
+    "google/gemini-3.5-flash-lite",  # #97 notch-down, dated = frozen
+    "~google/gemini-flash-latest",  # #29 upgrade (alias → newest Flash), kept for A/B
     "meta-llama/llama-3.3-70b-instruct",
     "meta-llama/llama-3.2-3b-instruct",
 ]
 _SYNTH_MODELS = [
+    "glm-5.3-flash",  # #97
+    "google/gemini-3.5-flash-lite",  # #97 notch-down
     "~google/gemini-flash-latest",
     "meta-llama/llama-3.3-70b-instruct",
     "meta-llama/llama-3.2-3b-instruct",

@@ -202,3 +202,9 @@ def test_format_week_caption_names_window_reset_and_today():
     assert "Mon 21 Sep" in caption and "Sun 27 Sep" in caption
     assert "resets Mon 28 Sep" in caption
     assert "$1.23" in caption and "$0.40" in caption
+
+
+def test_estimate_cost_glm_row_pinned():
+    # #97: glm-5.3-flash @ $0.25/1M blended (z.ai list 0.15 in / 0.50 out)
+    assert estimate_cost("glm-5.3-flash", 1_000_000, 0) == pytest.approx(0.25)
+    assert estimate_cost("z-ai/glm-5.3-flash", 500_000, 500_000) == pytest.approx(0.25)

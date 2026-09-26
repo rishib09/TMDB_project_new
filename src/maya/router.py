@@ -25,8 +25,11 @@ from src.domain.routing import (
     QueryRoutingDecision,
 )
 from src.maya.probing import canonical_mood, extract_probe_answers, strip_markup
-
-OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+from src.maya.providers import (
+    DEFAULT_ZAI_BASE_URL,
+    OPENROUTER_BASE_URL,
+    resolve_chat_endpoint,
+)
 
 #: Intents whose handling requires the retrieval pipeline.
 RETRIEVAL_INTENTS = {
@@ -157,11 +160,19 @@ class MayaRouter:
         self.genre_vocabulary = frozenset(
             g.lower().strip() for g in genre_vocabulary if g.strip()
         )
+        self._endpoint = resolve_chat_endpoint(
+            config.router_model,
+            zai_model=config.zai_model,
+            # an explicit api_key (tests/tools) pins OpenRouter — no z.ai swap
+            zai_api_key=os.getenv("ZAI_API_KEY") if api_key is None else None,
+            openrouter_api_key=api_key or os.getenv("OPENROUTER_API_KEY"),
+            zai_base_url=os.getenv("ZAI_BASE_URL") or DEFAULT_ZAI_BASE_URL,
+        )
         self._llm = ChatOpenAI(
-            model=config.router_model,
+            model=self._endpoint.wire_model,
             temperature=config.temperature,
-            base_url=OPENROUTER_BASE_URL,
-            api_key=api_key or os.getenv("OPENROUTER_API_KEY"),
+            base_url=self._endpoint.base_url,
+            api_key=self._endpoint.api_key,
             max_tokens=1024,  # prevents truncated JSON on long structured outputs
             # #93: the openai client default is 600s x 2 retries — one bad
             # endpoint call stalled a baseline run for 30+ minutes of silence.

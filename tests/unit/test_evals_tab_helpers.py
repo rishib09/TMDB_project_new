@@ -48,7 +48,7 @@ def test_sweep_baseline_labels_match_production():
     assert sweep_baseline_label("retrieval_top_k") == "5"
     assert sweep_baseline_label("reranker") == "off"
     assert sweep_baseline_label("embedding_combo") == "full_gemini_embedding_2"
-    assert sweep_baseline_label("router_model") == "~google/gemini-flash-latest"
+    assert sweep_baseline_label("router_model") == "google/gemini-3.5-flash-lite"
 
 
 def test_scorecard_runs_exclude_conversation_runs():

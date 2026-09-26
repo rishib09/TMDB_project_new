@@ -20,14 +20,22 @@ class ExperimentConfig(BaseModel):
     """Configuration state for live experimentation control plane and evaluation runs."""
     # Model Selection & Inference
     router_model: str = Field(
-        default="~google/gemini-flash-latest",
-        description="Router LLM model ID (#29: measured 91% vs 3B's 66% routing accuracy; "
-        "the ~ alias always resolves to the newest Flash on OpenRouter)",
+        default="google/gemini-3.5-flash-lite",
+        description="Router LLM model ID (#29: measured 91% vs 3B's 66% routing accuracy). "
+        "One notch below the ~flash-latest alias (serves gemini-3.8-flash); dated id = "
+        "frozen, reproducible (#97). With ZAI_API_KEY set, google-gemini ids resolve "
+        "to zai_model on z.ai; without, verbatim to OpenRouter.",
     )
     synthesis_model: str = Field(
-        default="~google/gemini-flash-latest",
-        description="Synthesis LLM model ID (#30: Flash default — cheap, strong, "
-        "same always-newest alias as the router)",
+        default="google/gemini-3.5-flash-lite",
+        description="Synthesis LLM model ID (#30: Flash default — cheap, strong). "
+        "Same z.ai-first resolution as the router (#97).",
+    )
+    zai_model: str = Field(
+        default="glm-5.3-flash",
+        description="Model used on z.ai when ZAI_API_KEY is present (#97): "
+        "~google/-prefixed router/synthesis ids resolve to this. GLM-5.3-flash, "
+        "proven in the #85 prototype (13/13 turns, 0 schema failures).",
     )
     reasoning_effort: str = Field(default="low", description="Reasoning effort: none, low, medium, high")
     routing_stack: Literal["v1", "v2"] = Field(
