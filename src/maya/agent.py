@@ -79,6 +79,9 @@ class MayaSynthesizer:
             base_url=OPENROUTER_BASE_URL,
             api_key=api_key or os.getenv("OPENROUTER_API_KEY"),
             temperature=config.temperature,
+            # #93: bounded calls — see the router's note; D17 client ownership.
+            request_timeout=120,
+            max_retries=1,
         )
 
     def synthesize(

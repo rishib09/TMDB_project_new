@@ -761,7 +761,10 @@ def _run_one(
                 engine,
                 MayaSynthesizer(config),
                 tracer,
-                limiter=SessionTokenLimiter(),
+                # cap=None (#93): 23 scripted conversations share this graph —
+                # a per-user-session token cap would refuse every turn after
+                # the first ~4 retrievals. The weekly tracker gates the run.
+                limiter=SessionTokenLimiter(cap=None),
                 budget_tracker=tracker,
                 checkpointer=InMemorySaver(),
             ),

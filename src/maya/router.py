@@ -163,6 +163,12 @@ class MayaRouter:
             base_url=OPENROUTER_BASE_URL,
             api_key=api_key or os.getenv("OPENROUTER_API_KEY"),
             max_tokens=1024,  # prevents truncated JSON on long structured outputs
+            # #93: the openai client default is 600s x 2 retries — one bad
+            # endpoint call stalled a baseline run for 30+ minutes of silence.
+            # D17: retries and timeouts live in the model client. Deliberately
+            # NOT a config tunable (user decision, 2026-09-26).
+            request_timeout=120,
+            max_retries=1,
         )
         # Bound once at construction; tests stub this attribute directly.
         self._chain = self._llm.with_structured_output(QueryRoutingDecision)

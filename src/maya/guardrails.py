@@ -145,7 +145,13 @@ class SessionTokenLimiter:
     #: Below the cap but close — allow the turn, flag for wrap-up messaging.
     THROTTLE_RATIO: ClassVar[float] = 0.85
 
-    def __init__(self) -> None:
+    def __init__(self, cap: int | None = SESSION_CAP) -> None:
+        """``cap=None`` disables the session cap entirely (#93): the evaluation
+        driver spans 23 scripted conversations on one graph instance — a
+        per-user-session cap has no meaning there, and the weekly budget
+        tracker gates the run instead. Callers elsewhere get the unchanged
+        15,000 default."""
+        self._cap = cap
         self._used_tokens = 0
 
     #: Promised #8 interface: record(model, prompt, completion) -> BudgetStatus.
@@ -171,6 +177,10 @@ class SessionTokenLimiter:
 
     def check_used(self, used_tokens: int) -> GuardrailResult:
         """Verdict for a raw token count (shared by check() and record())."""
+        if self._cap is None:  # #93: harness mode — the weekly tracker gates
+            return GuardrailResult(
+                verdict=GuardrailVerdict.CLEAN, sanitized_query="", reason="session cap disabled",
+            )
         used = used_tokens
         if used >= self.SESSION_CAP:
             return GuardrailResult(
