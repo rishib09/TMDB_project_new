@@ -37,6 +37,17 @@ class ExperimentConfig(BaseModel):
         "~google/-prefixed router/synthesis ids resolve to this. GLM-5.3-flash, "
         "proven in the #85 prototype (13/13 turns, 0 schema failures).",
     )
+    pin_router_config_id: bool = Field(
+        default=False,
+        description="#89 sweep isolation: router keeps the config id verbatim via "
+        "OpenRouter even under ZAI_API_KEY (google-family candidates must not "
+        "silently become glm). Recorded in the run envelope = explicit identity.",
+    )
+    pin_synthesis_config_id: bool = Field(
+        default=False,
+        description="#89 sweep isolation: synthesizer keeps the config id verbatim "
+        "(vary the router ONLY). Explicit in the experiment identity.",
+    )
     reasoning_effort: str = Field(default="low", description="Reasoning effort: none, low, medium, high")
     routing_stack: Literal["v1", "v2"] = Field(
         default="v1",

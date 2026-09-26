@@ -151,3 +151,56 @@ def test_judge_with_gemini_id_stays_openrouter_under_zai_key(monkeypatch):
     assert (judge._endpoint.provider, judge._endpoint.wire_model) == (
         "openrouter", "google/gemini-3.5-flash-lite",
     )
+
+
+def test_sweep_pin_keeps_synthesis_on_config_id(monkeypatch):
+    """#89 sweep isolation: pin_synthesis_config_id=True means the synthesizer
+    keeps the config id verbatim via OpenRouter even under a z.ai key."""
+    from src.domain.config import ExperimentConfig
+    from src.maya.agent import MayaSynthesizer
+
+    monkeypatch.setenv("ZAI_API_KEY", "zk1")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "or-key")
+    cfg = ExperimentConfig().model_copy(update={"pin_synthesis_config_id": True})
+    synth = MayaSynthesizer(cfg)
+    assert (synth._endpoint.provider, synth._endpoint.wire_model) == (
+        "openrouter", "google/gemini-3.5-flash-lite",
+    )
+
+
+def test_sweep_pin_keeps_router_on_config_id(monkeypatch):
+    """#89 sweep isolation, router side: a google-family router candidate must
+    not silently become glm under a z.ai key."""
+    from src.domain.config import ExperimentConfig
+    from src.maya.router import MayaRouter
+
+    monkeypatch.setenv("ZAI_API_KEY", "zk1")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "or-key")
+    cfg = ExperimentConfig().model_copy(update={
+        "router_model": "google/gemini-3.5-flash-lite",
+        "pin_router_config_id": True,
+    })
+    router = MayaRouter(cfg)
+    assert (router._endpoint.provider, router._endpoint.wire_model) == (
+        "openrouter", "google/gemini-3.5-flash-lite",
+    )
+
+
+def test_sweep_unpinned_router_still_swaps(monkeypatch):
+    """Without the pin the family rule still applies (the glm candidate path)."""
+    from src.domain.config import ExperimentConfig
+    from src.maya.router import MayaRouter
+
+    monkeypatch.setenv("ZAI_API_KEY", "zk1")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "or-key")
+    router = MayaRouter(ExperimentConfig())
+    assert (router._endpoint.provider, router._endpoint.wire_model) == ("zai", "glm-5.3-flash")
+
+
+def test_judge_client_has_max_tokens_cap():
+    """#74/#89: the judge client caps completions (no more 16K runaway JSON)."""
+    from src.domain.config import ExperimentConfig
+    from src.evals.judge import MayaJudge
+
+    judge = MayaJudge(ExperimentConfig(), api_key="or-key")
+    assert judge._llm.max_tokens == 1024

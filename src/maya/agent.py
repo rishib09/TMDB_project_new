@@ -80,6 +80,7 @@ class MayaSynthesizer:
             zai_api_key=os.getenv("ZAI_API_KEY") if api_key is None else None,
             openrouter_api_key=api_key or os.getenv("OPENROUTER_API_KEY"),
             zai_base_url=os.getenv("ZAI_BASE_URL") or DEFAULT_ZAI_BASE_URL,
+            allow_swap=not config.pin_synthesis_config_id,  # #89 sweep isolation
         )
         self._llm = ChatOpenAI(
             model=self._endpoint.wire_model,

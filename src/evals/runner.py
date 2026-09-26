@@ -836,6 +836,15 @@ def main(argv: list[str] | None = None) -> int:
         "--router-model", default=None,
         help="override config.router_model (routing-mode A/B, #29)",
     )
+    parser.add_argument("--synthesis_model", help="override config.synthesis_model (#89 sweep)")
+    parser.add_argument(
+        "--router-pin", action="store_true",
+        help="#89: keep router_model verbatim via OpenRouter even under ZAI_API_KEY",
+    )
+    parser.add_argument(
+        "--synthesis-pin", action="store_true",
+        help="#89: keep synthesis_model verbatim via OpenRouter even under ZAI_API_KEY",
+    )
     parser.add_argument(
         "--sweep", choices=sorted(SWEEPS), default=None,
         help="OFAT sweep of one knob against the Production baseline (#59)",
@@ -880,6 +889,18 @@ def main(argv: list[str] | None = None) -> int:
     config = ExperimentConfig()
     if args.router_model:
         config = config.model_copy(update={"router_model": args.router_model})
+    if args.synthesis_model:
+        config = config.model_copy(update={"synthesis_model": args.synthesis_model})
+    sweep_pins = {
+        k: True
+        for k, on in (
+            ("pin_router_config_id", args.router_pin),
+            ("pin_synthesis_config_id", args.synthesis_pin),
+        )
+        if on
+    }
+    if sweep_pins:
+        config = config.model_copy(update=sweep_pins)  # #89: explicit in the envelope
     if args.mode == "conversation":
         config = config.model_copy(update={"routing_stack": args.stack})
         conversations = load_conversations(args.conversations)
