@@ -34,6 +34,15 @@ flowchart TD
 
 ## 2. State anatomy — where coherence lives or breaks
 
+> **#93/D16 (2026-09):** the table below describes the PRE-checkpointer
+> world. Since #93 the graph compiles with an `InMemorySaver` and every
+> conversation runs on a `thread_id` — `MayaSession.turn` sends ONLY the new
+> message, so persistence is the CHECKPOINTER's, not the session's hand-copied
+> input: reducer-backed fields (`messages`, `shown_movie_ids`,
+> `session_preferences`, `session_tokens`) and the funnel fields survive in
+> the thread; `begin_turn` resets per-turn scratch; the trim node keeps the
+> `message_window` (config) inside the thread.
+
 Every turn is a **fresh graph invocation**. Only the fields MayaSession
 passes in survive across turns; everything else resets. This table is the
 contract that keeps chips, responses and counts coherent.

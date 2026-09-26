@@ -348,7 +348,7 @@ class BenchmarkRunner:
                     or UserSessionPreferences()
                 )
                 tokens = sum(
-                    (u.get("input_tokens", 0) + u.get("output_tokens", 0))
+                    (u.get("total_tokens") or (u.get("input_tokens", 0) + u.get("output_tokens", 0)))
                     for u in usage_handler.usage_metadata.values()
                 )
 
@@ -609,39 +609,43 @@ def _push_langfuse(summary: BenchmarkSummary, dataset_name: str = "maya-benchmar
 def _push_langfuse_conversations(
     summary: ConversationRunSummary, dataset_name: str = "maya-conversations"
 ) -> None:
-    """Records the run as a Langfuse experiment (optional, best-effort, #93 Q18).
+    """Records the run in Langfuse (optional, best-effort, #93 Q18).
 
-    Stock SDK dataset + experiment + per-turn scores on the turn's trace —
-    baseline comparison (v1 vs v2) happens in Langfuse's compare view, no
-    custom comparison code.
+    Uses ONLY the installed 4.15.1 client surface: ``create_dataset`` +
+    ``create_dataset_item`` + ``create_score`` attached to the turn's own
+    trace id (the one the driver minted per turn) — the v2-era fluent
+    dataset.item()/run().observe() API does not exist on this pin (round-4
+    review finding). Baseline comparison (v1 vs v2) is Langfuse's scores/
+    traces view; no custom comparison code.
     """
     try:
         from langfuse import Langfuse
 
         lf = Langfuse()
         lf.create_dataset(name=dataset_name)
-        dataset = lf.get_dataset(dataset_name)
         for convo in summary.per_conversation:
             for turn in convo.per_turn:
-                dataset.item(
+                lf.create_dataset_item(
+                    dataset_name=dataset_name,
                     input=turn.user,
                     expected_output={"intent": turn.expected_intent, "path": turn.expected_path},
                     metadata={"conversation_id": convo.id, "turn": turn.n, "tier": convo.tier},
                 )
-        run = dataset.run(name=f"{summary.label}-{summary.routing_stack}")
-        for convo in summary.per_conversation:
-            for turn in convo.per_turn:
-                run.observe(
-                    input=turn.user,
-                    output={"intent": turn.observed_intent, "path": turn.observed_path},
-                    metadata={"conversation_id": convo.id, "turn": turn.n},
-                    scores={
-                        "intent_correct": turn.intent_correct,
-                        "path_correct": turn.path_correct,
-                        "fidelity": turn.fidelity,
-                    },
-                )
-        print(f"[langfuse] conversation experiment recorded: {run.name}")
+                if not turn.trace_id:
+                    continue
+                scores = [("fidelity", turn.fidelity)]
+                if turn.intent_correct is not None:
+                    scores.append(("intent_correct", float(turn.intent_correct)))
+                scores.append(("path_correct", float(turn.path_correct)))
+                for name, value in scores:
+                    if value is None:
+                        continue
+                    lf.create_score(
+                        trace_id=turn.trace_id, name=name, value=value,
+                        data_type="NUMERIC",
+                        comment=f"{convo.id} t{turn.n} stack={summary.routing_stack}",
+                    )
+        print(f"[langfuse] conversation scores recorded on {summary.n_turns} turn traces")
     except Exception as exc:  # noqa: BLE001 — telemetry must never break a run
         print(f"[langfuse] skipped: {exc}", file=sys.stderr)
 

@@ -227,6 +227,16 @@ def render_feedback_section(store: FeedbackStore | None = None) -> None:
         st.plotly_chart(fig, use_container_width=True)
 
 
+def scorecard_runs(selected_runs: list[dict]) -> list[dict]:
+    """Runs eligible for the per-run scorecards (#93 round-3 fix).
+
+    Pure helper so the conversation-run skip is test-pinned: conversation
+    runs have no ``n_queries``/``per_query`` and render entirely in their own
+    section — including them here KeyErrors the page.
+    """
+    return [r for r in selected_runs if r.get("mode") != "conversation"]
+
+
 def render_conversations_section(runs: list[dict]) -> None:
     """#93 (D11): the multi-turn golden source, beside the single-turn source.
 
@@ -359,10 +369,7 @@ def render_evals(session=None, results_dir: Path = RESULTS_DIR) -> None:
     render_conversations_section(runs)
 
     st.markdown("#### Per-run scorecards")
-    # Conversation runs have no n_queries/per_query — they render entirely in
-    # their own section above (#93 review round 3: including them here
-    # KeyErrors the page the moment a baseline file lands).
-    for run in [r for r in selected_runs if r.get("mode") != "conversation"]:
+    for run in scorecard_runs(selected_runs):
         with st.expander(
             f"**{run_display_name(run)}** — {run['mode']} · n={run['n_queries']} · "
             f"{run.get('timestamp', '?')[:19]}",
