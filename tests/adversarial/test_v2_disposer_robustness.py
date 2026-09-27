@@ -86,21 +86,63 @@ class TestMemoryIntegrity:
         out = dispose(_u(), prefs, CFG)
         assert out.preferences == prefs
 
+    def test_model_out_of_scope_writes_no_memory(self):
+        """The out-of-scope invariant is ONE rule regardless of who ruled
+        the turn out: model-emitted OUT_OF_SCOPE ('tell me a joke, and no
+        horror') leaves memory exactly as it found it. Red while only the
+        code-forced pre-1970 path short-circuited."""
+        prefs = UserSessionPreferences(preferred_mood="funny")
+        u = _u(
+            intent=IntentType.OUT_OF_SCOPE,
+            preference_delta=PreferenceDelta(add_excluded_genres=["Horror"]),
+        )
+        out = dispose(u, prefs, CFG)
+        assert out.preferences == prefs
+        assert out.understanding.intent is IntentType.OUT_OF_SCOPE
+
+    def test_era_supersedes_decade_with_a_note(self):
+        """Era label and decade both set, no explicit years: era wins through
+        the knob AND the disposition note says why (telemetry rule)."""
+        u = _u(era="recent", decade=1980)
+        out = dispose(u, UserSessionPreferences(), CFG)
+        assert out.preferences.year_min == CFG.era_recent_year_min
+        assert out.preferences.year_max is None
+        assert any("supersedes" in n for n in out.notes)
+
 
 class TestDecisionLadder:
     """C8: the ask/retrieve ladder must never dead-end or over-ask."""
 
-    def test_probe_cap_forces_retrieve_end_to_end(self):
-        """Budget exhausted + no axes: forced ready does NOT retrieve with
-        zero axes — it asks (ready needs >= 1 axis by C8)."""
+    def test_probe_cap_retrieves_even_with_zero_axes(self):
+        """C8: 'ask, at most MAX_PROBE_TURNS per session, then retrieve with
+        what exists.' At the cap the ladder retrieves REGARDLESS of axes.
+        Red on the pre-fix bug: the ready-branch required >= 1 axis, so a
+        zero-axes visitor asked forever."""
         u, _ = enforce_probe_budget(_u(), probe_count=2)
         assert u.ready_to_retrieve is True
-        out = turn_decision(u, UserSessionPreferences(), CFG)
-        assert out.decision == "ask"  # no axis known: still asks, never stalls
+        out = turn_decision(u, UserSessionPreferences(), CFG, probe_count=2)
+        assert out.decision == "retrieve"
+        assert "budget" in out.why
+
+    def test_cap_binds_every_retrieval_intent(self):
+        """C8 has no intent scoping: a SUPERLATIVE_RANKING ask-turn hits the
+        same cap as a semantic one. Red while the cap checked intents."""
+        u, _ = enforce_probe_budget(
+            _u(intent=IntentType.SUPERLATIVE_RANKING), probe_count=2
+        )
+        out = turn_decision(u, UserSessionPreferences(), CFG, probe_count=2)
+        assert out.decision == "retrieve"
+
+    def test_below_cap_zero_axes_still_asks(self):
+        """The cap must not swallow the normal ask path: below it, a
+        ready-but-axisless turn still asks (C8's '>= 1 axis' clause)."""
+        u, _ = enforce_probe_budget(_u(), probe_count=1)
+        out = turn_decision(u, UserSessionPreferences(), CFG, probe_count=1)
+        assert out.decision == "ask"
 
     def test_probe_cap_with_one_axis_retrieves(self):
         u, _ = enforce_probe_budget(_u(), probe_count=2)
-        out = turn_decision(u, UserSessionPreferences(preferred_mood="funny"), CFG)
+        out = turn_decision(u, UserSessionPreferences(preferred_mood="funny"), CFG, probe_count=2)
         assert out.decision == "retrieve"
 
     def test_negation_exclusion_with_only_excluded_genre_retrieves(self):

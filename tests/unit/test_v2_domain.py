@@ -37,8 +37,16 @@ def _u(**overrides) -> Understanding:
 
 def test_genre_vocabulary_matches_the_dataset():
     """C5: the frozen tuple must equal distinct_genres() — the two cannot
-    drift. This is the pin that keeps the static set honest."""
+    drift. This is the pin that keeps the static set honest. Skipped (not
+    failed) on machines without the ingested dataset, so 'offline green'
+    stays honest."""
+    from pathlib import Path
+
     from src.storage.database import MovieDatabase
+
+    db_path = Path("data/tmdb_movies.db")
+    if not db_path.exists():
+        pytest.skip("dataset not ingested on this machine (data/tmdb_movies.db)")
 
     assert tuple(sorted(GENRES)) == tuple(sorted(MovieDatabase().distinct_genres()))
 
@@ -259,3 +267,19 @@ def test_deterministic_ask_shape():
     assert u.clarifying_question  # the template ask
     assert u.confidence == 0.0
     assert u.preference_delta == PreferenceDelta()
+
+
+def test_schema_retry_budget_is_a_named_datum():
+    """C12: 'one retry with the validation error' must live at one address —
+    the #106 understand() wrapper imports it, never invents a literal."""
+    from src.maya.v2 import disposer
+
+    assert disposer.MAX_SCHEMA_ATTEMPTS == 2
+
+
+def test_default_missing_slots_is_a_named_datum():
+    from src.maya.v2 import disposer
+
+    assert disposer.DEFAULT_MISSING_SLOTS == ["mood", "genres"]
+    u = deterministic_ask("q")
+    assert u.missing_slots == disposer.DEFAULT_MISSING_SLOTS

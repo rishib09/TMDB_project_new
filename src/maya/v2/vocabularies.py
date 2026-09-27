@@ -49,5 +49,3 @@ Genre = Literal[
 
 #: #82 C8: the four Narrowing Axes — the only slots the funnel may chase.
 Axis = Literal["mood", "audience", "genres", "era"]
-
-AXIS_VALUES: tuple[Axis, ...] = ("mood", "audience", "genres", "era")
