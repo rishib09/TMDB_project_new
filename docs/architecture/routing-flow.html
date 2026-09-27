@@ -1,0 +1,336 @@
+<title>Maya Routing Flow</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Serif:wght@500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  :root {
+    --ground: #F6F7F5;
+    --panel: #FFFFFF;
+    --ink: #1C2530;
+    --muted: #5A6772;
+    --rule: #D6DBD8;
+    --llm: #1E6E86;
+    --llm-soft: #DCEEF3;
+    --gate: #A8641C;
+    --gate-soft: #F6E8D2;
+    --store: #4B5563;
+    --store-soft: #E4E7EA;
+    --bug: #9B2C2C;
+    --code-bg: #EEF1EF;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #14191E;
+      --panel: #1B2229;
+      --ink: #E6EAED;
+      --muted: #9AA6B0;
+      --rule: #2E3840;
+      --llm: #6FC2DB;
+      --llm-soft: #173540;
+      --gate: #E0A458;
+      --gate-soft: #3A2A14;
+      --store: #B4BCC4;
+      --store-soft: #2A323A;
+      --bug: #F08A8A;
+      --code-bg: #232C34;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground: #14191E;
+    --panel: #1B2229;
+    --ink: #E6EAED;
+    --muted: #9AA6B0;
+    --rule: #2E3840;
+    --llm: #6FC2DB;
+    --llm-soft: #173540;
+    --gate: #E0A458;
+    --gate-soft: #3A2A14;
+    --store: #B4BCC4;
+    --store-soft: #2A323A;
+    --bug: #F08A8A;
+    --code-bg: #232C34;
+  }
+  body {
+    background: var(--ground);
+    color: var(--ink);
+    font-family: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+    font-size: 16px;
+    line-height: 1.55;
+    padding-block: 40px 80px;
+    padding-inline: 24px;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; }
+  header { display: grid; gap: 10px; max-width: 72ch; margin-bottom: 36px; }
+  .eyebrow {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted);
+  }
+  h1 {
+    font-family: "IBM Plex Serif", Georgia, serif; font-weight: 600;
+    font-size: clamp(28px, 4vw, 38px); line-height: 1.15; margin: 0; text-wrap: balance;
+  }
+  h2 {
+    font-family: "IBM Plex Serif", Georgia, serif; font-weight: 600;
+    font-size: 22px; margin: 48px 0 8px; text-wrap: balance;
+  }
+  p { margin: 0 0 12px; max-width: 72ch; }
+  .lede { color: var(--muted); }
+  nav { display: flex; flex-wrap: wrap; gap: 8px 18px; padding: 14px 0; border-block: 1px solid var(--rule); margin-bottom: 8px; }
+  nav a { color: var(--ink); text-decoration: none; font-weight: 500; font-size: 14px; }
+  nav a:hover, nav a:focus-visible { color: var(--llm); outline: none; text-decoration: underline; }
+  .legend { display: flex; flex-wrap: wrap; gap: 8px 16px; margin: 6px 0 16px; font-size: 13px; color: var(--muted); }
+  .chip { display: inline-flex; align-items: center; gap: 6px; }
+  .chip i { width: 12px; height: 12px; border-radius: 2px; display: inline-block; border: 1px solid transparent; }
+  .chip.llm i { background: var(--llm-soft); border-color: var(--llm); }
+  .chip.gate i { background: var(--gate-soft); border-color: var(--gate); }
+  .chip.store i { background: var(--store-soft); border-color: var(--store); }
+  figure { margin: 0 0 12px; background: var(--panel); border: 1px solid var(--rule); border-radius: 6px; padding: 16px; overflow-x: auto; }
+  figcaption { font-size: 13px; color: var(--muted); margin-top: 10px; }
+  pre.mermaid { margin: 0; min-width: 640px; }
+  .notes { max-width: 72ch; padding-left: 0; list-style: none; display: grid; gap: 10px; margin: 12px 0 0; }
+  .notes li { padding-left: 14px; border-left: 3px solid var(--rule); }
+  .notes li b { font-weight: 600; }
+  .notes li.hot { border-left-color: var(--bug); }
+  code { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 0.88em; background: var(--code-bg); padding: 1px 5px; border-radius: 3px; }
+  table { border-collapse: collapse; font-size: 14px; margin-top: 12px; width: 100%; max-width: 72ch; }
+  th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--rule); vertical-align: top; }
+  th { font-weight: 600; font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+  td.n { font-family: "IBM Plex Mono", ui-monospace, monospace; font-variant-numeric: tabular-nums; }
+  .conf { font-size: 13px; color: var(--muted); max-width: 72ch; border-top: 1px solid var(--rule); padding-top: 14px; margin-top: 40px; }
+  @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto; } }
+</style>
+
+<div class="wrap">
+  <header>
+    <div class="eyebrow">src/graph · src/maya · src/retrieval — graph f07c9eb, sources identical at 65c4a86</div>
+    <h1>How one user message becomes a retrieval</h1>
+    <p class="lede">Four views of the routing path. Diagrams 1 and 4 are hand-authored from the conditional-edge functions and cite their lines, because the parser cannot see LangGraph dispatch. Diagrams 2 and 3 are generated from the code graph with tests filtered out.</p>
+  </header>
+
+  <nav>
+    <a href="#d1">1 · Control flow per turn</a>
+    <a href="#d2">2 · Inside route_node</a>
+    <a href="#d3">3 · Inside funnel_node</a>
+    <a href="#d4">4 · Filter propagation</a>
+    <a href="#gates">Gate inventory</a>
+  </nav>
+  <div class="legend">
+    <span class="chip llm"><i></i>LLM call</span>
+    <span class="chip gate"><i></i>Regex or vocabulary gate</span>
+    <span class="chip store"><i></i>Storage boundary</span>
+  </div>
+
+  <h2 id="d1">1 · Control flow per turn</h2>
+  <p>Every turn is a fresh graph invocation. The three conditional-edge functions at <code>orchestrator.py:507-556</code> decide the path. The funnel owns any turn that follows a probe question.</p>
+  <figure>
+<pre class="mermaid">
+flowchart TD
+    START([user message]) --> GUARD["guard_input · :80<br/>injection · session cap · weekly budget<br/>FRESH_START_PHRASES wipe · :120"]
+    GUARD -->|blocked| REFUSAL[refusal → END]
+    GUARD -->|"funnel_active · :507"| FUNNEL
+    GUARD -->|clean| ROUTE
+
+    subgraph FUNNEL_BOX ["funnel_node · :251 — deterministic owner of probe replies"]
+        FUNNEL{"offered_genre_options pending?"}
+        FUNNEL -->|"yes"| PICK["match_genre_pick regex<br/>picks merged · next_funnel_step"]
+        FUNNEL -->|no| EXTRACT["_extract_signals · :597<br/>router called as EXTRACTOR<br/>intent discarded"]
+        EXTRACT --> ERA["extract_era regex<br/>old · recent · 80s"]
+        ERA --> HPA["handle_probe_answer<br/>RETRIEVE_CONFIRMATIONS · vocab · axes count"]
+    end
+    PICK --> FOUT{outcome}
+    HPA --> FOUT
+    FOUT -->|"retrieve: SYNTHETIC decision<br/>SEMANTIC_SEARCH conf 1.0<br/>filters = years only"| RETRIEVE
+    FOUT -->|"probe · confirm · confirm_genres"| END1([END · funnel stays armed])
+    FOUT -->|fallthrough| ROUTE
+
+    subgraph ROUTE_BOX ["route_node · :131"]
+        ROUTE["MayaRouter.route · router.py:170<br/>LLM call 1 · max_tokens 1024 · no reasoning param"]
+        ROUTE --> NORM["_normalize_decision · :207<br/>pre-1970 regex · genre-word guard<br/>strip filters on non-filter intents<br/>vocab fallback for mood and audience"]
+        NORM --> CONF{"confidence below 0.5<br/>or API error?"}
+        CONF -->|yes| HEUR["_heuristic_fallback · :350<br/>regex → GREETING · CAPABILITIES · OOS · SEMANTIC<br/>conf 0.1 · filters None"]
+        CONF -->|no| EXCL
+        HEUR --> EXCL["_apply_session_exclusions · :389"]
+        EXCL --> SIG["route_node signals<br/>mood and audience: LLM then vocab<br/>extract_era regex if requires_rag<br/>is_narrowing_pivot regex"]
+    end
+
+    SIG --> RAR{"route_after_router · :529"}
+    RAR -->|"is_fallback and attempts below route_max_attempts · :539"| ROUTE
+    RAR -->|"OUT_OF_SCOPE and not from_funnel"| PIVOT[pivot → END]
+    RAR -->|"not requires_rag"| SYNTH
+    RAR -->|"is_fresh_start regex"| RETRIEVE
+    RAR -->|"should_probe · probing.py:182<br/>broad ≤5 words · no filters<br/>≥2 axes unanswered · probe_count below 2"| PROBE["probe_node · :219<br/>deterministic question · arms funnel → END"]
+    RAR -->|otherwise| RETRIEVE
+
+    RETRIEVE["retrieve_node · :358<br/>see diagram 4"] --> SYNTH["synthesize_node · :419<br/>LLM call 2 · deterministic on 0 movies"]
+    SYNTH --> END2([END])
+
+    classDef llm fill:#DCEEF3,stroke:#1E6E86,color:#12303A
+    classDef gate fill:#F6E8D2,stroke:#A8641C,color:#3A2510
+    class ROUTE,EXTRACT,SYNTH llm
+    class NORM,HEUR,ERA,HPA,PICK,SIG,PROBE gate
+</pre>
+    <figcaption>Blue boxes call the LLM. Amber boxes are regex or vocabulary decisions that can override what the LLM returned. Line numbers refer to <code>src/graph/orchestrator.py</code> unless a file is named.</figcaption>
+  </figure>
+
+  <h2 id="d2">2 · Inside route_node</h2>
+  <p>Generated call order to depth 3. The <code>_chain.invoke</code> LLM call is external and absent. Steps 3 and 7 to 12 are alternatives in real code: fallback or normalize, never both.</p>
+  <figure>
+<pre class="mermaid">
+sequenceDiagram
+  autonumber
+  participant orchestrator_py as orchestrator.py
+  participant MayaRouter as MayaRouter
+  participant QueryRoutingDecision as QueryRoutingDecision
+  participant MetadataFilterCriteria as MetadataFilterCriteria
+  participant probing_py as probing.py
+  participant ConversationState as ConversationState
+  participant UserSessionPreferences as UserSessionPreferences
+  participant DualModeObservabilityManager as DualModeObservabilityManager
+  Note over orchestrator_py: entry: build_maya_graph.route_node
+  orchestrator_py-->>MayaRouter: route() ?
+  MayaRouter->>MayaRouter: _build_messages()
+  MayaRouter->>MayaRouter: _heuristic_fallback()
+  MayaRouter->>QueryRoutingDecision: QueryRoutingDecision()
+  MayaRouter->>MayaRouter: _apply_session_exclusions()
+  MayaRouter->>MetadataFilterCriteria: MetadataFilterCriteria()
+  MayaRouter->>MayaRouter: _normalize_decision()
+  MayaRouter->>MayaRouter: _references_pre_1970()
+  MayaRouter->>MayaRouter: _has_in_scope_vocabulary()
+  MayaRouter->>probing_py: extract_probe_answers()
+  MayaRouter->>probing_py: strip_markup()
+  MayaRouter->>probing_py: canonical_mood()
+  orchestrator_py->>orchestrator_py: _to_conversation_state()
+  orchestrator_py->>ConversationState: ConversationState()
+  orchestrator_py->>UserSessionPreferences: UserSessionPreferences()
+  orchestrator_py->>probing_py: extract_probe_answers()
+  orchestrator_py->>probing_py: extract_era()
+  probing_py->>probing_py: _is_negated_near()
+  probing_py->>UserSessionPreferences: UserSessionPreferences()
+  orchestrator_py->>probing_py: has_year_constraint()
+  orchestrator_py->>probing_py: is_narrowing_pivot()
+  orchestrator_py->>DualModeObservabilityManager: record_local()
+  orchestrator_py->>UserSessionPreferences: answered_axes()
+  orchestrator_py->>DualModeObservabilityManager: push_score()
+</pre>
+    <figcaption>Dashed arrow with ? = duck-typed call the parser could not resolve to one definition. Spurious <code>re.search</code> to <code>MovieVectorStore.search</code> collisions were removed by hand.</figcaption>
+  </figure>
+
+  <h2 id="d3">3 · Inside funnel_node</h2>
+  <p>Generated call order to depth 2. Step 10 is the second router call of the turn, used only for mood, audience and years. Its intent is discarded.</p>
+  <figure>
+<pre class="mermaid">
+sequenceDiagram
+  autonumber
+  participant orchestrator_py as orchestrator.py
+  participant probing_py as probing.py
+  participant UserSessionPreferences as UserSessionPreferences
+  participant memory_py as memory.py
+  participant FunnelOutcome as FunnelOutcome
+  participant DualModeObservabilityManager as DualModeObservabilityManager
+  participant MayaRouter as MayaRouter
+  participant MetadataFilterCriteria as MetadataFilterCriteria
+  participant QueryRoutingDecision as QueryRoutingDecision
+  Note over orchestrator_py: entry: build_maya_graph.funnel_node
+  orchestrator_py->>probing_py: match_genre_pick()
+  probing_py->>probing_py: _is_negated()
+  orchestrator_py->>probing_py: next_funnel_step()
+  probing_py->>memory_py: merge_preferences()
+  probing_py->>FunnelOutcome: FunnelOutcome()
+  probing_py->>probing_py: build_genre_confirm_response()
+  probing_py->>probing_py: next_probe_question()
+  probing_py->>probing_py: build_probe_response()
+  orchestrator_py->>orchestrator_py: _extract_signals()
+  orchestrator_py-->>MayaRouter: route() ?
+  orchestrator_py->>probing_py: extract_era()
+  orchestrator_py->>probing_py: handle_probe_answer()
+  probing_py->>probing_py: _is_confirmation()
+  probing_py->>probing_py: extract_probe_answers()
+  probing_py->>UserSessionPreferences: answered_axes()
+  probing_py->>memory_py: merge_preferences()
+  probing_py->>probing_py: next_funnel_step()
+  orchestrator_py->>MetadataFilterCriteria: MetadataFilterCriteria()
+  orchestrator_py->>QueryRoutingDecision: QueryRoutingDecision()
+  orchestrator_py->>probing_py: build_funnel_query()
+</pre>
+    <figcaption>Steps 1 to 8 run only when a genre pick is pending. Steps 9 to 17 run otherwise. Steps 18 to 20 build the synthetic decision on a retrieve outcome.</figcaption>
+  </figure>
+
+  <h2 id="d4">4 · Filter propagation to SQLite and ChromaDB</h2>
+  <p>Where a stated constraint lives, where it is merged, and which store actually applies it.</p>
+  <figure>
+<pre class="mermaid">
+flowchart LR
+    subgraph SOURCES ["what carries a constraint"]
+        DF["decision.filters<br/>MetadataFilterCriteria<br/>LLM-owned · per turn<br/>only on ATTRIBUTE_FILTER and NEGATION"]
+        SP["session_preferences<br/>UserSessionPreferences<br/>regex-owned · cross turn<br/>mood · audience · genres · years · exclusions"]
+    end
+
+    DF --> EXCL["_apply_session_exclusions<br/>router.py:389<br/>merges excluded_* only"]
+    SP -.->|exclusions| EXCL
+    EXCL --> RN
+
+    subgraph RN ["retrieve_node · orchestrator.py:358"]
+        Q["query = standalone_query + mood and audience<br/>TEXT ONLY"]
+        G["prefs.preferred_genres → filters.genres<br/>genre_match any or all · issue 56"]
+        Y["prefs.year_* NOT merged on routed turns · issue 78<br/>funnel path only: synthetic decision carries years"]
+    end
+
+    RN --> ENG["HybridRetrievalEngine.retrieve<br/>hybrid_engine.py:69"]
+    ENG --> PERSON["_resolve_person → db.classify_person"]
+    PERSON --> PATH{"_use_sql_path · :130<br/>SUPERLATIVE, or ATTRIBUTE_FILTER with<br/>exact_year · director · cast_member"}
+
+    PATH -->|SQL| SQL["database.py:357 search_metadata_filters<br/>WHERE year · genres LIKE · director · cast<br/>NOT LIKE excluded · full 9,119 rows"]
+    PATH -->|SQL superlative| SUP["database.py:290 query_superlative"]
+
+    PATH -->|hybrid| DENSE["_retrieve_dense · :162<br/>vector_store.search(query, top_k 50)<br/>NO where_filter passed"]
+    PATH -->|hybrid| BM25["_retrieve_bm25<br/>sparse_query strips excluded tokens only<br/>FTS5 MATCH · no metadata"]
+    DENSE --> RRF["_rrf_fuse"]
+    BM25 --> RRF
+    RRF --> POST["_is_allowed · :274 · matches_filters · :292<br/>years · genres · person · exclusions<br/>POST-FILTER on at most 50 candidates"]
+    POST --> TOPK["top_k = 5"]
+    SQL --> TOPK
+    SUP --> TOPK
+
+    classDef store fill:#E4E7EA,stroke:#4B5563,color:#1C2530
+    classDef gate fill:#F6E8D2,stroke:#A8641C,color:#3A2510
+    classDef bug fill:#F9E0E0,stroke:#9B2C2C,color:#4A1414
+    class SQL,SUP,DENSE,BM25 store
+    class SP,G gate
+    class Y,DENSE bug
+</pre>
+    <figcaption>Red boxes are the two places a constraint is lost: preference years never merge on routed turns, and the dense leg receives no where clause although <code>MovieVectorStore.search</code> accepts one at <code>vector_store.py:286</code>.</figcaption>
+  </figure>
+
+  <h2>Reading notes</h2>
+  <ul class="notes">
+    <li><b>Two LLM calls per routed turn, up to three with a re-route.</b> Router at route_node, synthesizer at synthesize_node. The funnel calls the same router again as an extractor and discards its intent. Both use <code>~google/gemini-flash-latest</code>. The router is built without a reasoning parameter, so the alias's thinking spends the 1024-token cap before JSON is emitted (issue 79).</li>
+    <li class="hot"><b>Filters never reach ChromaDB.</b> On the hybrid path, year and genre constraints are post-filters over a 50-candidate pool, so "recent feel-good date-night" can shrink to under five hits while the corpus holds hundreds. Only SQL-path intents filter the full table.</li>
+    <li class="hot"><b>Constraint state lives in two places with different lifetimes.</b> Per-turn <code>decision.filters</code> is LLM-owned. Cross-turn <code>session_preferences</code> is mostly regex-owned. The merge points are retrieve_node (genres), funnel_node (years), and the router (exclusions). Each missing merge is one open bug: 78 years, 80 shown ids, 56 era on entry and impossible ranges.</li>
+    <li><b>Every gate was added to fix a misroute by the old 3B model</b> (issues 23, 26, 27, 42, 53, 56). The router was upgraded to Flash in issue 29. The gates remain and now override the stronger model.</li>
+    <li><b>The eval dataset is single-turn.</b> 35 rows, one query each, with expected intent and relevant ids. No row exercises funnel state, exclusions, or coreference across turns. The multi-turn defects are covered only by live walkthrough tests.</li>
+  </ul>
+
+  <h2 id="gates">Gate inventory</h2>
+  <p>Deterministic decisions on the routing path that read user meaning. Guardrails (injection, budget, pre-1970 boundary) are listed for completeness but are not routing.</p>
+  <table>
+    <thead><tr><th>#</th><th>Gate</th><th>Where</th><th>Overrides</th></tr></thead>
+    <tbody>
+      <tr><td class="n">1</td><td>Confidence threshold and regex heuristic fallback</td><td>router.py:196, :350</td><td>the whole LLM decision</td></tr>
+      <tr><td class="n">2</td><td>Genre-word guard on OUT_OF_SCOPE</td><td>router.py:207</td><td>intent</td></tr>
+      <tr><td class="n">3</td><td>Mood vocabulary</td><td>probing.py:135</td><td>mood when the LLM left it empty</td></tr>
+      <tr><td class="n">4</td><td>Audience vocabulary</td><td>probing.py:163</td><td>audience when the LLM left it empty</td></tr>
+      <tr><td class="n">5</td><td>Mood canonicalization</td><td>probing.py:260</td><td>the LLM's mood wording</td></tr>
+      <tr><td class="n">6</td><td>Era regexes: old, recent, decade</td><td>probing.py:316-321</td><td>year filters</td></tr>
+      <tr><td class="n">7</td><td>Negation regexes</td><td>probing.py:304, :324</td><td>vocab hits</td></tr>
+      <tr><td class="n">8</td><td>FRESH_START_PHRASES</td><td>probing.py:46</td><td>all preferences, funnel state</td></tr>
+      <tr><td class="n">9</td><td>NARROWING_PIVOT_PHRASES</td><td>probing.py:69</td><td>mood and derived genres</td></tr>
+      <tr><td class="n">10</td><td>RETRIEVE_CONFIRMATIONS and AFFIRMATIONS</td><td>probing.py:28, :79</td><td>whether to retrieve</td></tr>
+      <tr><td class="n">11</td><td>match_genre_pick</td><td>probing.py:629</td><td>genre filters</td></tr>
+      <tr><td class="n">12</td><td>MOOD_GENRE_MAP</td><td>probing.py:587</td><td>genre candidates offered</td></tr>
+      <tr><td class="n">13</td><td>should_probe word-count rule</td><td>probing.py:182</td><td>whether to ask or retrieve</td></tr>
+      <tr><td class="n">14</td><td>Funnel stage machine</td><td>probing.py:507-587</td><td>which question is asked next</td></tr>
+      <tr><td class="n">15</td><td>Filter strip on non-filter intents</td><td>router.py:207</td><td>filters the LLM did return</td></tr>
+      <tr><td class="n">—</td><td>Guardrails: injection filter, session cap, weekly budget, pre-1970 boundary</td><td>guardrails.py, router.py</td><td>not routing</td></tr>
+    </tbody>
+  </table>
+
+  <p class="conf">Confidence: low-confidence edges are the three duck-typed <code>router.route</code> callers and <code>_chain.invoke</code>. Omitted: LangGraph runtime, Langfuse calls, the synthesizer prompt, ChromaDB and SQLite internals. Graph git_head f07c9eb; routing sources verified identical at 65c4a86 on 2026-09-16.</p>
+</div>
