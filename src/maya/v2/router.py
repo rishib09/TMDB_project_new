@@ -129,7 +129,8 @@ class MayaV2Router:
             return None, None
         stripped = re.sub(
             r"^```(?:json)?\s*|\s*```$", "", text.strip(), flags=re.DOTALL
-        )        try:
+        )
+        try:
             return Understanding.model_validate_json(stripped), None
         except ValidationError:
             return None, None
