@@ -174,7 +174,12 @@ class MayaRouter:
             temperature=config.temperature,
             base_url=self._endpoint.base_url,
             api_key=self._endpoint.api_key,
-            max_tokens=1024,  # prevents truncated JSON on long structured outputs
+            max_tokens=2048,  # prevents truncated JSON on long structured outputs
+            # #107: raised from 1024 — provider-side flash-lite drift made
+            # tool-call completions truncate at 1024 on ~48% of turns (the
+            # fleet v1 run measured 96/200 api_error fallbacks; a plain call
+            # and the v2 router at 2048 were clean). Same JSON-safety purpose;
+            # disclosed in the run envelope and carried into #90.
             # #93: the openai client default is 600s x 2 retries — one bad
             # endpoint call stalled a baseline run for 30+ minutes of silence.
             # D17: retries and timeouts live in the model client. Deliberately
