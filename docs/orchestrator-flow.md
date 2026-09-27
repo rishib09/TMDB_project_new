@@ -180,3 +180,26 @@ sequenceDiagram
 | 3.9 genre guard | ❌ #26 | ❌ #26 | ❌ #26 |
 | 3.10 guard | test_budget_tracker | injection_guardrails | — |
 | UI atomicity | ❌ #26 | ❌ #26 | ❌ #26 |
+
+## §4 — The v2 stack (#106): one Understand call beside the gated v1
+
+Selected by `ExperimentConfig.routing_stack` (`v1`/`v2`; env override
+`MAYA_ROUTING_STACK`, D12 — never a Lab slider). The topology, guard,
+stores, synthesizer and trim are SHARED; only the route node and its
+conditional edge swap:
+
+- **route_node_v2**: one structured Understand call (`MayaV2Router`,
+  model = `v2_router_model`, C14 payload) → disposer invariants
+  (C7/C2/C12) → projection (`project_understanding`, the one seam where
+  v1 consumers read Understanding) → Turn Decision ladder (C8).
+- **Funnel collapse**: the clarifying question is model-authored (C9)
+  and answered inline — `turn_stage: "ask"` trims to END; the probe and
+  funnel nodes are unreachable on v2 turns.
+- **Preferences ride as a snapshot**: the disposer's authoritative merge
+  (removals included) lands verbatim via `PreferencesUpdate(replace=True)`
+  — the union reducer would resurrect removed genres.
+- **Trace**: `route_v2` notes carry every invariant enforced; `retrieve`
+  keeps `where_applied` / `excluded_shown` (#88).
+- v1 stays intact and selectable; its unenforceable C6 emissions
+  (`runtime_max`/`rating_min`) are recorded, never silent. Promotion is
+  the last decision on the map (#90), measured by #107.

@@ -57,6 +57,10 @@ class MayaGraphState(BaseModel):
 
     # 3. Seen Recommendations Tracker (reset-aware unique reducer, #80)
     shown_movie_ids: Annotated[list[int], merge_shown_ids] = Field(default_factory=list)
+    #: #106/C14: titles parallel the ids — the Understand state block speaks
+    #: in titles. Same reducer + reset wrapper as the ids (runtime works for
+    #: any hashable; reset is id-free).
+    shown_movie_titles: Annotated[list[str], merge_shown_ids] = Field(default_factory=list)
 
     # 4. Persistent User Preferences & Exclusions (Merge Reducer)
     session_preferences: Annotated[UserSessionPreferences, merge_preferences] = Field(

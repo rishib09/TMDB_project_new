@@ -50,7 +50,7 @@ D16–D19) against docs.langchain.com and the installed packages.
 | Reranking | `flashrank.Ranker` (0.2.10) | LangChain's wrapper lives in `langchain-community` (not installed, being sunset) |
 | Local embeddings | `fastembed.TextEmbedding` (0.8.0) | `HuggingFaceEmbeddings` needs PyTorch (ADR 0003 says no) |
 | Cloud embeddings | `openai` client against OpenRouter inside the ADR 0008 seam; `OpenAIEmbeddings(base_url=, check_embedding_ctx_length=False)` (langchain-openai) verified to return identical vectors and may carry the transport only | the packing window, token counter, window correction and free-tier backoff stay in the seam |
-| SQL filters and superlatives | `sqlite3` in `MovieDatabase` | shown-id exclusion landed (#88); runtime and rating predicates remain future work |
+| SQL filters and superlatives | `sqlite3` in `MovieDatabase` | shown-id exclusion (#88) and runtime/rating predicates (#106, C6) landed |
 
 ## Evaluation and observability
 

@@ -113,8 +113,26 @@ class ShownIdsUpdate(BaseModel):
     reset: bool = False  # fresh start wipes the slate
 
 
-def merge_shown_ids(left: list[int], right: ShownIdsUpdate | Sequence[int]) -> list[int]:
-    """Reducer: append ids (dedup); a ``reset`` update replaces the slate."""
+class PreferencesUpdate(BaseModel):
+    """#106: turn-level update for the preferences channel.
+
+    Plain updates stay deltas (the reducer merges); the v2 disposer's
+    authoritative snapshot rides ``replace=True`` so the merge cannot
+    resurrect what the snapshot removed.
+    """
+
+    prefs: UserSessionPreferences
+    replace: bool = False
+
+
+def merge_shown_ids(
+    left: list[int | str], right: ShownIdsUpdate | Sequence[int | str]
+) -> list[int | str]:
+    """Reducer: append ids (dedup); a ``reset`` update replaces the slate.
+
+    Also accumulates ``shown_movie_titles`` (#106/C14) — the dedupe works
+    for any hashable; only ids get the typed annotation.
+    """
     if isinstance(right, ShownIdsUpdate):
         if right.reset:
             return list(dict.fromkeys(right.ids))
@@ -124,9 +142,17 @@ def merge_shown_ids(left: list[int], right: ShownIdsUpdate | Sequence[int]) -> l
 
 def merge_preferences(
     current: UserSessionPreferences,
-    incoming: UserSessionPreferences | None
+    incoming: UserSessionPreferences | None | PreferencesUpdate,
 ) -> UserSessionPreferences:
     """Reducer that merges session-level preferences and persistent exclusions."""
+    if isinstance(incoming, PreferencesUpdate):
+        # #106: a v2 dispose() snapshot rides verbatim — re-merging it would
+        # union it with stale state and resurrect removed preferences.
+        return (
+            incoming.prefs
+            if incoming.replace
+            else merge_preferences(current, incoming.prefs)
+        )
     if not incoming:
         return current
     if incoming.reset_requested:  # #26-E: clean slate beats any merge
