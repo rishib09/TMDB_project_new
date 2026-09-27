@@ -53,6 +53,11 @@ class MetadataFilterCriteria(BaseModel):
     person: str | None = None
     excluded_genres: list[str] = Field(default_factory=list)
     excluded_actors: list[str] = Field(default_factory=list)
+    #: #82 C6 (v2): column-shaped caveats become filters. Additive with None
+    #: defaults — v1 never reads them, so v1 behavior is unchanged; the SQL
+    #: pushdown for both lands with the v2 stack (#106).
+    runtime_max: int | None = None
+    rating_min: float | None = None
 
 
 class QueryRoutingDecision(BaseModel):
