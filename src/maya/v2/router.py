@@ -24,6 +24,8 @@ from src.maya.v2.disposer import (
     enforce_probe_budget,
     enforce_question,
 )
+
+import re
 from src.maya.v2.models import Understanding
 from src.maya.v2.prompt import SYSTEM_PROMPT_V2, build_state_block
 
@@ -116,8 +118,6 @@ class MayaV2Router:
         """One client call; ``(None, error)`` on API failure, ``(None, None)``
         on unusable JSON. The fence is stripped and pydantic validates HERE —
         within the SAME attempt, before any C12 retry is spent."""
-        import re
-
         try:
             resp = self._llm.invoke(messages)
         except Exception as exc:  # noqa: BLE001 — D17 client exhausted; degrade (C12)
@@ -129,8 +129,7 @@ class MayaV2Router:
             return None, None
         stripped = re.sub(
             r"^```(?:json)?\s*|\s*```$", "", text.strip(), flags=re.DOTALL
-        )
-        try:
+        )        try:
             return Understanding.model_validate_json(stripped), None
         except ValidationError:
             return None, None

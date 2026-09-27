@@ -126,8 +126,8 @@ class PreferencesUpdate(BaseModel):
 
 
 def merge_shown_ids(
-    left: list[int], right: ShownIdsUpdate | Sequence[int]
-) -> list[int]:
+    left: list[int | str], right: ShownIdsUpdate | Sequence[int | str]
+) -> list[int | str]:
     """Reducer: append ids (dedup); a ``reset`` update replaces the slate.
 
     Also accumulates ``shown_movie_titles`` (#106/C14) — the dedupe works
@@ -142,7 +142,7 @@ def merge_shown_ids(
 
 def merge_preferences(
     current: UserSessionPreferences,
-    incoming: UserSessionPreferences | None | "PreferencesUpdate",
+    incoming: UserSessionPreferences | None | PreferencesUpdate,
 ) -> UserSessionPreferences:
     """Reducer that merges session-level preferences and persistent exclusions."""
     if isinstance(incoming, PreferencesUpdate):
