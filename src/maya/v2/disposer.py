@@ -31,7 +31,7 @@ CLARIFY_MAX_CHARS = 200
 MAX_SCHEMA_ATTEMPTS = 2
 
 #: C8's ask fallback slots, shared by the deterministic ask and the ladder.
-DEFAULT_MISSING_SLOTS: list[str] = ["mood", "genres"]
+DEFAULT_MISSING_SLOTS: list[Axis] = ["mood", "genres"]
 
 #: C12 + C9 shared fallback wording — Maya's deterministic ask.
 TEMPLATE_ASK = "Tell me a mood or a genre and I'll find something good."
@@ -153,6 +153,7 @@ def dispose(
     # applies no state changes). Adversarial-pinned: the delta must not
     # survive either path.
     if u.intent is IntentType.OUT_OF_SCOPE:
+        notes.append("disposition: out of scope -> no memory writes")
         return Disposition(understanding=u, preferences=prefs, notes=notes)
 
     # C7: era label / decade -> years through Experiment Config; explicit
@@ -163,19 +164,14 @@ def dispose(
         f is not None
         and (f.exact_year is not None or f.year_min is not None or f.year_max is not None)
     )
+    supersedes = " (era label supersedes decade)" if u.decade is not None else ""
     if not has_explicit_years:
         if u.era == "old":
             era_year_max = config.era_old_year_max
-            note = f"disposition: era 'old' -> year_max={config.era_old_year_max}"
-            if u.decade is not None:
-                note += " (era label supersedes decade)"
-            notes.append(note)
+            notes.append(f"disposition: era 'old' -> year_max={config.era_old_year_max}{supersedes}")
         elif u.era == "recent":
             era_year_min = config.era_recent_year_min
-            note = f"disposition: era 'recent' -> year_min={config.era_recent_year_min}"
-            if u.decade is not None:
-                note += " (era label supersedes decade)"
-            notes.append(note)
+            notes.append(f"disposition: era 'recent' -> year_min={config.era_recent_year_min}{supersedes}")
         elif u.decade is not None:
             era_year_min, era_year_max = u.decade, u.decade + 9
             notes.append(f"disposition: decade {u.decade}s -> {u.decade}-{u.decade + 9}")

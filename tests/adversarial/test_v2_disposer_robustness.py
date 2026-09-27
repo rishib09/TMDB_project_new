@@ -99,6 +99,8 @@ class TestMemoryIntegrity:
         out = dispose(u, prefs, CFG)
         assert out.preferences == prefs
         assert out.understanding.intent is IntentType.OUT_OF_SCOPE
+        # telemetry rule: the invariant is on the record, not silent
+        assert any("no memory writes" in n for n in out.notes)
 
     def test_era_supersedes_decade_with_a_note(self):
         """Era label and decade both set, no explicit years: era wins through
