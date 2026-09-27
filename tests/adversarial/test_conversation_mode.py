@@ -471,7 +471,6 @@ def test_v2_pivot_goes_to_the_shared_pivot_node():
 def test_v1_stack_ignores_v2_fields():
     """Selector sanity: a v1 router on a v2-flagged config still routes v1 —
     the isinstance check, not the flag alone, picks the node."""
-    cfg = ExperimentConfig(routing_stack="v2")
     router = ScriptedRouter([_decision(filters=MetadataFilterCriteria(year_min=2000))])
     engine = RecordingEngine([_movie(1, "A")])
     graph = build_maya_graph(
@@ -481,4 +480,3 @@ def test_v1_stack_ignores_v2_fields():
     )
     out = graph.invoke({"messages": [HumanMessage(content="recent movies")]}, _cfg("v1-guard"))
     assert out["routing_decision"] is not None  # v1 decision shape, v1 node ran
-    del cfg

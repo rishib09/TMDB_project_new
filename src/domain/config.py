@@ -49,9 +49,6 @@ class ExperimentConfig(BaseModel):
         "(vary the router ONLY). Explicit in the experiment identity.",
     )
     reasoning_effort: str = Field(default="low", description="Reasoning effort: none, low, medium, high")
-    #: #106: which routing stack serves the turn. Set by the harness and
-    #: flipped locally via MAYA_ROUTING_STACK (D12) — never a Lab slider.
-    routing_stack: Literal["v1", "v2"] = Field(default="v1")
     #: #106/D15: the v2 Understand model (baseline candidate); #107 sweeps it.
     v2_router_model: str = Field(default="glm-5.3-flash")
     #: #107 sweep isolation: pin exact config id, no provider swap (v1's
@@ -60,7 +57,7 @@ class ExperimentConfig(BaseModel):
     routing_stack: Literal["v1", "v2"] = Field(
         default="v1",
         description="Routing Stack in force (#83): v1 = gated router (production); "
-        "v2 = LLM Understanding (not yet built). Swept by the evaluation "
+        "v2 = LLM Understanding (#106). Swept by the evaluation "
         "harness (--stack), flippable locally via MAYA_ROUTING_STACK — never a Lab knob.",
     )
     temperature: float = Field(default=0.0, ge=0.0, le=1.0, description="Sampling temperature")

@@ -125,8 +125,14 @@ class PreferencesUpdate(BaseModel):
     replace: bool = False
 
 
-def merge_shown_ids(left: list[int], right: ShownIdsUpdate | Sequence[int]) -> list[int]:
-    """Reducer: append ids (dedup); a ``reset`` update replaces the slate."""
+def merge_shown_ids(
+    left: list[int], right: ShownIdsUpdate | Sequence[int]
+) -> list[int]:
+    """Reducer: append ids (dedup); a ``reset`` update replaces the slate.
+
+    Also accumulates ``shown_movie_titles`` (#106/C14) — the dedupe works
+    for any hashable; only ids get the typed annotation.
+    """
     if isinstance(right, ShownIdsUpdate):
         if right.reset:
             return list(dict.fromkeys(right.ids))

@@ -116,7 +116,6 @@ class MayaV2Router:
         """One client call; ``(None, error)`` on API failure, ``(None, None)``
         on unusable JSON. The fence is stripped and pydantic validates HERE —
         within the SAME attempt, before any C12 retry is spent."""
-        import json
         import re
 
         try:

@@ -735,13 +735,6 @@ def _run_one(
         # session IS the run (one trace per turn, Q18).
         if conversations is None:
             raise ValueError("conversation mode requires the golden conversations")
-        if config.routing_stack == "v2":
-            print(
-                "conversation mode: the v2 routing stack does not exist yet (#83) "
-                "— the baseline is v1",
-                file=sys.stderr,
-            )
-            return None
         target = collection_name(config.column_preset, config.embedding_profile)
         if not store.has_collection(target):
             print(f"[{label}] skipped — collection `{target}` is not built", file=sys.stderr)
@@ -827,7 +820,7 @@ def main(argv: list[str] | None = None) -> int:
                         help="filter by golden tier (conversation mode)")
     parser.add_argument("--stack", choices=["v1", "v2"],
                         default=os.getenv("MAYA_ROUTING_STACK", "v1"),
-                        help="routing stack under test (#83; v2 not yet built)")
+                        help="routing stack under test (#106: v2 = LLM Understanding)")
     parser.add_argument("--limit", type=int, default=None, help="first N queries (smoke runs)")
     parser.add_argument("--push-langfuse", action="store_true")
     parser.add_argument(
