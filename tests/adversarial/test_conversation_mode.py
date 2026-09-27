@@ -262,3 +262,83 @@ def test_relaxation_retry_records_final_match_mode():
     assert out["filters_applied"]["genre_match"] == "any"  # the FINAL routing
     assert out["filters_applied"]["genres"] == ["Comedy", "Romance"]
     assert len(out["retrieved_movies"]) == 1
+
+
+# --- #80: fresh top-k — shown ids ride the thread and reset on fresh start ---
+
+
+class PooledEngine:
+    """Pops one scripted result set per retrieve; records the shown_ids it
+    was handed (the #88 orchestrator handoff)."""
+
+    def __init__(self, pools):
+        self.pools = [list(p) for p in pools]
+        self.shown_seen = []
+
+    def _results(self, movies):
+        return [type("R", (), {"movie": m, "score": 1.0, "source": "dense"})() for m in movies]
+
+    def retrieve(self, query, routing, top_k=8, candidate_pool=50, shown_ids=None):
+        self.shown_seen.append(list(shown_ids or []))
+        return self._results(self.pools.pop(0)[:top_k])
+
+
+class HonoringEngine(PooledEngine):
+    """Same contract as the real engine: excludes shown ids before top-k."""
+
+    def retrieve(self, query, routing, top_k=8, candidate_pool=50, shown_ids=None):
+        shown = set(shown_ids or [])
+        self.shown_seen.append(list(shown_ids or []))
+        fresh = [m for m in self.pools.pop(0) if m.id not in shown]
+        return self._results(fresh[:top_k])
+
+
+def test_fresh_start_clears_shown_ids_in_thread():
+    """"something completely different" must wipe the shown slate (#80).
+
+    Red on current code: the union reducer kept every id forever — the guard
+    reset preferences but could not express clearing the id accumulator, so
+    earlier titles stayed excluded for the whole thread.
+    """
+    engine = PooledEngine([
+        [_movie(1, "A"), _movie(2, "B"), _movie(3, "C")],
+        [_movie(7, "G"), _movie(8, "H")],
+    ])
+    router = ScriptedRouter([
+        _decision(filters=MetadataFilterCriteria(year_min=2000)),
+        _decision(filters=MetadataFilterCriteria(year_min=1990)),
+    ])
+    graph = _graph(router, engine)
+    cfg = _cfg("fresh-clear")
+    graph.invoke({"messages": [HumanMessage(content="scary movies")]}, cfg)
+    assert graph.get_state(cfg).values["shown_movie_ids"] == [1, 2, 3]
+
+    graph.invoke(
+        {"messages": [HumanMessage(content="something completely different")]}, cfg
+    )
+    # reset reached retrieve: turn 2 was offered an empty slate, not the old ids
+    assert engine.shown_seen[1] == []
+    # and the accumulator holds only the new turn's ids
+    assert graph.get_state(cfg).values["shown_movie_ids"] == [7, 8]
+
+
+def test_second_turn_never_repeats_first_turn_ids():
+    """Regression guard (green post-#88, was red before): the orchestrator
+    hands the thread's shown ids to the engine, and a refinement turn's
+    retrieved set contains none of them."""
+    engine = HonoringEngine([
+        [_movie(1, "A"), _movie(2, "B"), _movie(3, "C")],
+        [_movie(3, "C"), _movie(4, "D"), _movie(5, "E")],
+    ])
+    router = ScriptedRouter([
+        _decision(filters=MetadataFilterCriteria(year_min=2000)),
+        _decision(filters=MetadataFilterCriteria(year_min=1990)),
+    ])
+    graph = _graph(router, engine)
+    cfg = _cfg("no-repeat")
+    graph.invoke({"messages": [HumanMessage(content="scary movies")]}, cfg)
+    out2 = graph.invoke({"messages": [HumanMessage(content="different ones")]}, cfg)
+
+    assert engine.shown_seen[1] == [1, 2, 3]  # handoff: thread -> engine
+    ids2 = [m.id for m in out2["retrieved_movies"]]
+    assert ids2 == [4, 5]  # id 3 was shown in turn 1 — it must not return

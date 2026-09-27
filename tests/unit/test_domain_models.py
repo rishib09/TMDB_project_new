@@ -5,8 +5,10 @@ import pytest
 from src.domain.config import ExperimentConfig, PresetType
 from src.domain.memory import (
     ConversationState,
+    ShownIdsUpdate,
     UserSessionPreferences,
     merge_preferences,
+    merge_shown_ids,
     merge_unique_ids,
 )
 from src.domain.movie import CastMember, MovieRecord
@@ -191,3 +193,29 @@ def test_experiment_config_presets_and_budget_clamping():
         token_budget=1024
     )
     assert config_invalid.token_budget == 256  # Auto-clamped to model ceiling
+
+
+# --- #80: shown-ids accumulator with fresh-start reset -----------------------
+
+
+def test_merge_shown_ids_plain_lists_stay_union():
+    """Existing semantics preserved: plain list updates append + dedupe."""
+    assert merge_shown_ids([1, 2], [3]) == [1, 2, 3]
+    assert merge_shown_ids([1, 2], [2, 3]) == [1, 2, 3]
+    assert merge_shown_ids([1], []) == [1]  # empty append is a no-op, not a reset
+
+
+def test_merge_shown_ids_wrapped_update_appends():
+    assert merge_shown_ids([1, 2], ShownIdsUpdate(ids=[3])) == [1, 2, 3]
+    assert merge_shown_ids([1, 2], ShownIdsUpdate(ids=[2, 3])) == [1, 2, 3]
+
+
+def test_merge_shown_ids_reset_wipes_the_slate():
+    """#26-E symmetry: a fresh start beats any accumulation."""
+    assert merge_shown_ids([1, 2, 3], ShownIdsUpdate(reset=True)) == []
+    assert merge_shown_ids([1, 2], ShownIdsUpdate(ids=[9], reset=True)) == [9]
+
+
+def test_merge_unique_ids_unchanged():
+    """The old pure helper stays intact for direct callers."""
+    assert merge_unique_ids([1], [1, 2]) == [1, 2]

@@ -7,6 +7,7 @@ shared by both ``ConversationState`` (direct calls) and the graph reducers.
 """
 
 from datetime import UTC, datetime
+from typing import Sequence
 
 from pydantic import BaseModel, Field
 
@@ -98,6 +99,27 @@ class UserSessionPreferences(BaseModel):
 def merge_unique_ids(left: list[int], right: list[int]) -> list[int]:
     """Reducer that appends newly shown movie IDs while preserving uniqueness."""
     return list(dict.fromkeys(left + right))
+
+
+class ShownIdsUpdate(BaseModel):
+    """#80: turn-level update for the shown-ids accumulator.
+
+    Plain list updates (retrieve's append) need no wrapper; the wrapper
+    exists so the fresh-start reset (#26-E) can be expressed through the
+    same channel — a union reducer alone can never clear.
+    """
+
+    ids: list[int] = Field(default_factory=list)
+    reset: bool = False  # fresh start wipes the slate
+
+
+def merge_shown_ids(left: list[int], right: ShownIdsUpdate | Sequence[int]) -> list[int]:
+    """Reducer: append ids (dedup); a ``reset`` update replaces the slate."""
+    if isinstance(right, ShownIdsUpdate):
+        if right.reset:
+            return list(dict.fromkeys(right.ids))
+        return merge_unique_ids(left, right.ids)
+    return merge_unique_ids(left, list(right))
 
 
 def merge_preferences(

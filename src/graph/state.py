@@ -24,6 +24,7 @@ from src.domain.memory import (
     FocusedMovieEntity,
     UserSessionPreferences,
     merge_preferences,
+    merge_shown_ids,
     merge_unique_ids,
 )
 from src.domain.movie import MovieRecord
@@ -54,8 +55,8 @@ class MayaGraphState(BaseModel):
     focused_entity: FocusedMovieEntity | None = None
     focused_person: str | None = None
 
-    # 3. Seen Recommendations Tracker (Unique Reducer)
-    shown_movie_ids: Annotated[list[int], merge_unique_ids] = Field(default_factory=list)
+    # 3. Seen Recommendations Tracker (reset-aware unique reducer, #80)
+    shown_movie_ids: Annotated[list[int], merge_shown_ids] = Field(default_factory=list)
 
     # 4. Persistent User Preferences & Exclusions (Merge Reducer)
     session_preferences: Annotated[UserSessionPreferences, merge_preferences] = Field(

@@ -5,8 +5,10 @@ from src.domain.memory import (
     ChatMessage,
     ConversationState,
     FocusedMovieEntity,
+    ShownIdsUpdate,
     UserSessionPreferences,
     merge_preferences,
+    merge_shown_ids,
     merge_unique_ids,
 )
 from src.domain.movie import CastMember, MovieRecord
@@ -30,7 +32,9 @@ __all__ = [
     "FocusedMovieEntity",
     "UserSessionPreferences",
     "ConversationState",
+    "ShownIdsUpdate",
     "merge_unique_ids",
+    "merge_shown_ids",
     "merge_preferences",
     "ExperimentConfig",
     "PresetType",
