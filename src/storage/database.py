@@ -11,6 +11,21 @@ from src.domain.movie import MovieRecord
 from src.domain.routing import MetadataFilterCriteria
 
 
+def _append_id_exclusion(
+    query: str, params: list[Any], excluded_ids: Sequence[int] | None
+) -> str:
+    """#88: append the parameterized shown-id exclusion to a movies query.
+
+    Shared by the metadata-filter and superlative paths — exclusion happens
+    IN-QUERY (fresh top-k for #80), never by trimming results afterwards.
+    """
+    if not excluded_ids:
+        return query
+    query += f" AND id NOT IN ({','.join('?' for _ in excluded_ids)})"
+    params.extend(excluded_ids)
+    return query
+
+
 class MovieDatabase:
     """High-performance SQLite database manager with FTS5 BM25 search for 1970-2026 US movies."""
 
@@ -333,9 +348,7 @@ class MovieDatabase:
         if genre:
             query += " AND genres_json LIKE ?"
             params.append(f"%{genre}%")
-        if excluded_ids:  # #88: shown ids excluded IN-QUERY (fresh top-k, #80)
-            query += f" AND id NOT IN ({','.join('?' for _ in excluded_ids)})"
-            params.extend(excluded_ids)
+        query = _append_id_exclusion(query, params, excluded_ids)
 
         # Exclude zero entries for budget/revenue/runtime superlatives
         if col in ["revenue", "budget", "runtime"]:
@@ -388,9 +401,7 @@ class MovieDatabase:
         query = "SELECT * FROM movies WHERE 1=1"
         params: list[Any] = []
 
-        if excluded_ids:  # #88: shown ids excluded IN-QUERY (fresh top-k, #80)
-            query += f" AND id NOT IN ({','.join('?' for _ in excluded_ids)})"
-            params.extend(excluded_ids)
+        query = _append_id_exclusion(query, params, excluded_ids)
 
         if filters.exact_year is not None:
             query += " AND release_year = ?"

@@ -90,8 +90,8 @@ class HybridRetrievalEngine:
         #: keeps the BM25 fallback, the trace records it, the harness refuses.
         self.last_dense_failure: str | None = None
         #: #88 (D5): what the last retrieve() pushed into the stores — the
-        # Chroma where clause (years, shown ids) and the exclusion list — so
-        # the trace can record ``where_applied`` / ``excluded_shown``.
+        #: Chroma where clause (years, shown ids) and the exclusion list — so
+        #: the trace can record ``where_applied`` / ``excluded_shown``.
         self.last_where_applied: dict[str, Any] | None = None
         self.last_excluded_ids: list[int] = []
         self.hybrid_alpha = hybrid_alpha
@@ -139,6 +139,11 @@ class HybridRetrievalEngine:
         # Uniform post-filtering: positive filters + exclusions on the small
         # candidate pool (BM25 has no metadata columns; this keeps one path).
         fused = [r for r in fused if self._is_allowed(r.movie, routing.filters)]
+        if shown_ids:  # #88 review: the sparse leg and dense-failure fallback
+            # bypass the store-level $nin — exclude shown ids here so the
+            # hybrid path honors the fresh-pool guarantee end to end.
+            excluded = set(shown_ids)
+            fused = [r for r in fused if r.movie.id not in excluded]
 
         if self.reranker_enabled and fused:
             return self._rerank(query, fused, top_k)
@@ -187,7 +192,7 @@ class HybridRetrievalEngine:
         self,
         routing: QueryRoutingDecision,
         top_k: int,
-        excluded_ids: list[int] | None = None,
+        excluded_ids: Sequence[int] | None = None,
     ) -> list[RetrievalResult]:
         if routing.superlative:
             s = routing.superlative
@@ -212,7 +217,9 @@ class HybridRetrievalEngine:
 
     # --- hybrid path ------------------------------------------------------------
 
-    def _retrieve_dense(self, query: str, top_k: int, where_filter: dict | None = None) -> list[SearchResult]:
+    def _retrieve_dense(
+        self, query: str, top_k: int, where_filter: dict[str, Any] | None = None
+    ) -> list[SearchResult]:
         try:
             return self.vector_store.search(
                 query=query, version_name=self.rag_version, top_k=top_k,

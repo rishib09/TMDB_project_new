@@ -321,3 +321,42 @@ def test_where_fallback_supports_nin():
         results, {"release_year": {"$gte": 2000}, "id": {"$nin": [3]}},
     )
     assert kept["ids"][0] == [1]
+
+
+# --- #88 review fixes: fused-path exclusion, SQL passthrough ----------------
+
+def test_fused_hybrid_path_excludes_shown_ids(engine):
+    """#88 review P2: the sparse leg and dense-failure fallback can resurface
+    shown movies — the fused list must exclude them before top-k."""
+    shown = [42, 43]
+    engine.vector_store.search.return_value = [
+        SearchResult(id=42, score=0.9, movie=make_movie(42, "Shown A"), document_text="d"),
+        SearchResult(id=7, score=0.8, movie=make_movie(7, "Fresh"), document_text="d"),
+    ]
+    engine.db.search_bm25.return_value = [make_movie(43, "Shown B"), make_movie(8, "Fresh 2")]
+    routing = make_routing()
+    results = engine.retrieve("some query", routing, top_k=5, shown_ids=shown)
+    ids = [r.movie.id for r in results]
+    assert 42 not in ids and 43 not in ids
+
+
+def test_sql_path_passes_excluded_ids_to_store(engine):
+    """#88 review P2: the excluded_ids handoff from retrieve() into the SQL
+    store calls must actually arrive."""
+    routing = make_routing(
+        intent=IntentType.ATTRIBUTE_FILTER,
+        filters=MetadataFilterCriteria(director="Nolan"),
+    )
+    engine.retrieve("nolan movie", routing, top_k=5, shown_ids=[42])
+    kwargs = engine.db.search_metadata_filters.call_args.kwargs
+    assert kwargs["excluded_ids"] == [42]
+
+
+def test_superlative_path_passes_excluded_ids_to_store(engine):
+    routing = make_routing(
+        intent=IntentType.SUPERLATIVE_RANKING,
+        superlative=SuperlativeCriteria(metric=SuperlativeMetric.RATING, direction="DESC"),
+    )
+    engine.retrieve("best movie ever", routing, top_k=5, shown_ids=[42])
+    kwargs = engine.db.query_superlative.call_args.kwargs
+    assert kwargs["excluded_ids"] == [42]
