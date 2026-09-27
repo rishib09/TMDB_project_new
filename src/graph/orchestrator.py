@@ -31,6 +31,7 @@ from src.domain.config import ExperimentConfig
 from src.domain.memory import (
     ConversationState,
     FocusedMovieEntity,
+    ShownIdsUpdate,
     UserSessionPreferences,
     merge_preferences,
 )
@@ -131,6 +132,11 @@ def build_maya_graph(
                 "guardrail_result": injection,
                 "current_query": sanitized,
                 "session_preferences": UserSessionPreferences(reset_requested=True),
+                # #80: the fresh slate covers shown ids too — the union
+                # reducer alone could never clear them, so "something
+                # completely different" left every earlier title excluded
+                # for the rest of the thread.
+                "shown_movie_ids": ShownIdsUpdate(reset=True),
                 "funnel_active": False,
                 "offered_genre_options": [],
             }

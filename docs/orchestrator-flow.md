@@ -50,7 +50,8 @@ contract that keeps chips, responses and counts coherent.
 | Field | Persisted across turns? | Set by | Consumed by |
 |---|---|---|---|
 | `messages` | ✅ (full history) | session | router (coreference), synthesizer |
-| `session_preferences` | ✅ | route (signals), funnel (answers) | retrieve (flavor + genre filters) |
+| `session_preferences` | ✅ (reset on fresh start, #26-E) | route (signals), funnel (answers) | retrieve (flavor + genre filters) |
+| `shown_movie_ids` | ✅ (reset on fresh start, #80) | retrieve (its top-k) | retrieve (store-level + fused exclusion, §3.7b) |
 | `probe_count` | ✅ | probe/funnel | should_probe cap |
 | `funnel_active` | ✅ | probe, funnel | guard (funnel routing) |
 | `offered_genre_options` | ✅ | funnel (confirm_genres) | funnel (pick matching) |

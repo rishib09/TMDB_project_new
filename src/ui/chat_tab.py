@@ -231,14 +231,16 @@ def render_chat(session: MayaSession) -> None:
             if row is not None:
                 render_report_receipt(session, row)
 
-    render_poster_grid(session.last_movies)
-
     recalled_query = render_recall(session)  # #48: replay input, never output
     query = st.chat_input("Ask Maya about movies")
     recalled = False
     if recalled_query and not query:
         query, recalled = recalled_query, True
     if not query:
+        # #80: the standing grid draws on idle reruns only — drawing it
+        # unconditionally painted the OLD posters above a fresh response
+        # on every turn rerun (the double-draw from the visitor Report).
+        render_poster_grid(session.last_movies)
         return
     if session.is_admin_command(query):
         st.toast("The Experimentation Lab lives in the collapsible sidebar.")
