@@ -174,3 +174,48 @@ def test_dense_failure_marker_resets_on_next_retrieve(db):
     results = engine.retrieve("space horror", make_routing(), top_k=5)
     assert engine.last_dense_failure is None
     assert not any(r.dense_failed for r in results)
+
+
+# --- #88: constraints and shown ids pushed INTO the stores (D5) -------------
+
+def test_routed_turn_year_min_reaches_store_as_where_clause(db):
+    """#88 adversarial: a routed turn carrying year_min must constrain the
+    dense store AT QUERY TIME — vector_store.search receives a where clause
+    with release_year $gte and shown ids $nin — instead of relying on the
+    post-filter to shrink an unconstrained pool."""
+    captured = {}
+
+    class _CapturingStore:
+        def search(self, **kwargs):
+            captured.update(kwargs)
+            return []
+
+    engine = HybridRetrievalEngine(
+        db=db, vector_store=_CapturingStore(), hybrid_alpha=0.5, reranker_enabled=False,
+    )
+    routing = make_routing(
+        filters=MetadataFilterCriteria(year_min=2000, genres=["Horror"]),
+    )
+    engine.retrieve("scary movie after 2000", routing, shown_ids=[12, 34])
+    assert captured["where_filter"]["release_year"] == {"$gte": 2000}
+    assert captured["where_filter"]["id"] == {"$nin": [12, 34]}
+
+
+def test_sql_metadata_filters_exclude_shown_ids(db):
+    """#88: the SQL path excludes shown ids in the QUERY (fresh top-k for #80),
+    not by trimming the result list afterwards."""
+    excluded = db.search_metadata_filters(MetadataFilterCriteria(), limit=3)
+    assert excluded, "archive must have movies"
+    shown = [m.id for m in excluded]
+    rows = db.search_metadata_filters(MetadataFilterCriteria(), limit=20, excluded_ids=shown)
+    ids = {m.id for m in rows}
+    assert ids.isdisjoint(shown)
+
+
+def test_superlative_excludes_shown_ids(db):
+    """#88: the superlative SQL path excludes shown ids in the query."""
+    ranked = db.query_superlative("RATING", "DESC", limit=8)
+    assert ranked, "archive must have movies"
+    shown = [m.id for m in ranked[:3]]
+    rows = db.query_superlative("RATING", "DESC", limit=8, excluded_ids=shown)
+    assert {m.id for m in rows}.isdisjoint(shown)

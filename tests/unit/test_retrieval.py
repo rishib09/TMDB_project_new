@@ -14,7 +14,7 @@ from src.domain.routing import (
     SuperlativeCriteria,
     SuperlativeMetric,
 )
-from src.indexing.vector_store import SearchResult
+from src.indexing.vector_store import MovieVectorStore, SearchResult
 from src.retrieval.hybrid_engine import HybridRetrievalEngine, RetrievalResult
 
 
@@ -277,3 +277,47 @@ class TestSparseQuery:
         assert HybridRetrievalEngine.sparse_query("space opera", None) == "space opera"
         filters = MetadataFilterCriteria()
         assert HybridRetrievalEngine.sparse_query("space opera", filters) == "space opera"
+
+
+# --- #88 (D5): where-clause pushdown ----------------------------------------
+
+def test_build_where_clause_years_and_shown_ids():
+    from src.retrieval.hybrid_engine import build_where_clause
+
+    where = build_where_clause(
+        MetadataFilterCriteria(year_min=2000, year_max=2015), shown_ids=[7, 9],
+    )
+    assert where == {
+        "release_year": {"$gte": 2000, "$lte": 2015},
+        "id": {"$nin": [7, 9]},
+    }
+
+
+def test_build_where_clause_exact_year_and_empty_shown():
+    from src.retrieval.hybrid_engine import build_where_clause
+
+    where = build_where_clause(MetadataFilterCriteria(exact_year=1999), shown_ids=[])
+    assert where == {"release_year": {"$eq": 1999}}
+
+
+def test_build_where_clause_genres_not_expressible():
+    """genres_str is a joined string — $in would silently exclude multi-genre
+    movies, so genres stay in the post-filter (ritual option A)."""
+    from src.retrieval.hybrid_engine import build_where_clause
+
+    assert build_where_clause(MetadataFilterCriteria(genres=["Action"]), None) is None
+    assert build_where_clause(None, None) is None
+
+
+def test_where_fallback_supports_nin():
+    """#88: the chroma-InternalError fallback must honor $nin too, or the
+    fresh-top-k guarantee silently degrades on the fallback path."""
+    results = {"ids": [[1, 2, 3]], "metadatas": [[
+        {"id": 1, "release_year": 2001},
+        {"id": 2, "release_year": 1999},
+        {"id": 3, "release_year": 2010},
+    ]], "documents": [["a", "b", "c"]], "distances": [[0.1, 0.2, 0.3]]}
+    kept = MovieVectorStore._apply_where_in_python(
+        results, {"release_year": {"$gte": 2000}, "id": {"$nin": [3]}},
+    )
+    assert kept["ids"][0] == [1]

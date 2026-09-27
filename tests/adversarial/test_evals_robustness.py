@@ -31,7 +31,7 @@ class _R:
 
 
 class _E:
-    def retrieve(self, query, routing, top_k=8, candidate_pool=50):
+    def retrieve(self, query, routing, top_k=8, candidate_pool=50, shown_ids=None):
         return []
 
 
@@ -151,7 +151,7 @@ def test_dataset_superlative_rows_match_sql_ground_truth(dataset_rows):
 
 def test_runner_handles_engine_failure_without_nan():
     class ExplodingEngine:
-        def retrieve(self, query, routing, top_k=8, candidate_pool=50):
+        def retrieve(self, query, routing, top_k=8, candidate_pool=50, shown_ids=None):
             raise RuntimeError("chroma InternalError: Error finding id")
 
     runner = BenchmarkRunner(ExperimentConfig(), ExplodingEngine())  # type: ignore[arg-type]
