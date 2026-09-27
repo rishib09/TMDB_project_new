@@ -106,6 +106,19 @@ this turn** (it's likely an answer to Maya's own question) and the funnel
 The LLM is never called with an empty closed world; refinement question
 included; zero tokens.
 
+### 3.7b Store-level pushdown (#88, D5)
+`retrieve` carries `shown_movie_ids` and the routed filter's **years** into
+the stores: the dense leg receives a Chroma where clause (`release_year`
+range/equality + `id` `$nin`), the SQL legs get a parameterized `NOT IN`.
+The store draws top-k from an already-fresh, already-constrained pool —
+the precondition for #80's fresh top-k. Genres are deliberately NOT
+pushed (`genres_str` is a joined string; `$in` would silently exclude
+multi-genre movies) and stay in the engine's post-filter safety net,
+along with actor/genre exclusions. The chroma-InternalError fallback
+(`_apply_where_in_python`) honors the same operator subset including
+`$nin`. The trace's `retrieve` span records `where_applied` and
+`excluded_shown`.
+
 ### 3.8 ⚠️ Post-funnel refinement — "scary movies for kids" (after retrieval)
 Intent: `guard → route → ???`. After the funnel's retrieval
 `funnel_active=False`, so refinement turns hit the **raw router** — and the

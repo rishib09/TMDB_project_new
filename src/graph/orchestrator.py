@@ -415,6 +415,7 @@ def build_maya_graph(
             query=query,
             routing=decision,
             top_k=config.retrieval_top_k,
+            shown_ids=list(state.shown_movie_ids),  # #88: store-level exclusion
         )
         # Intersection too narrow? (#25) retry ANY-match, relaxation on record.
         if not results and decision.filters and decision.filters.genre_match == "all":
@@ -425,6 +426,7 @@ def build_maya_graph(
                 query=query,
                 routing=relaxed,
                 top_k=config.retrieval_top_k,
+                shown_ids=list(state.shown_movie_ids),  # #88
             )
             decision = relaxed  # #93 Q13: filters_applied must record the FINAL
                                 # post-relaxation routing — the engine ran "any"
@@ -440,7 +442,9 @@ def build_maya_graph(
         tracer.record_local(
             "retrieve",
             {"count": len(movies), "ids": [m.id for m in movies],
-             "filters_applied": filters_applied},
+             "filters_applied": filters_applied,
+             "where_applied": getattr(engine, "last_where_applied", None),  # #88 (D5)
+             "excluded_shown": len(getattr(engine, "last_excluded_ids", []) or [])},
         )
         # D16: entity focus lives in the thread now — the session-side
         # hand-copy that used to set it never reached the graph, so the

@@ -397,7 +397,8 @@ class MovieVectorStore:
         """Fallback where-filtering for chroma's intermittent InternalError.
 
         Supports the operator subset this project uses ($gte, $lte, $eq on
-        numeric metadata fields).
+        numeric fields; #88 adds $in/$nin — shown-id exclusion must survive
+        the fallback too, or the fresh-top-k guarantee silently degrades).
         """
         if not where_filter:
             return results
@@ -405,6 +406,8 @@ class MovieVectorStore:
             "$gte": lambda v, t: v >= t,
             "$lte": lambda v, t: v <= t,
             "$eq": lambda v, t: v == t,
+            "$in": lambda v, t: v in t,
+            "$nin": lambda v, t: v not in t,
         }
         keep = []
         for i, metadata in enumerate(results["metadatas"][0]):

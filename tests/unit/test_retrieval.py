@@ -14,7 +14,7 @@ from src.domain.routing import (
     SuperlativeCriteria,
     SuperlativeMetric,
 )
-from src.indexing.vector_store import SearchResult
+from src.indexing.vector_store import MovieVectorStore, SearchResult
 from src.retrieval.hybrid_engine import HybridRetrievalEngine, RetrievalResult
 
 
@@ -277,3 +277,86 @@ class TestSparseQuery:
         assert HybridRetrievalEngine.sparse_query("space opera", None) == "space opera"
         filters = MetadataFilterCriteria()
         assert HybridRetrievalEngine.sparse_query("space opera", filters) == "space opera"
+
+
+# --- #88 (D5): where-clause pushdown ----------------------------------------
+
+def test_build_where_clause_years_and_shown_ids():
+    from src.retrieval.hybrid_engine import build_where_clause
+
+    where = build_where_clause(
+        MetadataFilterCriteria(year_min=2000, year_max=2015), shown_ids=[7, 9],
+    )
+    assert where == {
+        "release_year": {"$gte": 2000, "$lte": 2015},
+        "id": {"$nin": [7, 9]},
+    }
+
+
+def test_build_where_clause_exact_year_and_empty_shown():
+    from src.retrieval.hybrid_engine import build_where_clause
+
+    where = build_where_clause(MetadataFilterCriteria(exact_year=1999), shown_ids=[])
+    assert where == {"release_year": {"$eq": 1999}}
+
+
+def test_build_where_clause_genres_not_expressible():
+    """genres_str is a joined string — $in would silently exclude multi-genre
+    movies, so genres stay in the post-filter (ritual option A)."""
+    from src.retrieval.hybrid_engine import build_where_clause
+
+    assert build_where_clause(MetadataFilterCriteria(genres=["Action"]), None) is None
+    assert build_where_clause(None, None) is None
+
+
+def test_where_fallback_supports_nin():
+    """#88: the chroma-InternalError fallback must honor $nin too, or the
+    fresh-top-k guarantee silently degrades on the fallback path."""
+    results = {"ids": [[1, 2, 3]], "metadatas": [[
+        {"id": 1, "release_year": 2001},
+        {"id": 2, "release_year": 1999},
+        {"id": 3, "release_year": 2010},
+    ]], "documents": [["a", "b", "c"]], "distances": [[0.1, 0.2, 0.3]]}
+    kept = MovieVectorStore._apply_where_in_python(
+        results, {"release_year": {"$gte": 2000}, "id": {"$nin": [3]}},
+    )
+    assert kept["ids"][0] == [1]
+
+
+# --- #88 review fixes: fused-path exclusion, SQL passthrough ----------------
+
+def test_fused_hybrid_path_excludes_shown_ids(engine):
+    """#88 review P2: the sparse leg and dense-failure fallback can resurface
+    shown movies — the fused list must exclude them before top-k."""
+    shown = [42, 43]
+    engine.vector_store.search.return_value = [
+        SearchResult(id=42, score=0.9, movie=make_movie(42, "Shown A"), document_text="d"),
+        SearchResult(id=7, score=0.8, movie=make_movie(7, "Fresh"), document_text="d"),
+    ]
+    engine.db.search_bm25.return_value = [make_movie(43, "Shown B"), make_movie(8, "Fresh 2")]
+    routing = make_routing()
+    results = engine.retrieve("some query", routing, top_k=5, shown_ids=shown)
+    ids = [r.movie.id for r in results]
+    assert 42 not in ids and 43 not in ids
+
+
+def test_sql_path_passes_excluded_ids_to_store(engine):
+    """#88 review P2: the excluded_ids handoff from retrieve() into the SQL
+    store calls must actually arrive."""
+    routing = make_routing(
+        intent=IntentType.ATTRIBUTE_FILTER,
+        filters=MetadataFilterCriteria(director="Nolan"),
+    )
+    engine.retrieve("nolan movie", routing, top_k=5, shown_ids=[42])
+    kwargs = engine.db.search_metadata_filters.call_args.kwargs
+    assert kwargs["excluded_ids"] == [42]
+
+
+def test_superlative_path_passes_excluded_ids_to_store(engine):
+    routing = make_routing(
+        intent=IntentType.SUPERLATIVE_RANKING,
+        superlative=SuperlativeCriteria(metric=SuperlativeMetric.RATING, direction="DESC"),
+    )
+    engine.retrieve("best movie ever", routing, top_k=5, shown_ids=[42])
+    kwargs = engine.db.query_superlative.call_args.kwargs
+    assert kwargs["excluded_ids"] == [42]

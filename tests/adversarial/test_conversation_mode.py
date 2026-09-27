@@ -44,7 +44,7 @@ class RecordingEngine:
         self.movies = movies or []
         self.calls = []
 
-    def retrieve(self, query, routing, top_k=8, candidate_pool=50):
+    def retrieve(self, query, routing, top_k=8, candidate_pool=50, shown_ids=None):
         self.calls.append({"query": query, "routing": routing, "top_k": top_k})
         return [
             type("R", (), {"movie": m, "score": 1.0, "source": "dense"})()
@@ -242,7 +242,7 @@ def test_relaxation_retry_records_final_match_mode():
         """Empty on intersection ("all"), results on union ("any")."""
         last_dense_failure = None
 
-        def retrieve(self, query, routing, top_k=8, candidate_pool=50):
+        def retrieve(self, query, routing, top_k=8, candidate_pool=50, shown_ids=None):
             if routing.filters.genre_match == "all":
                 return []
             return [

@@ -6,7 +6,7 @@ movies with posters out. All libraries are from requirements.txt — no
 custom ML code: rank fusion is arithmetic, reranking is flashrank.
 """
 
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Sequence
 
 from pydantic import BaseModel, Field
 
@@ -31,11 +31,41 @@ class RetrievalResult(BaseModel):
     )
 
 
+def build_where_clause(
+    filters: MetadataFilterCriteria | None,
+    shown_ids: Sequence[int] | None,
+) -> dict[str, Any] | None:
+    """#88 (D5): the Chroma-expressible subset of a routed decision — pure.
+
+    Years map to ``release_year`` range/equality operators; shown ids map to
+    ``id`` ``$nin`` so the store draws top-k from a fresh pool (#80). Genres
+    deliberately stay OUT: Chroma metadata holds ``genres_str`` as a joined
+    string, and ``$in`` matches whole values only — pushing genres would
+    silently exclude multi-genre movies ("Action Sci-Fi" fails "$in: Action").
+    Genres remain in the engine's post-filter safety net until a re-index
+    stores them as list metadata. Returns None when nothing is expressible.
+    """
+    conditions: dict[str, Any] = {}
+    if filters:
+        if filters.exact_year is not None:
+            conditions["release_year"] = {"$eq": filters.exact_year}
+        else:
+            year: dict[str, int] = {}
+            if filters.year_min is not None:
+                year["$gte"] = filters.year_min
+            if filters.year_max is not None:
+                year["$lte"] = filters.year_max
+            if year:
+                conditions["release_year"] = year
+    if shown_ids:
+        conditions["id"] = {"$nin": list(shown_ids)}
+    return conditions or None
+
+
 class HybridRetrievalEngine:
     """Routes superlatives to SQL, fuses dense+BM25 via RRF, optionally reranks."""
 
     RRF_K: ClassVar[int] = 60  # standard RRF smoothing constant
-
     def __init__(
         self,
         db: MovieDatabase,
@@ -59,6 +89,11 @@ class HybridRetrievalEngine:
         #: retrieve() swallowed in the dense leg; None when dense ran. Chat
         #: keeps the BM25 fallback, the trace records it, the harness refuses.
         self.last_dense_failure: str | None = None
+        #: #88 (D5): what the last retrieve() pushed into the stores — the
+        #: Chroma where clause (years, shown ids) and the exclusion list — so
+        #: the trace can record ``where_applied`` / ``excluded_shown``.
+        self.last_where_applied: dict[str, Any] | None = None
+        self.last_excluded_ids: list[int] = []
         self.hybrid_alpha = hybrid_alpha
         self.reranker_enabled = reranker_enabled
         self.reranker_model = reranker_model
@@ -72,9 +107,19 @@ class HybridRetrievalEngine:
         routing: QueryRoutingDecision,
         top_k: int = 8,
         candidate_pool: int = 50,
+        shown_ids: Sequence[int] | None = None,
     ) -> list[RetrievalResult]:
-        """Returns the final ranked movies for one router decision."""
+        """Returns the final ranked movies for one router decision.
+
+        #88 (D5): ``shown_ids`` and the filter's years are pushed INTO the
+        stores — a Chroma where clause on the dense leg, ``NOT IN`` on the
+        SQL legs — so the fetched pool is already fresh and constrained;
+        genre/actor/exclusion matching stays in the post-filter safety net.
+        """
         self.last_dense_failure = None
+        where = build_where_clause(routing.filters, shown_ids)
+        self.last_where_applied = where
+        self.last_excluded_ids = list(shown_ids or [])
         if not routing.requires_rag:
             return []
 
@@ -83,9 +128,9 @@ class HybridRetrievalEngine:
             return []
 
         if self._use_sql_path(routing):
-            return self._retrieve_sql(routing, top_k)
+            return self._retrieve_sql(routing, top_k, excluded_ids=self.last_excluded_ids)
 
-        dense = self._retrieve_dense(query, candidate_pool)
+        dense = self._retrieve_dense(query, candidate_pool, where)
         sparse = self._retrieve_bm25(self.sparse_query(query, routing.filters), candidate_pool)
         fused = self._rrf_fuse(dense, sparse)
         if self.last_dense_failure is not None:
@@ -94,6 +139,11 @@ class HybridRetrievalEngine:
         # Uniform post-filtering: positive filters + exclusions on the small
         # candidate pool (BM25 has no metadata columns; this keeps one path).
         fused = [r for r in fused if self._is_allowed(r.movie, routing.filters)]
+        if shown_ids:  # #88 review: the sparse leg and dense-failure fallback
+            # bypass the store-level $nin — exclude shown ids here so the
+            # hybrid path honors the fresh-pool guarantee end to end.
+            excluded = set(shown_ids)
+            fused = [r for r in fused if r.movie.id not in excluded]
 
         if self.reranker_enabled and fused:
             return self._rerank(query, fused, top_k)
@@ -138,7 +188,12 @@ class HybridRetrievalEngine:
 
     # --- SQL path ---------------------------------------------------------------
 
-    def _retrieve_sql(self, routing: QueryRoutingDecision, top_k: int) -> list[RetrievalResult]:
+    def _retrieve_sql(
+        self,
+        routing: QueryRoutingDecision,
+        top_k: int,
+        excluded_ids: Sequence[int] | None = None,
+    ) -> list[RetrievalResult]:
         if routing.superlative:
             s = routing.superlative
             movies = self.db.query_superlative(
@@ -147,9 +202,12 @@ class HybridRetrievalEngine:
                 year=s.year,
                 genre=s.genre,
                 limit=top_k * 2,  # headroom so post-filtering can't empty the page
+                excluded_ids=excluded_ids,  # #88: exclude in-query, not post-trim
             )
         else:
-            movies = self.db.search_metadata_filters(routing.filters, limit=top_k * 2)
+            movies = self.db.search_metadata_filters(
+                routing.filters, limit=top_k * 2, excluded_ids=excluded_ids,
+            )
 
         movies = [m for m in movies if self._is_allowed(m, routing.filters)]
         return [
@@ -159,11 +217,14 @@ class HybridRetrievalEngine:
 
     # --- hybrid path ------------------------------------------------------------
 
-    def _retrieve_dense(self, query: str, top_k: int) -> list[SearchResult]:
+    def _retrieve_dense(
+        self, query: str, top_k: int, where_filter: dict[str, Any] | None = None
+    ) -> list[SearchResult]:
         try:
             return self.vector_store.search(
                 query=query, version_name=self.rag_version, top_k=top_k,
                 provider=self.search_provider,
+                where_filter=where_filter,  # #88: years + shown ids at the store
             )
         except Exception as exc:  # noqa: BLE001 — fallback is deliberate and RECORDED
             # Missing/legacy collection or a failed provider call must not kill

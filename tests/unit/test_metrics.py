@@ -142,7 +142,7 @@ class FakeEngine:
         self.ranked_by_query = ranked_by_query
         self.calls = []
 
-    def retrieve(self, query, routing, top_k=8, candidate_pool=50):
+    def retrieve(self, query, routing, top_k=8, candidate_pool=50, shown_ids=None):
         self.calls.append(query)
         return [
             type("R", (), {"movie": type("M", (), {"id": mid})()})()

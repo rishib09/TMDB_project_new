@@ -4,11 +4,26 @@ import json
 import sqlite3
 from datetime import date
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 
 from src.domain.budget import utc_today, week_bounds
 from src.domain.movie import MovieRecord
 from src.domain.routing import MetadataFilterCriteria
+
+
+def _append_id_exclusion(
+    query: str, params: list[Any], excluded_ids: Sequence[int] | None
+) -> str:
+    """#88: append the parameterized shown-id exclusion to a movies query.
+
+    Shared by the metadata-filter and superlative paths — exclusion happens
+    IN-QUERY (fresh top-k for #80), never by trimming results afterwards.
+    """
+    if not excluded_ids:
+        return query
+    query += f" AND id NOT IN ({','.join('?' for _ in excluded_ids)})"
+    params.extend(excluded_ids)
+    return query
 
 
 class MovieDatabase:
@@ -309,7 +324,8 @@ class MovieDatabase:
         direction: str = "DESC",
         year: int | None = None,
         genre: str | None = None,
-        limit: int = 5
+        limit: int = 5,
+        excluded_ids: Sequence[int] | None = None,
     ) -> list[MovieRecord]:
         """Deterministic SQL superlative ranking query returning typed MovieRecords."""
         metric_map = {
@@ -332,6 +348,7 @@ class MovieDatabase:
         if genre:
             query += " AND genres_json LIKE ?"
             params.append(f"%{genre}%")
+        query = _append_id_exclusion(query, params, excluded_ids)
 
         # Exclude zero entries for budget/revenue/runtime superlatives
         if col in ["revenue", "budget", "runtime"]:
@@ -373,7 +390,8 @@ class MovieDatabase:
     def search_metadata_filters(
         self,
         filters: "MetadataFilterCriteria",
-        limit: int = 20
+        limit: int = 20,
+        excluded_ids: Sequence[int] | None = None,
     ) -> list[MovieRecord]:
         """Deterministic SQL query for structured metadata filters (issue #4).
 
@@ -382,6 +400,8 @@ class MovieDatabase:
         """
         query = "SELECT * FROM movies WHERE 1=1"
         params: list[Any] = []
+
+        query = _append_id_exclusion(query, params, excluded_ids)
 
         if filters.exact_year is not None:
             query += " AND release_year = ?"
