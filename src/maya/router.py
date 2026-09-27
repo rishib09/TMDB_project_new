@@ -123,6 +123,30 @@ standalone_query="Who directed Inception?"
 """
 
 
+class _FenceTolerantChain:
+    """#107: the structured-output seam with an owned parse.
+
+    The drifted flash-lite snapshot wraps its JSON in a ```json fence;
+    with_structured_output raises json_invalid on it (truncating the text
+    in str(exc)), which no fallback could recover. This chain calls the
+    transport directly, strips the fence, and validates with the same
+    schema — a formatting tic is no longer a routing failure.
+    """
+
+    def __init__(self, llm) -> None:
+        self._llm = llm
+
+    def invoke(self, messages) -> QueryRoutingDecision:
+        resp = self._llm.invoke(messages)
+        text = resp.content
+        if isinstance(text, list):  # content blocks -> joined text
+            text = "".join(getattr(b, "text", "") for b in text)
+        stripped = re.sub(
+            r"^```(?:json)?\s*|\s*```$", "", (text or "").strip(), flags=re.DOTALL
+        )
+        return QueryRoutingDecision.model_validate_json(stripped)
+
+
 class MayaRouter:
     """Routes one user utterance into a validated :class:`QueryRoutingDecision`.
 
@@ -188,7 +212,11 @@ class MayaRouter:
             max_retries=1,
         )
         # Bound once at construction; tests stub this attribute directly.
-        self._chain = self._llm.with_structured_output(QueryRoutingDecision)
+        # #107: owns the parse — with_structured_output raises json_invalid
+        # when the drifted flash-lite snapshot fences its JSON (and truncates
+        # the text in str(exc)), which no fallback could recover. Same seam,
+        # tolerant parse: transport -> fence strip -> pydantic validate.
+        self._chain = _FenceTolerantChain(self._llm)
 
     def route(
         self,
