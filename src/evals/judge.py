@@ -85,6 +85,10 @@ class MayaJudge:
             base_url=self._endpoint.base_url,
             api_key=self._endpoint.api_key,
             temperature=0.0,
+            # #74/#89: cap completions — uncapped, the provider default served
+            # 16,384-token non-JSON generations (2 baseline fail-opens). Same
+            # JSON-safety bound as the router's 1024.
+            max_tokens=1024,
             # #93: bounded calls — see the router's note; D17 client ownership.
             request_timeout=120,
             max_retries=1,
