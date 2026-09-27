@@ -7,6 +7,7 @@ Pure logic lives here so it is testable without a Streamlit runtime.
 """
 
 import logging
+import os
 import uuid
 from datetime import UTC, datetime
 
@@ -82,6 +83,11 @@ class MayaSession:
 
     def __init__(self) -> None:
         self.config = ExperimentConfig()
+        # #106/D12: local stack flip without touching the Lab — the harness
+        # and the developer set the field; the env var is the local override.
+        env_stack = os.getenv("MAYA_ROUTING_STACK", "").strip().lower()
+        if env_stack in {"v1", "v2"}:
+            self.config = self.config.model_copy(update={"routing_stack": env_stack})
         self.conversation = ConversationState()
         self.tracer = DualModeObservabilityManager(session_id=f"ui-{datetime.now(UTC):%H%M%S}")
         self.limiter = SessionCostLimiter()

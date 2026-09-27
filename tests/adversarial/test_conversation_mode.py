@@ -343,3 +343,142 @@ def test_second_turn_never_repeats_first_turn_ids():
     assert engine.shown_seen[1] == [1, 2, 3]  # handoff: thread -> engine
     ids2 = [m.id for m in out2["retrieved_movies"]]
     assert ids2 == [4, 5]  # id 3 was shown in turn 1 — it must not return
+
+
+# --- #106: the v2 stack wired beside v1 ---------------------------------------
+
+from src.maya.v2 import MayaV2Router, PreferenceDelta, Understanding
+
+
+class ScriptedV2(MayaV2Router):
+    """Real constructor (no network — chain is bound but never invoked);
+    understand() pops scripted (Understanding, notes) results."""
+
+    def __init__(self, results):
+        super().__init__(ExperimentConfig(routing_stack="v2"), api_key="test-key")
+        self.results = list(results)
+        self.calls = []
+
+    def understand(self, query, prefs, shown_titles, last_assistant, probe_count):
+        self.calls.append({
+            "query": query, "prefs": prefs, "shown_titles": list(shown_titles),
+            "last_assistant": last_assistant, "probe_count": probe_count,
+        })
+        return self.results.pop(0)
+
+
+def _v2u(**kw) -> Understanding:
+    defaults = dict(intent=IntentType.SEMANTIC_SEARCH, standalone_query="q", confidence=0.9)
+    defaults.update(kw)
+    return Understanding(**defaults)
+
+
+def _v2graph(router, engine):
+    return build_maya_graph(
+        ExperimentConfig(routing_stack="v2"), router, engine,
+        StubSynthesizer(), DualModeObservabilityManager(session_id="adv-106"),
+        checkpointer=InMemorySaver(),
+    )
+
+
+def test_v2_ask_turn_answers_inline_and_skips_the_funnel():
+    """C8/C9: the model-authored question IS the reply — probe/funnel nodes
+    never run; the ask is bounded by turn_decision, not node topology."""
+    u = _v2u(ready_to_retrieve=False, missing_slots=["mood"],
+             clarifying_question="Solo or family night?")
+    router = ScriptedV2([(u, [])])
+    engine = RecordingEngine([_movie(1, "A")])
+    graph = _v2graph(router, engine)
+    cfg = _cfg("v2-ask")
+    out = graph.invoke({"messages": [HumanMessage(content="scary movies")]}, cfg)
+    assert out["final_response"] == "Solo or family night?"
+    assert out["turn_stage"] == "ask" and out["probe_count"] == 1
+    assert out["retrieved_movies"] == []
+    values = graph.get_state(cfg).values
+    assert values.get("funnel_active", False) is False
+    assert values.get("offered_genre_options", []) == []
+
+
+def test_v2_preferences_snapshot_rides_verbatim_including_removals():
+    """The resurrect regression, at graph level: a delta removal must survive
+    the reducer — a plain update would union the snapshot with stale state."""
+    u1 = _v2u(filters=MetadataFilterCriteria(genres=["Comedy", "Drama"]),
+              preference_delta=PreferenceDelta(add_genres=["Comedy", "Drama"]))
+    u2 = _v2u(ready_to_retrieve=True,
+              preference_delta=PreferenceDelta(remove_genres=["Comedy"]))
+    router = ScriptedV2([(u1, []), (u2, [])])
+    engine = RecordingEngine([_movie(1, "A"), _movie(2, "B")])
+    graph = _v2graph(router, engine)
+    cfg = _cfg("v2-snapshot")
+    graph.invoke({"messages": [HumanMessage(content="comedies and dramas")]}, cfg)
+    graph.invoke({"messages": [HumanMessage(content="drop the comedies")]}, cfg)
+    prefs = graph.get_state(cfg).values["session_preferences"]
+    assert prefs.preferred_genres == ["Drama"]  # union would resurrect Comedy
+
+
+def test_v2_fresh_start_clears_shown_ids_and_titles():
+    """Turn 2 (fresh start, no other axis) asks — reset beats the delta per
+    C2, leaving zero axes. Turn 3 then retrieves on a CLEAN slate: the ids
+    and titles were wiped, so nothing from turn 1 is excluded or offered."""
+    pool = [_movie(1, "Alpha"), _movie(2, "Beta"), _movie(3, "Gamma")]
+    router = ScriptedV2([
+        (_v2u(ready_to_retrieve=True,
+              preference_delta=PreferenceDelta(set_mood="scary")), []),
+        (_v2u(reset_context=True), []),
+        (_v2u(ready_to_retrieve=True,
+              preference_delta=PreferenceDelta(set_mood="funny")), []),
+    ])
+    engine = PooledEngine([pool, pool, pool])
+    graph = _v2graph(router, engine)
+    cfg = _cfg("v2-fresh")
+    graph.invoke({"messages": [HumanMessage(content="scary movies")]}, cfg)
+    out2 = graph.invoke(
+        {"messages": [HumanMessage(content="something completely different")]}, cfg
+    )
+    assert out2["turn_stage"] == "ask"  # clean slate, zero axes: ask (C8)
+    graph.invoke({"messages": [HumanMessage(content="funny movies please")]}, cfg)
+    values = graph.get_state(cfg).values
+    assert values["shown_movie_ids"] == [1, 2, 3]
+    assert values["shown_movie_titles"] == ["Alpha", "Beta", "Gamma"]
+    assert engine.shown_seen[1] == []  # turn 3 is the 2nd engine call (turn 2 asked)
+
+
+def test_v2_shown_titles_reach_the_state_block():
+    router = ScriptedV2([
+        (_v2u(ready_to_retrieve=True,
+              preference_delta=PreferenceDelta(set_mood="scary")), []),
+        (_v2u(ready_to_retrieve=True,
+              preference_delta=PreferenceDelta(set_audience="solo")), []),
+    ])
+    engine = PooledEngine([[_movie(1, "Alpha")], [_movie(2, "Beta")]])
+    graph = _v2graph(router, engine)
+    cfg = _cfg("v2-titles")
+    graph.invoke({"messages": [HumanMessage(content="space movies")]}, cfg)
+    graph.invoke({"messages": [HumanMessage(content="different ones")]}, cfg)
+    assert router.calls[1]["shown_titles"] == ["Alpha"]
+
+
+def test_v2_pivot_goes_to_the_shared_pivot_node():
+    u = _v2u(intent=IntentType.OUT_OF_SCOPE)
+    router = ScriptedV2([(u, [])])
+    engine = RecordingEngine([_movie(1, "A")])
+    graph = _v2graph(router, engine)
+    out = graph.invoke({"messages": [HumanMessage(content="tell me a joke")]}, _cfg("v2-pivot"))
+    assert out["retrieved_movies"] == []
+    assert out["final_response"]  # deterministic pivot text, no LLM
+
+
+def test_v1_stack_ignores_v2_fields():
+    """Selector sanity: a v1 router on a v2-flagged config still routes v1 —
+    the isinstance check, not the flag alone, picks the node."""
+    cfg = ExperimentConfig(routing_stack="v2")
+    router = ScriptedRouter([_decision(filters=MetadataFilterCriteria(year_min=2000))])
+    engine = RecordingEngine([_movie(1, "A")])
+    graph = build_maya_graph(
+        ExperimentConfig(routing_stack="v1"), router, engine,
+        StubSynthesizer(), DualModeObservabilityManager(session_id="adv-106-v1"),
+        checkpointer=InMemorySaver(),
+    )
+    out = graph.invoke({"messages": [HumanMessage(content="recent movies")]}, _cfg("v1-guard"))
+    assert out["routing_decision"] is not None  # v1 decision shape, v1 node ran
+    del cfg

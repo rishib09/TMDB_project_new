@@ -412,6 +412,12 @@ class MovieDatabase:
         if filters.year_max is not None:
             query += " AND release_year <= ?"
             params.append(filters.year_max)
+        if filters.runtime_max is not None:  # #82 C6 (v2): lands with #106
+            query += " AND runtime <= ?"
+            params.append(filters.runtime_max)
+        if filters.rating_min is not None:
+            query += " AND vote_average >= ?"
+            params.append(filters.rating_min)
         if filters.genres:
             if filters.genre_match == "all":
                 # intersection (#25): movie must carry EVERY confirmed genre

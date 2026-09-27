@@ -219,3 +219,20 @@ def test_superlative_excludes_shown_ids(db):
     shown = [m.id for m in ranked[:3]]
     rows = db.query_superlative("RATING", "DESC", limit=8, excluded_ids=shown)
     assert {m.id for m in rows}.isdisjoint(shown)
+
+
+def test_c6_runtime_and_rating_predicates_reach_the_sql(db):
+    """#82 C6 / #106: runtime_max and rating_min are enforced in-query, and
+    composition with an existing filter works (both clauses AND together)."""
+    long = db.search_metadata_filters(MetadataFilterCriteria(runtime_max=95), limit=5)
+    assert long, "archive must have sub-95-minute movies"
+    assert all(m.runtime is not None and m.runtime <= 95 for m in long)
+
+    rated = db.search_metadata_filters(MetadataFilterCriteria(rating_min=7.5), limit=5)
+    assert rated, "archive must have 7.5+ movies"
+    assert all(m.vote_average is not None and m.vote_average >= 7.5 for m in rated)
+
+    both = db.search_metadata_filters(
+        MetadataFilterCriteria(runtime_max=95, rating_min=7.5), limit=5
+    )
+    assert all(m.runtime <= 95 and m.vote_average >= 7.5 for m in both)

@@ -31,6 +31,7 @@ from src.domain.config import ExperimentConfig
 from src.domain.memory import (
     ConversationState,
     FocusedMovieEntity,
+    PreferencesUpdate,
     ShownIdsUpdate,
     UserSessionPreferences,
     merge_preferences,
@@ -62,13 +63,14 @@ from src.maya.probing import (
     should_probe,
 )
 from src.maya.router import MayaRouter
+from src.maya.v2 import MayaV2Router, dispose, project_understanding, turn_decision
 from src.observability.tracer import DualModeObservabilityManager
 from src.retrieval.hybrid_engine import HybridRetrievalEngine
 
 
 def build_maya_graph(
     config: ExperimentConfig,
-    router: MayaRouter,
+    router: MayaRouter | "MayaV2Router",
     engine: HybridRetrievalEngine,
     synthesizer: MayaSynthesizer,
     tracer: DualModeObservabilityManager,
@@ -85,6 +87,10 @@ def build_maya_graph(
     limiter = limiter or SessionCostLimiter()
     injection_filter = InjectionFilter()
     pivot = OffTopicPivot()
+    # #106: the stack selector. v2 passes a MayaV2Router and the funnel
+    # collapses into its route node; v1 wiring is byte-for-byte unchanged.
+    stack_v2 = isinstance(router, MayaV2Router)
+    router_v2 = router if stack_v2 else None
 
     def guard_input_node(state: MayaGraphState) -> dict:
         """Injection filter + session budget gate (issue #8, zero LLM)."""
@@ -137,6 +143,7 @@ def build_maya_graph(
                 # completely different" left every earlier title excluded
                 # for the rest of the thread.
                 "shown_movie_ids": ShownIdsUpdate(reset=True),
+                "shown_movie_titles": ShownIdsUpdate(reset=True),
                 "funnel_active": False,
                 "offered_genre_options": [],
             }
@@ -459,9 +466,21 @@ def build_maya_graph(
             id=movies[0].id, title=movies[0].title,
             release_year=movies[0].release_year, director=movies[0].director,
         ) if movies else None
+        if config.routing_stack == "v1" and decision.filters and (
+            decision.filters.runtime_max is not None
+            or decision.filters.rating_min is not None
+        ):
+            # #106 review: v1's SQL cannot enforce the C6 predicates — the
+            # emission is recorded, never silent (telemetry rule). The strip
+            # itself lives at promotion; v1 behavior is unchanged.
+            tracer.record_local("retrieve", {"unenforceable_v1_filters": {
+                "runtime_max": decision.filters.runtime_max,
+                "rating_min": decision.filters.rating_min,
+            }})
         return {
             "retrieved_movies": movies,
             "shown_movie_ids": [m.id for m in movies],
+            "shown_movie_titles": [m.title for m in movies],  # C14 state block
             "filters_applied": filters_applied,
             "focused_entity": focus,
         }
@@ -609,6 +628,66 @@ def build_maya_graph(
             return "probe"
         return "retrieve"
 
+    # --- #106: the v2 stack — funnel collapsed into the route node ----------
+
+    def route_node_v2(state: MayaGraphState) -> dict:
+        """One Understand call -> disposer -> projection; the ask is INLINE.
+
+        The v2 route node replaces v1's route/probe/funnel trio: the model
+        authors the clarifying question (C9), the disposer enforces every
+        invariant (C7/C2/C12), and the Turn Decision on Narrowing Axes
+        (C8) routes the turn. The preferences snapshot rides verbatim
+        (PreferencesUpdate replace) so removals cannot be resurrected by
+        the union reducer.
+        """
+        probe_count = state.probe_count
+        u, notes = router_v2.understand(
+            state.current_query,
+            state.session_preferences,
+            shown_titles=state.shown_movie_titles,
+            last_assistant=last_assistant_text(state),
+            probe_count=probe_count,
+        )
+        for note in notes:  # telemetry rule: every invariant on the record
+            tracer.record_local("route_v2", {"note": note})
+        disposition = dispose(u, state.session_preferences, config)
+        for note in disposition.notes:
+            tracer.record_local("route_v2", {"note": note})
+        decision = project_understanding(disposition.understanding, disposition.preferences)
+        td = turn_decision(
+            disposition.understanding, disposition.preferences, config,
+            probe_count=probe_count,
+        )
+        update = {
+            "routing_decision": decision,
+            "session_preferences": PreferencesUpdate(
+                prefs=disposition.preferences, replace=True
+            ),
+        }
+        if td.decision == "ask":  # C9: the model-authored question IS the reply
+            question = disposition.understanding.clarifying_question or ""
+            return {
+                **update,
+                "final_response": question,
+                "messages": [AIMessage(content=question)],
+                "turn_stage": "ask",
+                "probe_count": probe_count + 1,
+            }
+        return update
+
+    def route_after_router_v2(state: MayaGraphState) -> Literal["retrieve", "synthesize", "pivot", "trim"]:
+        """C8 ladder outcomes -> graph targets. ``ask`` already answered
+        itself in route_node_v2 (turn_stage), so it trims and ends — the
+        funnel's probe/funnel nodes never run on the v2 stack."""
+        if state.turn_stage == "ask":
+            return "trim"
+        decision = state.routing_decision
+        if decision.intent is IntentType.OUT_OF_SCOPE:
+            return "pivot"
+        if not decision.requires_rag:
+            return "synthesize"
+        return "retrieve"
+
     def trim_node(state: MayaGraphState) -> dict:
         """#93/D16: the window rides Experiment Config (ADR 0004)."""
         return trim_message_window(state, config.message_window)
@@ -617,7 +696,10 @@ def build_maya_graph(
     graph.add_node("begin_turn", begin_turn_node)
     graph.add_node("trim", trim_node)
     graph.add_node("guard_input", guard_input_node)
-    graph.add_node("route", route_node)
+    # #106 stack selector: v2 swaps the route node + its conditional edge;
+    # probe/funnel nodes stay registered but are unreachable on v2 turns
+    # (route_after_router_v2 never targets them).
+    graph.add_node("route", route_node_v2 if stack_v2 else route_node)
     graph.add_node("retrieve", retrieve_node)
     graph.add_node("synthesize", synthesize_node)
     graph.add_node("refusal", refusal_node)
@@ -629,7 +711,9 @@ def build_maya_graph(
     graph.add_edge("begin_turn", "guard_input")
     graph.add_conditional_edges("guard_input", route_after_guard)
     graph.add_conditional_edges("funnel", route_after_funnel)
-    graph.add_conditional_edges("route", route_after_router)
+    graph.add_conditional_edges(
+        "route", route_after_router_v2 if stack_v2 else route_after_router
+    )
     # The route→route cycle is implicit: route_after_router may return "route".
     graph.add_edge("retrieve", "synthesize")
     graph.add_edge("synthesize", "trim")
@@ -642,6 +726,14 @@ def build_maya_graph(
 
 
 # --- helpers (pure, module-level for testability) ---
+
+def last_assistant_text(state) -> str | None:
+    """#106/C14: Maya's last reply for the Understand payload (not a window)."""
+    for message in reversed(state.messages):
+        if isinstance(message, AIMessage) and message.text:
+            return message.text
+    return None
+
 
 def _refusal_text(reason: str) -> str:
     return (
