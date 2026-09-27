@@ -31,6 +31,7 @@ from src.maya.agent import MayaSynthesizer
 from src.maya.guardrails import SessionCostLimiter, WeeklyBudgetTracker
 from src.maya.probing import preference_chips
 from src.maya.router import MayaRouter
+from src.maya.v2 import MayaV2Router
 from src.observability.tracer import DualModeObservabilityManager
 from src.retrieval.hybrid_engine import HybridRetrievalEngine
 from src.storage.database import MovieDatabase
@@ -149,7 +150,11 @@ class MayaSession:
         return build_maya_graph(
             self.config,
             # #26-B: the dataset's own genres are the genre-guard vocabulary.
-            MayaRouter(self.config, genre_vocabulary=self.db.distinct_genres()),
+            # #106: the stack selector decides which router is injected —
+            # the graph's isinstance check then wires the matching route node.
+            (MayaV2Router(self.config)
+             if self.config.routing_stack == "v2"
+             else MayaRouter(self.config, genre_vocabulary=self.db.distinct_genres())),
             engine,
             MayaSynthesizer(self.config),
             self.tracer,

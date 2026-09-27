@@ -1,5 +1,7 @@
 """Unit tests for the v2 stack pieces (#106): Understand router (stubbed
-chain — no LLM), projection, prompt/state-block builders."""
+client — no LLM), projection, prompt/state-block builders."""
+
+import json
 
 import pytest
 
@@ -27,20 +29,31 @@ def _u(**kw) -> Understanding:
     return Understanding(**defaults)
 
 
-def _router_with(chain_results) -> MayaV2Router:
-    """Router whose bound chain pops scripted results: {"parsed": u|None} or
-    an Exception instance to raise."""
-    r = MayaV2Router(CFG, api_key="test-key")
-    scripted = list(chain_results)
+def _content(u: Understanding | None, *, fenced: bool = False) -> str:
+    """A model response body for u: fenced JSON (the glm tic) or invalid text."""
+    if u is None:
+        return "I cannot produce JSON today, sorry."
+    body = json.dumps(u.model_dump(mode="json"))
+    return f"```json\n{body}\n```" if fenced else body
 
-    class _Chain:
+
+def _router_with(responses) -> MayaV2Router:
+    """Router whose client pops scripted response bodies (str) or raises."""
+    r = MayaV2Router(CFG, api_key="test-key")
+    scripted = list(responses)
+
+    class _Resp:
+        def __init__(self, content):
+            self.content = content
+
+    class _LLM:
         def invoke(self, messages):
             item = scripted.pop(0)
             if isinstance(item, Exception):
                 raise item
-            return item
+            return _Resp(item)
 
-    r._chain = _Chain()
+    r._llm = _LLM()
     return r
 
 
@@ -49,22 +62,31 @@ def _router_with(chain_results) -> MayaV2Router:
 
 def test_understand_happy_path_applies_guards():
     u = _u(clarifying_question="x" * 500)  # guard must template it
-    r = _router_with([{"parsed": u}])
+    r = _router_with([_content(u)])
     out, notes = r.understand("q", UserSessionPreferences(), [], None, 0)
     assert out.clarifying_question == "Tell me a mood or a genre and I'll find something good."
     assert notes and "length check" in notes[0]
 
 
-def test_understand_schema_retry_then_success():
-    good = _u()
-    r = _router_with([{"parsed": None}, {"parsed": good}])
+def test_understand_strips_fences_in_the_same_attempt():
+    """Live smoke finding (2026-09-27): glm wraps JSON in a ```json fence.
+    A formatting tic — stripped and validated within ONE attempt, so the
+    C12 retry budget stays unspent."""
+    r = _router_with([_content(_u(), fenced=True)])
     out, notes = r.understand("q", UserSessionPreferences(), [], None, 0)
-    assert out is good
+    assert out.standalone_query == "q"
+    assert notes == []
+
+
+def test_understand_schema_retry_then_success():
+    r = _router_with(["not json at all", _content(_u())])
+    out, notes = r.understand("q", UserSessionPreferences(), [], None, 0)
+    assert out.standalone_query == "q"
     assert any("retrying" in n for n in notes)
 
 
 def test_understand_double_schema_failure_lands_deterministic_ask():
-    r = _router_with([{"parsed": None}, {"parsed": None}])
+    r = _router_with(["nope", "still nope"])
     out, notes = r.understand("q", UserSessionPreferences(), [], None, 0)
     assert out == deterministic_ask("q")
     assert any("C12" in n for n in notes)
@@ -80,13 +102,16 @@ def test_understand_api_error_skips_retry_and_degrades_recorded():
 def test_understand_builds_c14_payload():
     seen = {}
 
-    class _Chain:
+    class _Resp:
+        content = _content(_u())
+
+    class _LLM:
         def invoke(self, messages):
             seen["messages"] = messages
-            return {"parsed": _u()}
+            return _Resp()
 
     r = MayaV2Router(CFG, api_key="test-key")
-    r._chain = _Chain()
+    r._llm = _LLM()
     prefs = UserSessionPreferences(preferred_mood="scary", excluded_genres=["Horror"])
     r.understand("the query", prefs, ["Inception"], "last reply", 1)
     roles = [m[0] for m in seen["messages"]]

@@ -749,6 +749,7 @@ def _run_one(
         from src.graph.orchestrator import build_maya_graph
         from src.maya.agent import MayaSynthesizer
         from src.maya.router import MayaRouter
+        from src.maya.v2 import MayaV2Router
         from src.maya.guardrails import SessionCostLimiter
         from src.observability.tracer import DualModeObservabilityManager
 
@@ -759,7 +760,8 @@ def _run_one(
             judge=MayaJudge(config),
             graph=build_maya_graph(
                 config,
-                MayaRouter(config, genre_vocabulary=db.distinct_genres()),
+                (MayaV2Router(config) if config.routing_stack == "v2"
+                 else MayaRouter(config, genre_vocabulary=db.distinct_genres())),
                 engine,
                 MayaSynthesizer(config),
                 tracer,
@@ -802,7 +804,9 @@ def _run_one(
     from src.observability.tracer import DualModeObservabilityManager
 
     runner.graph = build_maya_graph(
-        config, MayaRouter(config), engine, MayaSynthesizer(config),
+        config,
+        MayaV2Router(config) if config.routing_stack == "v2" else MayaRouter(config),
+        engine, MayaSynthesizer(config),
         DualModeObservabilityManager(session_id="benchmark"),
         limiter=SessionCostLimiter(),
     )

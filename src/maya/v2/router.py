@@ -51,8 +51,12 @@ class MayaV2Router:
             request_timeout=120,  # D17: retries/timeout live in the client
             max_retries=1,
         )
-        # Bound once at construction; tests stub this attribute directly.
-        self._chain = self._llm.with_structured_output(Understanding, include_raw=True)
+        # D19: langchain owns the client/transport; the JSON parse is owned
+        # HERE — with_structured_output raises on malformed JSON before the
+        # raw text can be recovered (and pydantic truncates it in str(exc)),
+        # which made fence recovery impossible on the z.ai coding endpoint
+        # (live finding, #106 smoke). The C14 prompt carries the contract;
+        # pydantic validates; C12 budgets the retries. Tests stub _llm.
 
     # --- public seam ---------------------------------------------------------
 
@@ -109,13 +113,25 @@ class MayaV2Router:
     # --- private -------------------------------------------------------------
 
     def _try_chain(self, messages) -> tuple[Understanding | None, str | None]:
-        """One structured call; ``(None, error)`` on API failure, ``(None, None)``
-        on schema-invalid output."""
+        """One client call; ``(None, error)`` on API failure, ``(None, None)``
+        on unusable JSON. The fence is stripped and pydantic validates HERE —
+        within the SAME attempt, before any C12 retry is spent."""
+        import json
+        import re
+
         try:
-            result = self._chain.invoke(messages)
+            resp = self._llm.invoke(messages)
         except Exception as exc:  # noqa: BLE001 — D17 client exhausted; degrade (C12)
             return None, f"{type(exc).__name__}: {exc}"
-        parsed = result.get("parsed") if isinstance(result, dict) else result
-        if parsed is None or isinstance(parsed, ValidationError):
+        text = getattr(resp, "content", None)
+        if isinstance(text, list):  # content blocks -> joined text
+            text = "".join(getattr(b, "text", "") for b in text)
+        if not isinstance(text, str) or not text.strip():
             return None, None
-        return parsed, None
+        stripped = re.sub(
+            r"^```(?:json)?\s*|\s*```$", "", text.strip(), flags=re.DOTALL
+        )
+        try:
+            return Understanding.model_validate_json(stripped), None
+        except ValidationError:
+            return None, None
