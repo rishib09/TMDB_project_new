@@ -136,6 +136,9 @@ def _load_conversations():
 )
 def test_nine_conversations_through_the_ui_never_mislabel_refusal():
     """v2/glm live replay; the #113 acceptance on the real stack."""
+    import os
+
+    os.environ["MAYA_ROUTING_STACK"] = "v2"  # read at session construction
     convos = _load_conversations()
     at = AppTest.from_file(APP, default_timeout=600)
     at.run()
