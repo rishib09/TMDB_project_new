@@ -312,7 +312,12 @@ class MayaSession:
             if route_v2_traces:
                 # #113: v2's funnel collapse records route_v2, not route —
                 # the path is the disposer's turn stage, never "refusal".
+                # Asks carry stage "ask"; retrieves reset stage to "".
                 path = "ask" if stage == "ask" else "retrieve"
+            elif stage == "ask":
+                # legacy rows: an ask turn whose route_v2 record predates
+                # the unconditional passage marker
+                path = "ask"
             elif stage == "retrieve":
                 path = "funnel"
             else:

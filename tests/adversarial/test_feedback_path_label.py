@@ -76,3 +76,21 @@ def test_v1_funnel_owned_retrieve_still_labels_funnel():
     out = _v2_out("retrieve")
     row = _build([], out)  # v1: stage=retrieve, no route_v2 traces
     assert row["path"] == "funnel"
+
+
+def test_v2_clean_ask_without_notes_still_labels_ask():
+    """Live finding (#113): a clean glm ask emits zero guard notes — the
+    unconditional route_v2 passage marker is the only trace evidence."""
+    row = _build([{"node": "route_v2", "data": {"turn_decision": "ask"}}], _v2_out("ask"))
+    assert row["path"] == "ask"
+
+
+def test_v2_clean_retrieve_resets_stage_but_labels_retrieve():
+    """v2 retrieves reset turn_stage to \"\" (per-turn state reset) — the
+    passage marker must carry the label, not the stale stage."""
+    out = _v2_out("")
+    row = _build(
+        [{"node": "route_v2", "data": {"turn_decision": "retrieve"}}], out
+    )
+    assert row["path"] == "retrieve"
+    assert row["path"] != "refusal"

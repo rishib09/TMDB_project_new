@@ -658,6 +658,10 @@ def build_maya_graph(
             disposition.understanding, disposition.preferences, config,
             probe_count=probe_count,
         )
+        # #113: record the passage UNCONDITIONALLY — guard notes only exist
+        # on violations, so a clean ask/retrieve left no route_v2 trace and
+        # the Feedback Window inferred "refusal" from the empty channel.
+        tracer.record_local("route_v2", {"turn_decision": td.decision})
         update = {
             "routing_decision": decision,
             "session_preferences": PreferencesUpdate(
