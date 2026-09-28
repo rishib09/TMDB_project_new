@@ -833,6 +833,10 @@ def main(argv: list[str] | None = None) -> int:
         "--router-model", default=None,
         help="override config.router_model (routing-mode A/B, #29)",
     )
+    parser.add_argument(
+        "--v2-router-model", default=None,
+        help="override config.v2_router_model (#107 sweep)",
+    )
     parser.add_argument("--synthesis-model", help="override config.synthesis_model (#89 sweep)")
     parser.add_argument(
         "--router-pin", action="store_true",
@@ -898,6 +902,8 @@ def main(argv: list[str] | None = None) -> int:
     }
     if sweep_pins:
         config = config.model_copy(update=sweep_pins)  # #89: explicit in the envelope
+    if args.v2_router_model:
+        config = config.model_copy(update={"v2_router_model": args.v2_router_model})
     if args.mode == "conversation":
         config = config.model_copy(update={"routing_stack": args.stack})
         conversations = load_conversations(args.conversations)
