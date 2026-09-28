@@ -301,6 +301,7 @@ class MayaSession:
         tokens = max(out.get("session_tokens", 0) - prev_tokens, 0)
         cost_usd = max(out.get("session_cost_usd", 0.0) - prev_cost, 0.0)
         route_traces = [t for t in new_traces if t["node"] == "route"]
+        route_v2_traces = [t for t in new_traces if t["node"] == "route_v2"]
         if decision is None:
             intent = f"FUNNEL_{(stage or 'probe').upper()}"
             confidence = 1.0  # deterministic — no model involved
@@ -308,7 +309,14 @@ class MayaSession:
         else:
             intent = decision.intent.value
             confidence = decision.confidence
-            path = "funnel" if stage == "retrieve" else MayaSession._path_taken(route_traces)
+            if route_v2_traces:
+                # #113: v2's funnel collapse records route_v2, not route —
+                # the path is the disposer's turn stage, never "refusal".
+                path = "ask" if stage == "ask" else "retrieve"
+            elif stage == "retrieve":
+                path = "funnel"
+            else:
+                path = MayaSession._path_taken(route_traces)
         prefs = out.get("session_preferences")
         return {
             "timestamp": datetime.now(UTC).isoformat(),

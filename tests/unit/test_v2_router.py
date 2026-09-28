@@ -174,3 +174,54 @@ def test_non_replace_update_delegates_to_merge():
     out = merge_preferences(cur, PreferencesUpdate(prefs=UserSessionPreferences(preferred_genres=["Horror"])))
     assert out.preferred_mood == "scary"
     assert out.preferred_genres == ["Horror"]
+
+
+# --- #113: Understand fallback model ------------------------------------------
+
+
+def test_fallback_fires_when_primary_api_fails(monkeypatch):
+    class _FB:
+        def invoke(self, messages):
+            return type("R", (), {"content": _content(_u())})()
+
+    r = _router_with([RuntimeError("primary down")])
+    monkeypatch.setattr(r, "_fallback_llm", _FB())
+    out, notes = r.understand("q", UserSessionPreferences(), [], None, 0)
+    assert out is not None
+    assert any(
+        "fallback fired" in n and "gemini-3.5-flash-lite" in n for n in notes
+    )
+
+
+def test_fallback_skips_when_primary_succeeds(monkeypatch):
+    calls = []
+
+    class _Primary:
+        def invoke(self, messages):
+            calls.append("primary")
+            return type("R", (), {"content": _content(_u())})()
+
+    r = _router_with([])
+    r._llm = _Primary()
+    monkeypatch.setattr(r, "_fallback_llm", _Primary())
+    out, notes = r.understand("q", UserSessionPreferences(), [], None, 0)
+    assert out is not None
+    assert calls == ["primary"]
+    assert not any("fallback" in n for n in notes)
+
+
+def test_fallback_error_also_recorded_then_ask(monkeypatch):
+    class _Dead:
+        def invoke(self, messages):
+            raise RuntimeError("fallback down too")
+
+    r = _router_with([RuntimeError("primary down")])
+    monkeypatch.setattr(r, "_fallback_llm", _Dead())
+    out, notes = r.understand("q", UserSessionPreferences(), [], None, 0)
+    assert out is not None  # deterministic ask still lands
+    assert any("fallback error" in n for n in notes)
+    assert any("deterministic ask" in n for n in notes)
+
+
+def test_fallback_default_config_points_at_flashlite():
+    assert ExperimentConfig().v2_router_fallback_model == "gemini-3.5-flash-lite"

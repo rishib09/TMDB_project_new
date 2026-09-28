@@ -59,6 +59,43 @@ class MayaV2Router:
         # which made fence recovery impossible on the z.ai coding endpoint
         # (live finding, #106 smoke). The C14 prompt carries the contract;
         # pydantic validates; C12 budgets the retries. Tests stub _llm.
+        self._fallback_llm = None  # #113: resolved lazily by _resolve_fallback
+
+    def _resolve_fallback(self):
+        """#113: the secondary Understand client, resolved once and cached.
+        Same endpoint wiring as the primary; when the fallback is configured
+        equal to the primary the primary client is reused (no double call).
+        Returns ``None`` when the fallback client cannot be built (no key,
+        unknown model) — the understand() path then degrades exactly as
+        before this feature, with the reason recorded in the notes."""
+        if self._fallback_llm is not None:
+            return self._fallback_llm
+        if self.config.v2_router_fallback_model == self.config.v2_router_model:
+            self._fallback_llm = self._llm
+            return self._llm
+        try:
+            endpoint = resolve_chat_endpoint(
+                self.config.v2_router_fallback_model,
+                zai_model=self.config.zai_model,
+                zai_api_key=os.getenv("ZAI_API_KEY"),
+                openrouter_api_key=os.getenv("OPENROUTER_API_KEY"),
+                zai_base_url=os.getenv("ZAI_BASE_URL") or DEFAULT_ZAI_BASE_URL,
+                allow_swap=not self.config.pin_v2_router_config_id,
+            )
+            self._fallback_llm = ChatOpenAI(
+                model=endpoint.wire_model,
+                temperature=self.config.temperature,
+                base_url=endpoint.base_url,
+                api_key=endpoint.api_key,
+                max_tokens=2048,
+                reasoning_effort=self.config.reasoning_effort,
+                request_timeout=120,
+                max_retries=1,
+            )
+        except Exception as exc:  # noqa: BLE001 — degrade to pre-#113 behavior
+            self._fallback_unavailable = f"{type(exc).__name__}: {exc}"
+            return None
+        return self._fallback_llm
 
     # --- public seam ---------------------------------------------------------
 
@@ -98,6 +135,24 @@ class MayaV2Router:
             notes.append(f"schema failure on attempt {attempts - 1}; retrying with the error")
             parsed, api_error = self._try_chain(messages)
         if parsed is None:
+            # #113: one attempt on the fallback model before the ask — the
+            # sweep winner (glm) must not degrade a whole turn when a spare
+            # model is configured. Fired-or-not lands in the trace (notes).
+            fb_llm = self._resolve_fallback()
+            if fb_llm is not None:
+                fb_parsed, fb_error = self._try_chain(messages, llm=fb_llm)
+                if fb_parsed is not None:
+                    notes.append(
+                        f"understand fallback fired: {self.config.v2_router_fallback_model} "
+                        f"(primary: {api_error or f'schema failures x{attempts}'})"
+                    )
+                    parsed = fb_parsed
+                elif fb_error is not None:
+                    notes.append(f"understand fallback error={fb_error}")
+            else:
+                reason = getattr(self, "_fallback_unavailable", "not resolvable")
+                notes.append(f"understand fallback unavailable: {reason}")
+        if parsed is None:
             if api_error is not None:
                 notes.append(f"understand api_error={api_error} -> deterministic ask (C12)")
             else:
@@ -114,12 +169,13 @@ class MayaV2Router:
 
     # --- private -------------------------------------------------------------
 
-    def _try_chain(self, messages) -> tuple[Understanding | None, str | None]:
+    def _try_chain(self, messages, llm=None) -> tuple[Understanding | None, str | None]:
         """One client call; ``(None, error)`` on API failure, ``(None, None)``
         on unusable JSON. The fence is stripped and pydantic validates HERE —
-        within the SAME attempt, before any C12 retry is spent."""
+        within the SAME attempt, before any C12 retry is spent. ``llm``
+        overrides the client (#113 fallback); defaults to the primary."""
         try:
-            resp = self._llm.invoke(messages)
+            resp = (llm or self._llm).invoke(messages)
         except Exception as exc:  # noqa: BLE001 — D17 client exhausted; degrade (C12)
             return None, f"{type(exc).__name__}: {exc}"
         text = getattr(resp, "content", None)
