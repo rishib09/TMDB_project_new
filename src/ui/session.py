@@ -302,6 +302,7 @@ class MayaSession:
         cost_usd = max(out.get("session_cost_usd", 0.0) - prev_cost, 0.0)
         route_traces = [t for t in new_traces if t["node"] == "route"]
         route_v2_traces = [t for t in new_traces if t["node"] == "route_v2"]
+        node_names = {t["node"] for t in new_traces}
         if decision is None:
             intent = f"FUNNEL_{(stage or 'probe').upper()}"
             confidence = 1.0  # deterministic — no model involved
@@ -309,19 +310,23 @@ class MayaSession:
         else:
             intent = decision.intent.value
             confidence = decision.confidence
-            if route_v2_traces:
-                # #113: v2's funnel collapse records route_v2, not route —
-                # the path is the disposer's turn stage, never "refusal".
-                # Asks carry stage "ask"; retrieves reset stage to "".
+            if "refusal" in node_names:
+                path = "refusal"  # guard-diverted after a projection (#113)
+            elif "pivot" in node_names:
+                path = "pivot"  # deterministic off-topic deflection (#8)
+            elif route_v2_traces or stage == "ask":
+                # #113: v2's funnel collapse records route_v2 (now
+                # unconditionally) — the path is the disposer's stage.
                 path = "ask" if stage == "ask" else "retrieve"
-            elif stage == "ask":
-                # legacy rows: an ask turn whose route_v2 record predates
-                # the unconditional passage marker
-                path = "ask"
             elif stage == "retrieve":
-                path = "funnel"
-            else:
+                path = "funnel"  # v1 funnel-owned retrieval
+            elif route_traces:
                 path = MayaSession._path_taken(route_traces)
+            else:
+                # #113: a decision-present turn is NEVER a refusal —
+                # refusals are guard-diverted decisionless. Decision with no
+                # other evidence means the v2 route node served retrieval.
+                path = "retrieve"
         prefs = out.get("session_preferences")
         return {
             "timestamp": datetime.now(UTC).isoformat(),

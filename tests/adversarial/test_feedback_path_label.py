@@ -94,3 +94,25 @@ def test_v2_clean_retrieve_resets_stage_but_labels_retrieve():
     )
     assert row["path"] == "retrieve"
     assert row["path"] != "refusal"
+
+
+def test_v2_decision_present_without_evidence_is_retrieve_never_refusal():
+    """Live finding, C06 t2: a full retrieval turn (5 movies synthesized)
+    arrived with decision present, stage '', and no route evidence — the
+    old fallthrough labeled it 'refusal'. Decision-present turns are never
+    refusals; refusals are guard-diverted decisionless."""
+    out = _v2_out("")
+    row = _build([], out)
+    assert row["path"] == "retrieve"
+
+
+def test_refusal_node_trace_labels_refusal_even_with_decision():
+    out = _v2_out("")
+    row = _build([{"node": "refusal", "data": {}}], out)
+    assert row["path"] == "refusal"
+
+
+def test_pivot_node_trace_labels_pivot():
+    out = _v2_out("")
+    row = _build([{"node": "pivot", "data": {}}], out)
+    assert row["path"] == "pivot"
