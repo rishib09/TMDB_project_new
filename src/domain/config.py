@@ -51,6 +51,9 @@ class ExperimentConfig(BaseModel):
     reasoning_effort: str = Field(default="low", description="Reasoning effort: none, low, medium, high")
     #: #106/D15: the v2 Understand model (baseline candidate); #107 sweeps it.
     v2_router_model: str = Field(default="glm-5.3-flash")
+    #: #113: secondary Understand model — one attempt when the primary call
+    #: fails (transport, or schema after the C12 budget). Traced when fired.
+    v2_router_fallback_model: str = Field(default="gemini-3.5-flash-lite")
     #: #107 sweep isolation: pin exact config id, no provider swap (v1's
     #: pin_router_config_id pattern).
     pin_v2_router_config_id: bool = Field(default=False)
