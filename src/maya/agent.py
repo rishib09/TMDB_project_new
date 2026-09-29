@@ -89,7 +89,11 @@ def ranking_basis_for(decision: QueryRoutingDecision) -> str | None:
     """
     if decision.is_superlative and decision.superlative:
         c = decision.superlative
-        direction = "highest first" if c.direction.upper() == "DESC" else "lowest first"
+        # Direction convention must mirror the SQL consumer exactly
+        # (database.py::_query_superlative: anything not 'ASC' orders DESC),
+        # so the disclosed order can never contradict the actual sort on a
+        # malformed direction value (review P2-2).
+        direction = "lowest first" if c.direction.upper() == "ASC" else "highest first"
         return f"{c.metric.value.lower()}, {direction}"
     if decision.intent == IntentType.SUPERLATIVE_RANKING:
         return "relevance-ranked retrieval"

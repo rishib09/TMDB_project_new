@@ -53,7 +53,7 @@ def test_checker_exists():
     )
 
 
-def test_ranked_reply_without_basis_clause_is_flagged(synthesizer_factory=None):
+def test_ranked_reply_without_basis_clause_is_flagged():
     """A ranked reply that never states the basis violates the contract."""
     synth = MayaSynthesizer.__new__(MayaSynthesizer)  # checker is pure; skip __init__
     reply = (
@@ -125,3 +125,27 @@ def test_plain_turn_has_no_basis():
         _decision(intent=IntentType.SEMANTIC_SEARCH, is_superlative=False,
                   superlative=None)
     ) is None
+
+
+# --- direction normalization (review P2-2 / worst-case) -----------------------
+
+def test_basis_direction_matches_sql_order_convention():
+    """The disclosed direction must match what the SQL consumer actually does.
+
+    database.py:340 treats any direction that is not 'ASC' (any casing) as
+    DESC — highest first. The basis used to test == 'DESC', so a malformed
+    value like 'descending' sorted highest-first in SQL while the reply
+    disclosed 'lowest first' — a lying mechanics statement (ADR 0011).
+    Fails on the pre-fix code."""
+    from src.maya.agent import ranking_basis_for
+
+    for direction, expected_clause in (
+        ("DESC", "highest first"),
+        ("descending", "highest first"),   # malformed: SQL still sorts DESC
+        ("garbage", "highest first"),      # malformed: SQL still sorts DESC
+        ("ASC", "lowest first"),
+        ("asc", "lowest first"),
+    ):
+        d = _decision(superlative=SuperlativeCriteria(
+            metric=SuperlativeMetric.POPULARITY, direction=direction))
+        assert ranking_basis_for(d) == f"popularity, {expected_clause}", direction
