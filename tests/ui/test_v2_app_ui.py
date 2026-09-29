@@ -78,6 +78,43 @@ class _FakeEngine:
         return []
 
 
+class _FilterHeavyRouter(_FakeRouter):
+    """#122: turn 1 asks, turn 2+ retrieves with a filter-heavy decision so
+    the metadata line carries 5+ chips (genres, year range, director,
+    exclusion) — the truncation case the visitor reported."""
+
+    def understand(self, query, prefs, shown_titles, last_assistant, probe_count):
+        from src.domain.routing import MetadataFilterCriteria
+
+        self.calls += 1
+        if self.calls == 1:
+            return (
+                Understanding(
+                    intent=IntentType.SEMANTIC_SEARCH,
+                    standalone_query=query,
+                    confidence=0.9,
+                    clarifying_question="What mood are you after?",
+                ),
+                ["scripted ask"],
+            )
+        return (
+            Understanding(
+                intent=IntentType.SEMANTIC_SEARCH,
+                standalone_query=query,
+                confidence=0.9,
+                ready_to_retrieve=True,
+                filters=MetadataFilterCriteria(
+                    genres=["Comedy", "Drama", "Thriller"],
+                    year_min=2000,
+                    year_max=2010,
+                    director="Christopher Nolan",
+                    excluded_genres=["Horror"],
+                ),
+            ),
+            ["scripted retrieve"],
+        )
+
+
 def _boot_app(monkeypatch) -> AppTest:
     """The real app, in-process, with the heavy collaborators faked."""
     from src.ui import session as session_module
@@ -121,6 +158,31 @@ def test_admin_input_routes_as_ordinary_turn(monkeypatch):
     assert not at.exception
     session = at.session_state["maya_session"]
     assert len(session.turn_log) == 1  # the old admin branch swallowed the input
+
+
+def test_turn_details_expander_carries_all_filter_chips(monkeypatch):
+    """#122 adversarial: a filter-heavy turn must expose the FULL metadata via
+    a 'Turn details' expander (the single caption line truncates). Fails on
+    current code — no expander exists."""
+    from src.ui import session as session_module
+
+    monkeypatch.setenv("MAYA_ROUTING_STACK", "v2")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    monkeypatch.setattr(session_module, "MayaV2Router", _FilterHeavyRouter)
+    monkeypatch.setattr(session_module, "MayaSynthesizer", _FakeSynthesizer)
+    monkeypatch.setattr(session_module, "HybridRetrievalEngine", _FakeEngine)
+    monkeypatch.setattr(session_module, "shared_vector_store", lambda *a, **k: None)
+    at = AppTest.from_file(APP, default_timeout=180)
+    at.run()
+    at.chat_input[0].set_value("thrillers").run()  # ask
+    at.chat_input[0].set_value("from the 2000s").run()  # filter-heavy retrieve
+    assert not at.exception
+    session = at.session_state["maya_session"]
+    row = session.turn_log[-1]
+    # the render INPUT is complete: genre combo + years + director + exclusion
+    assert len(row["filters"]) >= 4, row["filters"]
+    labels = [e.label for e in at.expander]
+    assert any("Turn details" in lbl for lbl in labels), labels
 
 
 def test_checkpoint_round_trip_no_blocked_types(monkeypatch, caplog):
