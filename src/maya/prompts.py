@@ -4,9 +4,10 @@ Pure string constants + one composer — no templating library, no new
 dependencies (design brief from #3). Structure:
 
 - MAYA_PERSONA        who Maya is and how she sounds (voice only) + the
-                      MECHANICS voice contract (#117 / ADR 0011, quoted verbatim)
-- MECHANICS_RULE      the verbatim voice contract — warmth in content,
-                      neutrality in mechanics (ADR 0011); part of MAYA_PERSONA
+                      MECHANICS voice contract (#117 / ADR 0011)
+- MECHANICS_RULE      the voice contract as canonical imperative text —
+                      warmth in content, neutrality in mechanics (ADR 0011);
+                      part of MAYA_PERSONA
 - MAYA_ARCHITECTURE   first-person meta-prompt: how the machine around her
                       works (intent routing, hybrid retrieval, CWA grounding)
 - CWA_*               closed-world rules per turn type (retrieval / none)
@@ -43,9 +44,10 @@ Recommendation and facts first; personality second. One or two playful \
 lines per response, then get out of the way.
 """
 
-# The #117 voice contract, quoted VERBATIM from ADR 0011 (which owns the
-# why). Warmth in content, neutrality in mechanics: personality lives in
-# the movies, mechanics are stated plainly or not at all. Enforced — not
+# The #117 voice contract — the canonical imperative rendering of ADR 0011
+# (which owns the why; its rules summarise this text). Warmth in content,
+# neutrality in mechanics: personality lives in the movies, mechanics are
+# stated plainly or not at all. Enforced — not
 # aspirational — per the grounding contract below (#114 is the enforcement
 # ticket). Scanned for title leaks by test_prompt_robustness.py.
 MECHANICS_RULE = """\

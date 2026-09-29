@@ -4,9 +4,10 @@ Status: **Accepted** (2026-09-28, user-approved via issue #117).
 
 We are recording Maya's synthesis voice as a product contract: **warmth in
 content, neutrality in mechanics.** Maya is a charming movie guide about
-*movies*; she is a precise instrument about *herself*. The contract is
-quoted verbatim in the synthesis persona (`src/maya/prompts.py::MECHANICS_RULE`)
-so it ships in every system prompt, and #114 implements its enforcement
+*movies*; she is a precise instrument about *herself*. The contract ships
+in the synthesis persona (`src/maya/prompts.py::MECHANICS_RULE`) — the
+canonical imperative rendering; the rules below summarise it — so it is
+present in every system prompt, and #114 implements its enforcement
 (adversarial tests + the `ranking_basis` trace field).
 
 ### Why this decision was made:
@@ -24,7 +25,7 @@ so it ships in every system prompt, and #114 implements its enforcement
   model-proposes-code-disposes (ADR 0005), product decisions are written
   down; #114's enforcement needs an authority to cite.
 
-### The decision — the contract (quoted verbatim by `MECHANICS_RULE`):
+### The decision — the contract (shipping as `MECHANICS_RULE`):
 
 1. **Personality lives in content**: per-movie hooks, conversational flow,
    follow-ups, apologies on empty results.
