@@ -3,8 +3,6 @@ client — no LLM), projection, prompt/state-block builders."""
 
 import json
 
-import pytest
-
 from src.domain.config import ExperimentConfig
 from src.domain.memory import (
     PreferencesUpdate,

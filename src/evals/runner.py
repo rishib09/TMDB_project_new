@@ -28,11 +28,6 @@ from langgraph.checkpoint.memory import InMemorySaver
 from src.domain.config import ExperimentConfig, PresetType
 from src.domain.memory import UserSessionPreferences
 from src.domain.routing import IntentType, QueryRoutingDecision, SuperlativeCriteria
-from src.evals.conversations import (
-    DEFAULT_CONVERSATIONS,
-    ConversationSet,
-    load_conversations,
-)
 from src.evals.conversation_metrics import (
     ConversationResult,
     ConversationRunSummary,
@@ -41,6 +36,11 @@ from src.evals.conversation_metrics import (
     observed_path_v1,
     score_constraints,
     turn_failed,
+)
+from src.evals.conversations import (
+    DEFAULT_CONVERSATIONS,
+    ConversationSet,
+    load_conversations,
 )
 from src.evals.identity import config_hash, preset_slug
 from src.evals.judge import MayaJudge, strip_formatting
@@ -741,9 +741,9 @@ def _run_one(
             return None
         from src.graph.orchestrator import build_maya_graph
         from src.maya.agent import MayaSynthesizer
+        from src.maya.guardrails import SessionCostLimiter
         from src.maya.router import MayaRouter
         from src.maya.v2 import MayaV2Router
-        from src.maya.guardrails import SessionCostLimiter
         from src.observability.tracer import DualModeObservabilityManager
 
         tracer = DualModeObservabilityManager(session_id=f"eval-{config_hash(config)}")

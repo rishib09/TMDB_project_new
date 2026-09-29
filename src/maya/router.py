@@ -28,7 +28,6 @@ from src.domain.usage import LLMUsage
 from src.maya.probing import canonical_mood, extract_probe_answers, strip_markup
 from src.maya.providers import (
     DEFAULT_ZAI_BASE_URL,
-    OPENROUTER_BASE_URL,
     resolve_chat_endpoint,
 )
 

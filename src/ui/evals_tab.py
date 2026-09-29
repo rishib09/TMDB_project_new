@@ -173,7 +173,11 @@ def render_evaluate_current(session) -> None:
     if not st.button("Run evaluation", type="primary"):
         return
     from src.evals.runner import (
-        BenchmarkRunner, DEFAULT_DATASET, _run_one, load_dataset, load_dataset_version,
+        DEFAULT_DATASET,
+        BenchmarkRunner,
+        _run_one,
+        load_dataset,
+        load_dataset_version,
     )
     from src.indexing.vector_store import MovieVectorStore
     from src.storage.database import MovieDatabase

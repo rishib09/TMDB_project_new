@@ -96,7 +96,6 @@ def test_synthesis_usage_reports_wire_model(monkeypatch):
     Under a z.ai key the config id is google/gemini-3.5-flash-lite but the call
     is served by glm-5.3-flash — pricing (estimate_cost) keys off this string.
     """
-    import os
     import types
 
     from src.domain.config import ExperimentConfig

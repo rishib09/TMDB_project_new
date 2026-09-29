@@ -18,8 +18,13 @@ from langgraph.checkpoint.memory import InMemorySaver
 from src.domain.config import ExperimentConfig, PresetType
 from src.domain.memory import ConversationState
 from src.feedback.inbox import (
-    REPORTS_PER_SESSION, WINDOW_TURNS, ReportResult, format_rating_comment,
-    format_report_comment, post_inbox_comment, validate_report,
+    REPORTS_PER_SESSION,
+    WINDOW_TURNS,
+    ReportResult,
+    format_rating_comment,
+    format_report_comment,
+    post_inbox_comment,
+    validate_report,
 )
 from src.feedback.langfuse_score import push_feedback_score, push_report_comment
 from src.feedback.store import FeedbackStore

@@ -9,7 +9,7 @@ output ~168; the schema (~1.3K) is the largest fixed cost (#82).
 
 from __future__ import annotations
 
-from typing import Sequence
+from collections.abc import Sequence
 
 from src.domain.memory import UserSessionPreferences
 from src.maya.v2.vocabularies import AUDIENCES, GENRES, MOOD_HINTS
