@@ -20,13 +20,21 @@ from pydantic import BaseModel
 
 from src.domain.config import ExperimentConfig
 from src.domain.movie import MovieRecord
-from src.domain.routing import QueryRoutingDecision
+from src.domain.routing import IntentType, QueryRoutingDecision
 from src.graph.state import SynthesisUsage
 from src.maya.prompts import build_system_prompt
 from src.maya.providers import DEFAULT_ZAI_BASE_URL, resolve_chat_endpoint
 
 TMDB_POSTER_BASE = "https://image.tmdb.org/t/p/w500"
 _CWA_TITLE_PATTERN = re.compile(r"\*\*(.+?)\s*\(\d{4}\)\*\*")
+#: #114 / ADR 0011: a ranked reply must STATE its ranking basis. Matches the
+#: disclosure clause forms the prompt asks for ("ranked by popularity, "
+#: "sorted by rating", "relevance-ranked retrieval").
+_BASIS_CLAUSE_PATTERN = re.compile(
+    r"ranked (?:by|on|using)|ranking (?:by|on|using)|relevance-ranked"
+    r"|ordered by|sorted by",
+    re.IGNORECASE,
+)
 
 #: Movie block line whose title is missing bold markers, e.g.
 #: ``Avatar (2009) — dir. James Cameron With a staggering revenue…``
@@ -69,6 +77,29 @@ class CwaViolation(BaseModel):
     reason: str = "Title referenced outside the retrieved-movie context"
 
 
+def ranking_basis_for(decision: QueryRoutingDecision) -> str | None:
+    """The deterministic ranking basis of one turn, for honest disclosure.
+
+    #114 / ADR 0011: ranked turns state their basis. v1 decisions carry the
+    real criteria (metric + direction); v2 Understandings project
+    ``intent == SUPERLATIVE_RANKING`` without criteria (#114 solution 2:
+    inventing metrics is a contract change, not voice enforcement), so
+    those disclose the truthful 'relevance-ranked retrieval'. None on
+    turns that do not rank.
+    """
+    if decision.is_superlative and decision.superlative:
+        c = decision.superlative
+        # Direction convention must mirror the SQL consumer exactly
+        # (database.py::_query_superlative: anything not 'ASC' orders DESC),
+        # so the disclosed order can never contradict the actual sort on a
+        # malformed direction value (review P2-2).
+        direction = "lowest first" if c.direction.upper() == "ASC" else "highest first"
+        return f"{c.metric.value.lower()}, {direction}"
+    if decision.intent == IntentType.SUPERLATIVE_RANKING:
+        return "relevance-ranked retrieval"
+    return None
+
+
 class MayaSynthesizer:
     """Generates the user-facing response under the Closed-World Assumption."""
 
@@ -105,7 +136,10 @@ class MayaSynthesizer:
             ("system", self._build_system_prompt(
                 has_retrieval=bool(movies), is_superlative=decision.is_superlative
             )),
-            ("human", self._build_user_message(query, decision, movies)),
+            ("human", self._build_user_message(
+                query, decision, movies,
+                ranking_basis=ranking_basis_for(decision),
+            )),
         ]
         response = self._llm.invoke(messages)
         usage_meta = response.usage_metadata or {}
@@ -128,6 +162,8 @@ class MayaSynthesizer:
         query: str,
         decision: QueryRoutingDecision,
         movies: list[MovieRecord],
+        *,
+        ranking_basis: str | None = None,
     ) -> str:
         parts = [f"<user_query>{query}</user_query>"]
         if movies:
@@ -135,6 +171,18 @@ class MayaSynthesizer:
                 "<retrieved_movies>\n"
                 + "\n".join(self._movie_xml(m) for m in movies)
                 + "\n</retrieved_movies>"
+            )
+        if ranking_basis:
+            # #114 / ADR 0011: the model cannot disclose what it does not
+            # know. The block is self-instructing so a v2 ranked turn
+            # (is_superlative False, no SUPERLATIVE_RULE section) still
+            # discloses honestly.
+            parts.append(
+                "<ranking_basis>"
+                f"This turn ranks results: {ranking_basis}. Disclose this "
+                "ranking basis in one plain clause, e.g. 'ranked by "
+                f"{ranking_basis}'. State it, never joke about it."
+                "</ranking_basis>"
             )
         if decision.is_superlative and decision.superlative:
             c = decision.superlative
@@ -194,3 +242,31 @@ class MayaSynthesizer:
             for title in mentioned
             if title.casefold() not in allowed
         ]
+
+    def voice_contract_violations(
+        self,
+        response_text: str,
+        movies: list[MovieRecord],
+        *,
+        ranked: bool,
+        basis: str | None,
+    ) -> list[str]:
+        """ADR 0011 voice-contract check for one reply (offline, no LLM).
+
+        Ranked replies must state their ranking basis; any bolded title
+        outside the retrieved set is flagged (delegated to
+        ``cwa_violations``). Retrieval-turn offenders stay TRACE-ONLY per
+        the ADR (CWA precedent: log, never rewrite grounded prose).
+        Returns human-readable violation strings for tests and eval.
+        """
+        violations: list[str] = []
+        if ranked and not _BASIS_CLAUSE_PATTERN.search(response_text):
+            violations.append(
+                "ranking basis not disclosed (ADR 0011: a ranked reply "
+                "must state its basis in one clause)"
+            )
+        violations.extend(
+            f"non-retrieved title presented: {v.mentioned_title}"
+            for v in self.cwa_violations(response_text, movies)
+        )
+        return violations

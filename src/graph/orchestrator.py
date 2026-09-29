@@ -38,7 +38,7 @@ from src.domain.memory import (
 )
 from src.domain.routing import IntentType, MetadataFilterCriteria, QueryRoutingDecision
 from src.graph.state import MayaGraphState
-from src.maya.agent import MayaSynthesizer
+from src.maya.agent import MayaSynthesizer, ranking_basis_for
 from src.maya.guardrails import (
     GuardrailResult,
     GuardrailVerdict,
@@ -545,7 +545,10 @@ def build_maya_graph(
             "synthesize",
             {"movies": len(movies), "tokens": tokens_used, "budget": budget_status.value,
              "weekly_budget": weekly_status.value if weekly_status else "off",
-             "cwa_violations": violations},
+             "cwa_violations": violations,
+             # #114 / ADR 0011: Evals asserts ranked turns disclosed their
+             # basis; None on turns that do not rank.
+             "ranking_basis": ranking_basis_for(decision)},
         )
         # #26-E: the first recommendation after funnel narrowing announces the
         # filters that REMAIN ACTIVE, with the deterministic escape hatch.
