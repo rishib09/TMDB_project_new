@@ -377,8 +377,8 @@ class TestOrderByChannel:
     def test_order_by_clause_mapping(self):
         from src.storage.database import order_by_clause
 
-        assert order_by_clause("release_year_desc") == "release_year DESC"
-        assert order_by_clause("release_year_asc") == "release_year ASC"
+        assert order_by_clause("release_year_desc") == "release_year DESC, vote_count DESC"
+        assert order_by_clause("release_year_asc") == "release_year ASC, vote_count DESC"
         assert order_by_clause(None) == ""
         assert order_by_clause("newest") == ""  # not in the closed set
 

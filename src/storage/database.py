@@ -32,11 +32,14 @@ def order_by_clause(order_by: str | None) -> str:
     Keeps the DB free of prompt vocabulary; ``None`` -> ``''`` (the caller
     keeps its vote_count default). Anything outside the closed set is
     treated as None — the Literal on the schema is the real gate.
+    ``vote_count DESC`` rides along as the tiebreaker (#120 review): equal
+    release years otherwise fall to SQLite's arbitrary tie order, which
+    could flake the golden turn.
     """
     if order_by == "release_year_desc":
-        return "release_year DESC"
+        return "release_year DESC, vote_count DESC"
     if order_by == "release_year_asc":
-        return "release_year ASC"
+        return "release_year ASC, vote_count DESC"
     return ""
 
 
