@@ -360,3 +360,76 @@ def test_superlative_path_passes_excluded_ids_to_store(engine):
     engine.retrieve("best movie ever", routing, top_k=5, shown_ids=[42])
     kwargs = engine.db.query_superlative.call_args.kwargs
     assert kwargs["excluded_ids"] == [42]
+
+
+# --- #120: an ordering channel ('sort by new') -------------------------------
+
+class TestOrderByChannel:
+    def _routing(self, filters):
+        return QueryRoutingDecision(
+            intent=IntentType.SEMANTIC_SEARCH,
+            confidence=0.9,
+            standalone_query="sort by new",
+            requires_rag=True,
+            filters=filters,
+        )
+
+    def test_order_by_clause_mapping(self):
+        from src.storage.database import order_by_clause
+
+        assert order_by_clause("release_year_desc") == "release_year DESC, vote_count DESC"
+        assert order_by_clause("release_year_asc") == "release_year ASC, vote_count DESC"
+        assert order_by_clause(None) == ""
+        assert order_by_clause("newest") == ""  # not in the closed set
+
+    def test_schema_rejects_open_vocabulary_ordering(self):
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            MetadataFilterCriteria(order_by="newest")
+
+    def test_order_request_triggers_deterministic_sql_path(self):
+        engine = HybridRetrievalEngine(db=None, vector_store=None, reranker_enabled=False)
+        routing = self._routing(MetadataFilterCriteria(order_by="release_year_desc"))
+        assert engine._use_sql_path(routing), (
+            "an ordering request is a deterministic query (no relevance signal)"
+        )
+
+    def test_metadata_search_honors_order_by(self, tmp_path):
+        from src.storage.database import MovieDatabase
+
+        db = MovieDatabase(str(tmp_path / "ord.db"))
+        db.upsert_movies_bulk([
+            {"id": 1, "title": "Old", "release_year": 1990, "vote_count": 999},
+            {"id": 2, "title": "New", "release_year": 2024, "vote_count": 1},
+        ])
+        desc = db.search_metadata_filters(
+            MetadataFilterCriteria(order_by="release_year_desc"), limit=2
+        )
+        assert [m.title for m in desc] == ["New", "Old"]
+        asc = db.search_metadata_filters(
+            MetadataFilterCriteria(order_by="release_year_asc"), limit=2
+        )
+        assert [m.title for m in asc] == ["Old", "New"]
+        default = db.search_metadata_filters(MetadataFilterCriteria(), limit=2)
+        assert [m.title for m in default] == ["Old", "New"]  # vote_count default intact
+
+    def test_hybrid_path_records_unenforceable_ordering(self, monkeypatch, tmp_path):
+        """Defensive telemetry: if a future condition bypasses the SQL path
+        while an ordering is requested, the bypass is recorded, never silent."""
+        from src.storage.database import MovieDatabase
+
+        db = MovieDatabase(str(tmp_path / "unenforceable.db"))
+        db.upsert_movies_bulk([
+            {"id": 1, "title": "A", "release_year": 1990, "vote_count": 5},
+        ])
+        engine = HybridRetrievalEngine(db=db, vector_store=None, reranker_enabled=False)
+        monkeypatch.setattr(HybridRetrievalEngine, "_use_sql_path", lambda self, r: False)
+        routing = self._routing(MetadataFilterCriteria(order_by="release_year_desc"))
+        engine.retrieve("sort by new", routing, top_k=3)
+        assert engine.last_unenforceable_ordering == "release_year_desc"
+
+        engine.last_unenforceable_ordering = None
+        routing_plain = self._routing(MetadataFilterCriteria())
+        engine.retrieve("anything", routing_plain, top_k=3)
+        assert engine.last_unenforceable_ordering is None

@@ -106,7 +106,11 @@ that was not expressed.
 Clint Eastwood"), fill `filters.person`. Use `filters.director` or \
 `filters.cast_member` ONLY when the role is explicit ("directed by", \
 "starring"). The system resolves the role against its own database.
-8. Respond with JSON matching the schema only — no prose.
+8. An explicit ORDERING request ("sort by new", "newest first", "oldest \
+first") is not an era and not a superlative: set `filters.order_by` to \
+"release_year_desc" or "release_year_asc" (the only allowed values). Years \
+the user states still go in their own filter fields.
+9. Respond with JSON matching the schema only — no prose.
 
 Intent boundary examples (follow these closely):
 - "best movies from the 1950s" -> OUT_OF_SCOPE (pre-1970)

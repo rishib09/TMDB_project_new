@@ -46,18 +46,21 @@ _BOUNDARY = (
     '3. Era: emit the label "old" or "recent" in `era` (or a decade in `decade`); '
     "NEVER a raw year for vague era language. Explicit years the user states go in "
     "`filters`. Code maps labels to years.\n"
-    '4. reset_context is true only when the user clearly asks to start over ("something '
+    '4. Ordering: an explicit ordering request ("sort by new", "newest first", '
+    '"oldest first") is not an era and not a superlative — set `filters.order_by` '
+    'to "release_year_desc" or "release_year_asc" (the only allowed values).\n'
+    '5. reset_context is true only when the user clearly asks to start over ("something '
     'completely different", "start fresh").\n'
-    "5. Turn decision inputs: set ready_to_retrieve true when the user is clearly done "
+    "6. Turn decision inputs: set ready_to_retrieve true when the user is clearly done "
     'narrowing and wants results NOW ("give me", "show me"). missing_slots lists the '
     "axes you still need for a good pick (mood, audience, genres, era). Never ask for "
     "directors or don'ts.\n"
-    "6. clarifying_question: ONLY when you would ask, one short sentence in Maya's "
+    "7. clarifying_question: ONLY when you would ask, one short sentence in Maya's "
     "warm, concise voice, offering concrete options where natural. Otherwise null.\n"
-    "7. referenced_titles: movie titles from the state block this message refers to "
+    "8. referenced_titles: movie titles from the state block this message refers to "
     '(e.g. "the first one"). Empty if none. Never invent titles.\n'
-    "8. confidence is your honest reading confidence (telemetry, not a gate).\n"
-    "9. Respond with JSON matching the schema only — no prose."
+    "9. confidence is your honest reading confidence (telemetry, not a gate).\n"
+    "10. Respond with JSON matching the schema only — no prose."
 )
 
 SYSTEM_PROMPT_V2 = _BOUNDARY

@@ -446,3 +446,79 @@ def test_director_fold_on_the_record():
         if t["node"] == "retrieve" and t["payload"].get("prefs_director_applied")
     ]
     assert applied, "the standing-director fold must be traceable"
+
+
+# --- #120: 'sort by new' must express ORDER BY -------------------------------
+
+
+@pytest.mark.adversarial
+def test_order_by_newest_beats_vote_count_ordering(tmp_path):
+    """#120 adversarial: 'Nolan movies, newest first' must ORDER BY year —
+    Dunkirk's higher vote_count must not hide The Odyssey (2026), the exact
+    incident from the #75 turn-3 report."""
+    db = MovieDatabase(str(tmp_path / "order_by.db"))
+    db.upsert_movies_bulk([
+        {"id": 1, "title": "Dunkirk", "release_year": 2017,
+         "director": "Christopher Nolan", "vote_count": 12000, "vote_average": 7.9,
+         "genres": ["War"]},
+        {"id": 2, "title": "The Odyssey", "release_year": 2026,
+         "director": "Christopher Nolan", "vote_count": 300, "vote_average": 8.4,
+         "genres": ["Adventure"]},
+        {"id": 3, "title": "Interstellar", "release_year": 2014,
+         "director": "Christopher Nolan", "vote_count": 33000, "vote_average": 8.4,
+         "genres": ["Sci-Fi"]},
+    ])
+    engine = HybridRetrievalEngine(db=db, vector_store=None, reranker_enabled=False)
+    routing = make_routing(
+        intent=IntentType.ATTRIBUTE_FILTER,
+        standalone_query="Christopher Nolan movies, newest first",
+        filters=MetadataFilterCriteria(
+            director="Christopher Nolan", order_by="release_year_desc"
+        ),
+    )
+    results = engine.retrieve("nolan movies sort by new", routing, top_k=3)
+    assert [r.movie.title for r in results] == ["The Odyssey", "Dunkirk", "Interstellar"]
+
+
+@pytest.mark.adversarial
+def test_same_year_tie_orders_deterministically_by_vote_count(tmp_path):
+    """#120 review (worst-case): ORDER BY release_year alone leaves same-year
+    ties to SQLite's arbitrary tie order — the golden turn could flake. A
+    vote_count tiebreaker must make same-year ordering deterministic in BOTH
+    directions. Controlled dataset: the popular film is inserted SECOND, so
+    the pre-fix insertion-order tie pick loses."""
+    db = MovieDatabase(str(tmp_path / "same_year_tie.db"))
+    db.upsert_movies_bulk([
+        {"id": 1, "title": "Obscure 1999 Film", "release_year": 1999, "vote_count": 40},
+        {"id": 2, "title": "Famous 1999 Film", "release_year": 1999, "vote_count": 40000},
+    ])
+    engine = HybridRetrievalEngine(db=db, vector_store=None, reranker_enabled=False)
+    desc = engine.retrieve(
+        "1999 movies newest first",
+        make_routing(filters=MetadataFilterCriteria(order_by="release_year_desc")),
+        top_k=2,
+    )
+    assert [r.movie.title for r in desc] == ["Famous 1999 Film", "Obscure 1999 Film"]
+    asc = engine.retrieve(
+        "1999 movies oldest first",
+        make_routing(filters=MetadataFilterCriteria(order_by="release_year_asc")),
+        top_k=2,
+    )
+    assert [r.movie.title for r in asc] == ["Famous 1999 Film", "Obscure 1999 Film"]
+
+
+@pytest.mark.adversarial
+def test_bare_order_request_returns_newest_first(tmp_path):
+    """'show me the newest movies' (no other constraint) is still a
+    deterministic query — the ordering alone must take the SQL path."""
+    db = MovieDatabase(str(tmp_path / "bare_order.db"))
+    db.upsert_movies_bulk([
+        {"id": 1, "title": "Ancient", "release_year": 1971, "vote_count": 50000},
+        {"id": 2, "title": "Fresh", "release_year": 2026, "vote_count": 10},
+    ])
+    engine = HybridRetrievalEngine(db=db, vector_store=None, reranker_enabled=False)
+    routing = make_routing(
+        filters=MetadataFilterCriteria(order_by="release_year_desc")
+    )
+    results = engine.retrieve("the newest movies", routing, top_k=2)
+    assert results[0].movie.title == "Fresh"

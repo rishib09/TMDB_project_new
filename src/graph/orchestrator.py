@@ -555,7 +555,10 @@ def build_maya_graph(
             {"count": len(movies), "ids": [m.id for m in movies],
              "filters_applied": filters_applied,
              "where_applied": getattr(engine, "last_where_applied", None),  # #88 (D5)
-             "excluded_shown": len(getattr(engine, "last_excluded_ids", []) or [])},
+             "excluded_shown": len(getattr(engine, "last_excluded_ids", []) or []),
+             "unenforceable_ordering": getattr(  # #120: ordering a hybrid path can't run
+                 engine, "last_unenforceable_ordering", None
+             )},
         )
         # D16: entity focus lives in the thread now — the session-side
         # hand-copy that used to set it never reached the graph, so the
