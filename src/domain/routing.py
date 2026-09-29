@@ -58,6 +58,13 @@ class MetadataFilterCriteria(BaseModel):
     #: pushdown for both lands with the v2 stack (#106).
     runtime_max: int | None = None
     rating_min: float | None = None
+    #: #120: an explicit ordering request ("sort by new", "newest first") —
+    #: a closed vocabulary the SQL path executes as ORDER BY. It is not an
+    #: era (no year constraint) and not a superlative (no top-N extremes):
+    #: the routing→retrieval contract previously had no ordering channel, so
+    #: the newest titles lost the vote_count-ranked top-k. None = relevance
+    #: ranking, unchanged. Add to this set only with measured evidence.
+    order_by: Literal["release_year_desc", "release_year_asc"] | None = None
 
 
 class QueryRoutingDecision(BaseModel):

@@ -212,6 +212,7 @@ def test_retrieve_records_filters_applied_and_engine_invoked_signal():
         "cast_member": None, "person": None,
         "excluded_genres": [], "excluded_actors": [],
         "runtime_max": None, "rating_min": None,  # #82 C6: additive v2 fields
+            "order_by": None,  # #120: ordering channel
     }
     # the engine saw exactly those filters
     assert engine.calls[0]["routing"].filters.year_min == 2015

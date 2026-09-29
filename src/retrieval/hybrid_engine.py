@@ -117,6 +117,7 @@ class HybridRetrievalEngine:
         genre/actor/exclusion matching stays in the post-filter safety net.
         """
         self.last_dense_failure = None
+        self.last_unenforceable_ordering = None  # #120: recorded, never silent
         where = build_where_clause(routing.filters, shown_ids)
         self.last_where_applied = where
         self.last_excluded_ids = list(shown_ids or [])
@@ -129,6 +130,12 @@ class HybridRetrievalEngine:
 
         if self._use_sql_path(routing):
             return self._retrieve_sql(routing, top_k, excluded_ids=self.last_excluded_ids)
+
+        if routing.filters and routing.filters.order_by:
+            # #120 defensive: a future path-selection change that bypasses
+            # the SQL branch while an ordering is requested is telemetry,
+            # not a silent ignore (the C6-v1 unenforceable pattern).
+            self.last_unenforceable_ordering = routing.filters.order_by
 
         dense = self._retrieve_dense(query, candidate_pool, where)
         sparse = self._retrieve_bm25(self.sparse_query(query, routing.filters), candidate_pool)
@@ -180,6 +187,11 @@ class HybridRetrievalEngine:
     def _use_sql_path(routing: QueryRoutingDecision) -> bool:
         """Superlatives and exact metadata go to deterministic SQL, never vectors."""
         if routing.intent == IntentType.SUPERLATIVE_RANKING and routing.superlative:
+            return True
+        if routing.filters and routing.filters.order_by:
+            # #120: an ordering request is a deterministic query — it has no
+            # relevance signal for RRF to preserve, on ANY intent that
+            # carries it ("the newest movies" included).
             return True
         if routing.intent == IntentType.ATTRIBUTE_FILTER and routing.filters:
             f = routing.filters

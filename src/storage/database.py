@@ -26,6 +26,20 @@ def _append_id_exclusion(
     return query
 
 
+def order_by_clause(order_by: str | None) -> str:
+    """#120: map the schema's closed ordering vocabulary to SQL direction.
+
+    Keeps the DB free of prompt vocabulary; ``None`` -> ``''`` (the caller
+    keeps its vote_count default). Anything outside the closed set is
+    treated as None — the Literal on the schema is the real gate.
+    """
+    if order_by == "release_year_desc":
+        return "release_year DESC"
+    if order_by == "release_year_asc":
+        return "release_year ASC"
+    return ""
+
+
 class MovieDatabase:
     """High-performance SQLite database manager with FTS5 BM25 search for 1970-2026 US movies."""
 
@@ -442,8 +456,14 @@ class MovieDatabase:
             query += " AND cast_json NOT LIKE ?"
             params.append(f'%"{excluded_actor}"%')
 
-        # Deterministic ordering for filter-only queries (no relevance signal)
-        query += " ORDER BY vote_count DESC, release_year DESC LIMIT ?"
+        # Deterministic ordering for filter-only queries (no relevance signal).
+        # #120: an explicit ordering request replaces the vote_count default —
+        # 'sort by new' must surface the newest titles, not the most-voted.
+        ordering = order_by_clause(filters.order_by)
+        if ordering:
+            query += f" ORDER BY {ordering} LIMIT ?"
+        else:
+            query += " ORDER BY vote_count DESC, release_year DESC LIMIT ?"
         params.append(limit)
 
         with self._get_connection() as conn:
