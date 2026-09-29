@@ -509,3 +509,73 @@ class TestFoldPreferenceYears:
         decision = self._decision(MetadataFilterCriteria(year_min=2000))
         prefs = UserSessionPreferences(exact_year=1999)
         assert fold_preference_years(decision, prefs) is decision
+
+
+# --- #121a: fold_preference_director (pure helper) ---------------------------
+
+from src.domain.memory import merge_preferences
+from src.domain.routing import MetadataFilterCriteria
+from src.graph.orchestrator import fold_preference_director
+
+
+class TestFoldPreferenceDirector:
+    def _decision(self, filters=None):
+        return QueryRoutingDecision(
+            intent=IntentType.SEMANTIC_SEARCH,
+            confidence=0.9,
+            standalone_query="q",
+            requires_rag=True,
+            filters=filters,
+        )
+
+    def test_no_standing_director_returns_identity(self):
+        decision = self._decision()
+        assert fold_preference_director(decision, UserSessionPreferences()) is decision
+
+    def test_standing_director_folds_into_filterless_turn(self):
+        prefs = UserSessionPreferences(preferred_directors=["Christopher Nolan"])
+        folded = fold_preference_director(self._decision(), prefs).filters
+        assert folded.director == "Christopher Nolan"
+
+    def test_most_recent_scope_wins(self):
+        prefs = UserSessionPreferences(
+            preferred_directors=["Christopher Nolan", "Denis Villeneuve"]
+        )
+        folded = fold_preference_director(self._decision(), prefs).filters
+        assert folded.director == "Denis Villeneuve"
+
+    def test_explicit_decision_director_wins(self):
+        from src.domain.routing import MetadataFilterCriteria as MFC
+
+        decision = self._decision(MFC(director="Greta Gerwig"))
+        prefs = UserSessionPreferences(preferred_directors=["Christopher Nolan"])
+        assert fold_preference_director(decision, prefs) is decision
+
+    def test_person_scoped_turns_are_never_and_narrowed(self):
+        from src.domain.routing import MetadataFilterCriteria as MFC
+
+        prefs = UserSessionPreferences(preferred_directors=["Christopher Nolan"])
+        for scoped in (
+            MFC(cast_member="Tom Hardy"),
+            MFC(person="Cillian Murphy"),
+        ):
+            decision = self._decision(scoped)
+            assert fold_preference_director(decision, prefs) is decision, (
+                f"{scoped} must not be AND-narrowed by the standing director"
+            )
+
+    def test_mood_change_retirement_leaves_directors_intact(self):
+        current = UserSessionPreferences(
+            preferred_mood="feel-good",
+            preferred_genres=["Comedy"],
+            preferred_directors=["Christopher Nolan"],
+        )
+        incoming = UserSessionPreferences(preferred_mood="scary")
+        merged = merge_preferences(current, incoming)
+        assert merged.preferred_directors == ["Christopher Nolan"]
+        assert merged.preferred_genres == []  # the retirement still works
+
+    def test_reset_wipes_the_standing_scope(self):
+        current = UserSessionPreferences(preferred_directors=["Christopher Nolan"])
+        incoming = UserSessionPreferences(reset_requested=True)
+        assert merge_preferences(current, incoming).preferred_directors == []
