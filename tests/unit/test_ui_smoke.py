@@ -51,6 +51,21 @@ def _st_label_strings(path: str) -> list[str]:
     return rendered
 
 
+def test_stack_label_v2_and_v1():
+    """#112: the sidebar names the active stack; v2 also names the Understand
+    model; v1 renders without it (no v1 regression)."""
+    from src.domain.config import ExperimentConfig
+    from src.ui.sidebar_lab import stack_label
+
+    base = ExperimentConfig()
+    v2 = stack_label(base.model_copy(update={"routing_stack": "v2"}))
+    assert "Routing stack: v2" in v2
+    assert base.v2_router_model in v2
+    v1 = stack_label(base)
+    assert "Routing stack: v1" in v1
+    assert "Understand model" not in v1
+
+
 def test_lab_labels_carry_no_ticket_numbers():
     """#91: rendered Lab strings must not leak internal ticket numbers."""
     labels = _st_label_strings(
