@@ -8,6 +8,8 @@ custom ML code: rank fusion is arithmetic, reranking is flashrank.
 
 from typing import Any, ClassVar, Sequence
 
+import re
+
 from pydantic import BaseModel, Field
 
 from src.domain.movie import MovieRecord
@@ -29,6 +31,40 @@ class RetrievalResult(BaseModel):
         default=False,
         description="#65: dense search raised for this call; the list is BM25-only",
     )
+
+
+def find_title_anchors(query: str, titles: Sequence[str]) -> list[str]:
+    """#121b: DB titles occurring as whole-phrase matches in the query.
+
+    Case-insensitive, alphanumeric-boundary delimited (punctuation may abut
+    the title); returns the titles AS PASSED, longest mention first. A match
+    contained within a longer matched title's span is a fragment of that
+    mention, not an independent anchor ("Wolf" and "Wall Street" inside a
+    mention of "The Wolf of Wall Street"); two disjoint mentions anchor
+    independently. Single-word titles never anchor: natural language names
+    them constantly ("trapped on a ship" would anchor a film called Ship),
+    and the evidenced #121b failure is a compound title — BM25 already
+    ranks lone title tokens well. A DB title must occur IN the query —
+    never the reverse ("The Wolf of Wall Street" does not anchor inside a
+    mention of "The Wolf of Wall Street Journal"). Pure string logic
+    (ADR 0006).
+    """
+    q = query.lower()
+    spans: list[tuple[int, int, str]] = []
+    for title in titles:
+        t = title.strip().lower()
+        if not t or " " not in t:
+            continue  # single-word titles never anchor (see docstring)
+        m = re.search(r"(?<![a-z0-9])" + re.escape(t) + r"(?![a-z0-9])", q)
+        if m:
+            spans.append((m.start(), m.end(), title))
+    spans.sort(key=lambda s: s[1] - s[0], reverse=True)  # longest mention first
+    kept: list[tuple[int, int, str]] = []
+    for start, end, title in spans:
+        if any(start >= ks and end <= ke for ks, ke, _ in kept):
+            continue  # a fragment of an already-kept longer mention
+        kept.append((start, end, title))
+    return [title for _, _, title in kept]
 
 
 def build_where_clause(
@@ -94,6 +130,17 @@ class HybridRetrievalEngine:
         #: the trace can record ``where_applied`` / ``excluded_shown``.
         self.last_where_applied: dict[str, Any] | None = None
         self.last_excluded_ids: list[int] = []
+        #: #121b: lazy {title_lower: [MovieRecord, ...]} built from the DB on
+        #: the first hybrid retrieve — one scan per engine instance (per run
+        #: in the harness, per session in the UI). None until first use.
+        self._title_index: dict[str, list[MovieRecord]] | None = None
+        #: #121b: display titles the last retrieve pinned (None when none).
+        self.last_title_anchor: list[str] | None = None
+        #: #121b review (P1): repr of the exception the most recent retrieve()
+        #: swallowed in the title-anchor lane; None when the lane ran. The
+        #: lane stays fail-open (an addition, never a dependency), but the
+        #: loss is never silent — mirrors ``last_dense_failure`` (#65).
+        self.last_title_anchor_failure: str | None = None
         self.hybrid_alpha = hybrid_alpha
         self.reranker_enabled = reranker_enabled
         self.reranker_model = reranker_model
@@ -118,6 +165,8 @@ class HybridRetrievalEngine:
         """
         self.last_dense_failure = None
         self.last_unenforceable_ordering = None  # #120: recorded, never silent
+        self.last_title_anchor = None  # #121b: pinned titles this call
+        self.last_title_anchor_failure = None  # review P1: recorded, never silent
         where = build_where_clause(routing.filters, shown_ids)
         self.last_where_applied = where
         self.last_excluded_ids = list(shown_ids or [])
@@ -130,6 +179,14 @@ class HybridRetrievalEngine:
 
         if self._use_sql_path(routing):
             return self._retrieve_sql(routing, top_k, excluded_ids=self.last_excluded_ids)
+
+        # #121b: the exact-title anchor lane. DB titles occurring whole in the
+        # query are pinned AHEAD of the fused results ("who directed X" is a
+        # question-shaped query that otherwise loses X to relevance); the
+        # pipeline pool excludes the pinned ids so remaining slots stay fresh.
+        anchors = self._title_anchor_movies(query, self.last_excluded_ids)
+        if anchors:
+            self.last_title_anchor = [m.title for m in anchors]
 
         if routing.filters and routing.filters.order_by:
             # #120 defensive: a future path-selection change that bypasses
@@ -146,15 +203,57 @@ class HybridRetrievalEngine:
         # Uniform post-filtering: positive filters + exclusions on the small
         # candidate pool (BM25 has no metadata columns; this keeps one path).
         fused = [r for r in fused if self._is_allowed(r.movie, routing.filters)]
-        if shown_ids:  # #88 review: the sparse leg and dense-failure fallback
-            # bypass the store-level $nin — exclude shown ids here so the
-            # hybrid path honors the fresh-pool guarantee end to end.
-            excluded = set(shown_ids)
-            fused = [r for r in fused if r.movie.id not in excluded]
+        # #88 review: the sparse leg and dense-failure fallback bypass the
+        # store-level $nin — exclude shown ids AND pinned anchor ids here so
+        # the fresh-pool guarantee holds end to end (#121b).
+        excluded_here = set(self.last_excluded_ids) | {m.id for m in anchors}
+        if excluded_here:
+            fused = [r for r in fused if r.movie.id not in excluded_here]
 
         if self.reranker_enabled and fused:
-            return self._rerank(query, fused, top_k)
-        return fused[:top_k]
+            reranked = self._rerank(query, fused, max(0, top_k - len(anchors)))
+        else:
+            reranked = fused[: max(0, top_k - len(anchors))]
+        if anchors:  # #121b: pinned titles lead the page
+            pinned = [
+                RetrievalResult(movie=m, score=1.0, source="title_anchor")
+                for m in anchors
+            ]
+            return pinned + reranked
+        return reranked
+
+    # --- #121b: exact-title anchor lane -----------------------------------------
+
+    def _title_anchor_movies(
+        self, query: str, excluded_ids: Sequence[int]
+    ) -> list[MovieRecord]:
+        """DB titles occurring whole in the query, pinned to lead the page.
+
+        The title index is one ``get_all_movies`` scan per engine instance.
+        Fail-open by contract: any failure here leaves retrieval exactly as
+        it was before #121b — the lane is an addition, never a dependency —
+        but the exception is recorded on ``last_title_anchor_failure`` so a
+        crashed lane is trace-distinguishable from "title not in DB".
+        """
+        if self.db is None:
+            return []
+        try:
+            if self._title_index is None:
+                idx: dict[str, list[MovieRecord]] = {}
+                for m in self.db.get_all_movies():
+                    idx.setdefault(m.title.lower(), []).append(m)
+                self._title_index = idx
+            excluded = set(excluded_ids or [])
+            matched = find_title_anchors(query, list(self._title_index.keys()))
+            anchors: list[MovieRecord] = []
+            for key in matched:
+                for m in self._title_index[key]:
+                    if m.id not in excluded:
+                        anchors.append(m)
+            return anchors
+        except Exception as exc:  # noqa: BLE001 — fail-open is deliberate and RECORDED
+            self.last_title_anchor_failure = f"{type(exc).__name__}: {exc}"
+            return []
 
     # --- person role resolution (#24) -------------------------------------------
 

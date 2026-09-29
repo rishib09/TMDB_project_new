@@ -558,6 +558,10 @@ def build_maya_graph(
              "excluded_shown": len(getattr(engine, "last_excluded_ids", []) or []),
              "unenforceable_ordering": getattr(  # #120: ordering a hybrid path can't run
                  engine, "last_unenforceable_ordering", None
+             ),
+             "title_anchor": getattr(engine, "last_title_anchor", None),  # #121b
+             "title_anchor_failure": getattr(  # review P1: lane crash is on record
+                 engine, "last_title_anchor_failure", None
              )},
         )
         # D16: entity focus lives in the thread now — the session-side

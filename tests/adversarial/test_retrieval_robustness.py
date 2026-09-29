@@ -522,3 +522,122 @@ def test_bare_order_request_returns_newest_first(tmp_path):
     )
     results = engine.retrieve("the newest movies", routing, top_k=2)
     assert results[0].movie.title == "Fresh"
+
+
+# --- #121b: exact-title anchor lane before semantic retrieval ----------------
+
+
+@pytest.mark.adversarial
+def test_in_db_title_anchors_semantic_retrieval(tmp_path):
+    """#121b adversarial: 'who created and directed The Wolf of Wall Street'
+    must retrieve the film that IS in the DB — pinned ahead of the fused
+    results, not lost to relevance ranking on a question-shaped query."""
+    decoys = [
+        {"id": 100 + i, "title": t, "release_year": 2000 + i, "vote_count": 9000 + i,
+         "genres": ["Drama"], "director": f"Dir {i}",
+         "overview": "wall street wolves finance drama"}
+        for i, t in enumerate([
+            "Wall Street", "Wall Street: Money Never Sleeps", "Wolf",
+            "Wolf Creek", "The Wolfman", "Street Kings", "Wolves",
+            "The Wolf of Snow Hollow", "Candy", "The Big Short",
+            "Margin Call", "Boiler Room", "American Psycho", "War Dogs",
+            "The Founder", "Wolf Hall", "Wall Street Warriors", "Street",
+            "She-Wolf of London", "Wolf Town",
+        ])
+    ]
+    db = MovieDatabase(str(tmp_path / "anchor.db"))
+    db.upsert_movies_bulk(decoys + [{
+        "id": 1, "title": "The Wolf of Wall Street", "release_year": 2013,
+        "director": "Martin Scorsese", "vote_count": 20500, "vote_average": 8.2,
+        "genres": ["Comedy", "Crime"],
+        "overview": "Jordan Belfort's rise and fall in 1990s stock brokerage",
+    }])
+    engine = HybridRetrievalEngine(db=db, vector_store=None, reranker_enabled=False)
+    routing = make_routing(
+        standalone_query="who created and directed The Wolf of Wall Street"
+    )
+    results = engine.retrieve(
+        "who created and directed The Wolf of Wall Street", routing, top_k=5
+    )
+    assert results, "the film is in the DB — it must come back"
+    assert results[0].movie.title == "The Wolf of Wall Street"
+    assert results[0].movie.director == "Martin Scorsese"
+    assert results[0].source == "title_anchor"
+    assert engine.last_title_anchor == ["The Wolf of Wall Street"]
+
+
+@pytest.mark.adversarial
+def test_title_anchor_suppressed_for_already_shown_id(tmp_path):
+    """Freshness contract (#88): a shown film is not re-pinned — the pin
+    must not override the session's fresh-results guarantee."""
+    db = MovieDatabase(str(tmp_path / "anchor_shown.db"))
+    db.upsert_movies_bulk([
+        {"id": 1, "title": "The Wolf of Wall Street", "release_year": 2013,
+         "director": "Martin Scorsese", "vote_count": 20500, "genres": ["Comedy"]},
+        {"id": 2, "title": "Casino", "release_year": 1995,
+         "director": "Martin Scorsese", "vote_count": 9000, "genres": ["Crime"]},
+    ])
+    engine = HybridRetrievalEngine(db=db, vector_store=None, reranker_enabled=False)
+    routing = make_routing(
+        standalone_query="who created and directed The Wolf of Wall Street"
+    )
+    results = engine.retrieve(
+        "who created and directed The Wolf of Wall Street", routing,
+        top_k=5, shown_ids=[1],
+    )
+    assert all(r.movie.id != 1 for r in results), "shown ids stay excluded"
+
+
+@pytest.mark.adversarial
+def test_title_anchor_failure_is_recorded_not_silent(tmp_path, monkeypatch):
+    """#121b review (P1): a crash in the title-anchor lane must be recorded
+    (mirroring ``last_dense_failure``), never swallowed — a permanently
+    disabled lane must be trace-distinguishable from 'title not in DB'."""
+    db = MovieDatabase(str(tmp_path / "anchor_fail.db"))
+    db.upsert_movies_bulk([
+        {"id": 1, "title": "The Wolf of Wall Street", "release_year": 2013,
+         "director": "Martin Scorsese", "vote_count": 20500, "genres": ["Comedy"],
+         "overview": "Jordan Belfort's rise and fall in 1990s stock brokerage"},
+    ])
+
+    def _explode():
+        raise RuntimeError("title scan exploded")
+
+    monkeypatch.setattr(db, "get_all_movies", _explode)
+    engine = HybridRetrievalEngine(db=db, vector_store=None, reranker_enabled=False)
+    routing = make_routing(
+        standalone_query="who created and directed The Wolf of Wall Street"
+    )
+    results = engine.retrieve(
+        "who created and directed The Wolf of Wall Street", routing, top_k=5
+    )
+    assert "title scan exploded" in engine.last_title_anchor_failure
+    assert all(r.source != "title_anchor" for r in results)  # fail-open: lane is an addition
+
+
+@pytest.mark.adversarial
+def test_title_anchor_failure_marker_resets_on_next_retrieve(tmp_path, monkeypatch):
+    db = MovieDatabase(str(tmp_path / "anchor_fail_reset.db"))
+    db.upsert_movies_bulk([
+        {"id": 1, "title": "The Wolf of Wall Street", "release_year": 2013,
+         "director": "Martin Scorsese", "vote_count": 20500, "genres": ["Comedy"]},
+    ])
+
+    def _explode():
+        raise RuntimeError("title scan exploded")
+
+    monkeypatch.setattr(db, "get_all_movies", _explode)
+    engine = HybridRetrievalEngine(db=db, vector_store=None, reranker_enabled=False)
+    routing = make_routing(
+        standalone_query="who created and directed The Wolf of Wall Street"
+    )
+    engine.retrieve("who created and directed The Wolf of Wall Street", routing, top_k=5)
+    assert engine.last_title_anchor_failure is not None
+
+    monkeypatch.undo()  # the DB heals; the next turn must clear the marker
+    results = engine.retrieve(
+        "who created and directed The Wolf of Wall Street", routing, top_k=5
+    )
+    assert engine.last_title_anchor_failure is None
+    assert engine.last_title_anchor == ["The Wolf of Wall Street"]
+    assert results[0].source == "title_anchor"
