@@ -134,6 +134,114 @@ def test_v1_route_node_writes_router_cost_to_session():
     assert out["session_tokens"] == 700 + 15
 
 
+def test_missing_usage_metadata_records_unmetered_marker():
+    """#123 review P2-1: a usage-less LLM call must not vanish from the
+    Trace — AGENTS.md: fail-open must be explicit and recorded. The turn
+    still costs nothing, but one ``unmetered`` cost row marks it."""
+    from src.domain.config import ExperimentConfig
+    from src.graph.orchestrator import build_maya_graph
+
+    class _NoUsageRouter(_UsageV1Router):
+        def __init__(self):
+            self.last_usage = None  # real routers set None on api_error
+
+    synth_cost = estimate_cost("fake-model", 10, 5)
+    graph = build_maya_graph(
+        ExperimentConfig(),
+        _NoUsageRouter(),
+        _EmptyEngine(),
+        _UsageSynth(),
+        tracer := _fresh_tracer(),
+        budget_tracker=None,
+    )
+    out = graph.invoke({"messages": [HumanMessage(content="what can you do")]})
+    assert out["session_cost_usd"] == pytest.approx(synth_cost)
+    markers = [
+        t
+        for t in tracer.traces()
+        if t["node"] == "cost"
+        and t["payload"].get("node") == "route"
+        and t["payload"].get("unmetered") == "no_usage_metadata"
+    ]
+    assert markers and markers[0]["payload"]["cost_usd"] == 0.0
+
+
+def test_mock_spec_usage_is_crash_proof_and_marked():
+    """#123 review P3-2: ``Mock(spec=LLMUsage)`` passes the isinstance guard
+    but explodes on ``int()`` — the node must survive and mark the call
+    unmetered instead of crashing the turn."""
+    from unittest.mock import Mock
+
+    from src.domain.config import ExperimentConfig
+    from src.domain.usage import LLMUsage
+    from src.graph.orchestrator import build_maya_graph
+
+    class _MockUsageRouter(_UsageV1Router):
+        def __init__(self):
+            self.last_usage = Mock(spec=LLMUsage)
+
+    graph = build_maya_graph(
+        ExperimentConfig(),
+        _MockUsageRouter(),
+        _EmptyEngine(),
+        _UsageSynth(),
+        tracer := _fresh_tracer(),
+        budget_tracker=None,
+    )
+    out = graph.invoke({"messages": [HumanMessage(content="what can you do")]})  # must not raise
+    assert out["session_cost_usd"] > 0  # synthesis still meters
+    assert any(
+        t["node"] == "cost"
+        and t["payload"].get("node") == "route"
+        and t["payload"].get("unmetered") == "no_usage_metadata"
+        for t in tracer.traces()
+    )
+
+
+def test_negative_usage_tokens_clamp_to_zero():
+    """#123 review P3-1: hostile/negative usage_metadata must never credit
+    the meter or produce a negative cost (monotonic spend)."""
+    from types import SimpleNamespace
+
+    from src.domain.usage import LLMUsage
+
+    usage = LLMUsage.from_response(
+        SimpleNamespace(usage_metadata={"input_tokens": -5, "output_tokens": -3})
+    )
+    assert usage is not None
+    assert usage.prompt_tokens == 0
+    assert usage.completion_tokens == 0
+    assert estimate_cost("glm-5.3-flash", usage.prompt_tokens, usage.completion_tokens) == 0.0
+
+
+def test_funnel_extract_router_call_is_metered():
+    """#123 review P2-3: the v1 funnel's router-as-extractor call was
+    unmetered — a mid-funnel turn must carry its ``funnel_extract`` cost
+    row and the spend must include it."""
+    from src.domain.config import ExperimentConfig
+    from src.graph.orchestrator import build_maya_graph
+
+    extract_cost = estimate_cost("glm-5.3-flash", 500, 200)
+    graph = build_maya_graph(
+        ExperimentConfig(),
+        _UsageV1Router(),
+        _EmptyEngine(),
+        _UsageSynth(),
+        tracer := _fresh_tracer(),
+        budget_tracker=None,
+    )
+    out = graph.invoke(
+        {
+            "messages": [HumanMessage(content="something with spaceships")],
+            "funnel_active": True,  # mid-funnel: guard routes straight to funnel
+            "probe_count": 1,
+        }
+    )
+    rows = [t for t in tracer.traces() if t["node"] == "cost" and t["payload"].get("node") == "funnel_extract"]
+    assert rows and rows[0]["payload"]["cost_usd"] == pytest.approx(extract_cost)
+    assert out["session_cost_usd"] >= extract_cost - 1e-9
+
+
 def test_v2_route_node_writes_understand_cost_to_session():
     """#123 adversarial: the v2 Understand call was unmetered — a v2 turn
     must carry session_cost_usd > 0 and a ``cost`` trace row."""

@@ -10,7 +10,8 @@ raised exception and never a silent guess.
 from __future__ import annotations
 
 import os
-from typing import Sequence
+import re
+from collections.abc import Sequence
 
 from langchain_openai import ChatOpenAI
 from pydantic import ValidationError
@@ -25,8 +26,6 @@ from src.maya.v2.disposer import (
     enforce_probe_budget,
     enforce_question,
 )
-
-import re
 from src.maya.v2.models import Understanding
 from src.maya.v2.prompt import SYSTEM_PROMPT_V2, build_state_block
 
@@ -188,9 +187,11 @@ class MayaV2Router:
         Token counts are exact (summed across schema retries and the #113
         fallback attempt — token-linear). The model is attributed to the
         PRIMARY config model (user decision D3): fallback-attempt tokens are
-        priced at the primary rate, a bounded error (both models sit in the
-        same price row; < $0.0005/turn), disclosed here rather than hidden.
-        Returns ``None`` when no attempt consumed tokens (stubbed clients).
+        priced at the primary rate — conservative over-pricing, up to ~2x
+        on those tokens (glm-5.3-flash 0.25 vs flash-lite 0.12 $/MTok) but
+        bounded to a fraction of a cent per turn — disclosed here rather
+        than hidden. Returns ``None`` when no attempt consumed tokens
+        (stubbed clients).
         """
         if total_prompt + total_completion == 0:
             return None

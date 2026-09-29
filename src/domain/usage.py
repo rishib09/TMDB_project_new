@@ -32,8 +32,10 @@ class LLMUsage(BaseModel):
         try:
             return cls(
                 model="",
-                prompt_tokens=int(meta.get("input_tokens") or 0),
-                completion_tokens=int(meta.get("output_tokens") or 0),
+                # #123 review P3-1: hostile/negative counts clamp to zero —
+                # usage can never credit the meter backwards.
+                prompt_tokens=max(0, int(meta.get("input_tokens") or 0)),
+                completion_tokens=max(0, int(meta.get("output_tokens") or 0)),
             )
         except (TypeError, ValueError):
             return None

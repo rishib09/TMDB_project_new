@@ -275,8 +275,11 @@ def test_graph_turn_meters_route_and_synthesis_into_limiter_and_ledger(tmp_path)
     assert db.weekly_spend_usd() == pytest.approx(route_cost + synth_cost)
 
 
-def test_meter_llm_none_usage_meters_nothing(tmp_path):
-    """#123: stubbed clients (no usage) must not distort the ledger."""
+def test_meter_llm_unusable_usage_costs_nothing_but_is_recorded(tmp_path):
+    """#123: stubbed clients (no usage) must not distort the ledger — and
+    after the review hardening (P2-1) they leave an explicit ``unmetered``
+    marker row in the Trace instead of vanishing (AGENTS.md: fail-open
+    must be explicit and recorded)."""
     from langchain_core.messages import HumanMessage
 
     from src.domain.config import ExperimentConfig
@@ -309,9 +312,17 @@ def test_meter_llm_none_usage_meters_nothing(tmp_path):
         _Router(),
         _NoEngine(),
         _Synth(),
-        DualModeObservabilityManager(session_id="unit-budget2"),
+        tracer := DualModeObservabilityManager(session_id="unit-budget2"),
         budget_tracker=WeeklyBudgetTracker(db),
     )
     out = graph.invoke({"messages": [HumanMessage(content="hi")]})
     assert out["session_cost_usd"] == 0.0
     assert db.weekly_spend_usd() == 0.0
+    # P2-1: the skipped ROUTE call is VISIBLE — one unmetered marker row
+    # (the synth stub reports zero-token usage, which meters normally).
+    markers = [
+        t
+        for t in tracer.traces()
+        if t["node"] == "cost" and t["payload"].get("unmetered") == "no_usage_metadata"
+    ]
+    assert {m["payload"]["node"] for m in markers} == {"route"}
