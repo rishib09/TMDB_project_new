@@ -72,6 +72,25 @@ def render_state_notes(row: dict) -> None:
         st.caption(note)
 
 
+def render_turn_details(row: dict) -> None:
+    """Full turn metadata on demand (#122) — nothing silently elided.
+
+    The collapsed intent badge stays compact; the expander carries every
+    field and every narrowing/filter chip uncapped (the single caption
+    line CSS-ellipsized on filter-heavy turns, so chips disappeared).
+    """
+    with st.expander(":material/info: Turn details", expanded=False):
+        st.caption(
+            f"Intent: {row.get('intent')} — confidence: {row.get('confidence')} — "
+            f"route: {row.get('path')} — attempts: {row.get('attempts')} — "
+            f"movies: {row.get('n_movies')} — tokens: {row.get('tokens')}"
+        )
+        for chip in row.get("narrowing") or []:
+            st.badge(chip)
+        for chip in row.get("filters") or []:
+            st.badge(chip)
+
+
 def _widget_rating_to_canonical(value: int) -> int:
     """Pure boundary mapping: st.feedback 1/0 → canonical +1/-1 (unit-tested)."""
     return 1 if value == 1 else -1
@@ -251,6 +270,7 @@ def render_chat(session: MayaSession) -> None:
             if row is not None:
                 render_intent_badge(row)
                 render_state_notes(row)
+                render_turn_details(row)
             render_feedback(session, turn_index)
             if row is not None:
                 render_report_receipt(session, row)
@@ -300,6 +320,7 @@ def render_chat(session: MayaSession) -> None:
         st.markdown(last["response"])
         render_intent_badge(last)
         render_state_notes(last)
+        render_turn_details(last)
         render_feedback(session, idx)
     render_poster_grid(session.last_movies)
     scroll_to_newest()  # #27-R: land on the fresh response, not the page top
