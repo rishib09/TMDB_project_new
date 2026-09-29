@@ -136,6 +136,11 @@ class HybridRetrievalEngine:
         self._title_index: dict[str, list[MovieRecord]] | None = None
         #: #121b: display titles the last retrieve pinned (None when none).
         self.last_title_anchor: list[str] | None = None
+        #: #121b review (P1): repr of the exception the most recent retrieve()
+        #: swallowed in the title-anchor lane; None when the lane ran. The
+        #: lane stays fail-open (an addition, never a dependency), but the
+        #: loss is never silent — mirrors ``last_dense_failure`` (#65).
+        self.last_title_anchor_failure: str | None = None
         self.hybrid_alpha = hybrid_alpha
         self.reranker_enabled = reranker_enabled
         self.reranker_model = reranker_model
@@ -161,6 +166,7 @@ class HybridRetrievalEngine:
         self.last_dense_failure = None
         self.last_unenforceable_ordering = None  # #120: recorded, never silent
         self.last_title_anchor = None  # #121b: pinned titles this call
+        self.last_title_anchor_failure = None  # review P1: recorded, never silent
         where = build_where_clause(routing.filters, shown_ids)
         self.last_where_applied = where
         self.last_excluded_ids = list(shown_ids or [])
@@ -225,7 +231,9 @@ class HybridRetrievalEngine:
 
         The title index is one ``get_all_movies`` scan per engine instance.
         Fail-open by contract: any failure here leaves retrieval exactly as
-        it was before #121b — the lane is an addition, never a dependency.
+        it was before #121b — the lane is an addition, never a dependency —
+        but the exception is recorded on ``last_title_anchor_failure`` so a
+        crashed lane is trace-distinguishable from "title not in DB".
         """
         if self.db is None:
             return []
@@ -243,8 +251,9 @@ class HybridRetrievalEngine:
                     if m.id not in excluded:
                         anchors.append(m)
             return anchors
-        except Exception:
-            return []  # fail-open (telemetry stays honest: anchor attr stays None)
+        except Exception as exc:  # noqa: BLE001 — fail-open is deliberate and RECORDED
+            self.last_title_anchor_failure = f"{type(exc).__name__}: {exc}"
+            return []
 
     # --- person role resolution (#24) -------------------------------------------
 

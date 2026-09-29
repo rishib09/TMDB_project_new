@@ -505,8 +505,13 @@ class TestTitleAnchors:
         assert find_title_anchors("anything about it really", ["It"]) == []
 
 
-class TestFindMoviesByTitle:
-    def test_substring_lookup_ranked_and_limited(self, tmp_path):
+class TestTitleAnchorLookup:
+    """#121b review: the direct DB title lookup (find_movies_by_title) is
+    gone — dead production code whose unescaped LIKE could match every row.
+    The surviving title lookup is the engine's anchor lane; its lookup
+    behavior is pinned here."""
+
+    def test_title_lane_matches_whole_db_titles_only(self, tmp_path):
         from src.storage.database import MovieDatabase
 
         db = MovieDatabase(str(tmp_path / "titles.db"))
@@ -516,7 +521,16 @@ class TestFindMoviesByTitle:
             {"id": 2, "title": "Wolf", "release_year": 1994, "vote_count": 3000},
             {"id": 3, "title": "Wolf Creek", "release_year": 2005, "vote_count": 1500},
         ])
-        hits = db.find_movies_by_title("wolf", limit=2)
-        assert [m.title for m in hits] == ["The Wolf of Wall Street", "Wolf Creek"]
-        assert len(db.find_movies_by_title("wolf", limit=10)) == 3
-        assert db.find_movies_by_title("no such title anywhere") == []
+        engine = HybridRetrievalEngine(db=db, vector_store=None, reranker_enabled=False)
+        anchors = engine._title_anchor_movies("rewatched Wolf Creek last night", [])
+        assert [m.title for m in anchors] == ["Wolf Creek"]  # lone 'wolf' never anchors
+
+    def test_title_lane_no_match_returns_empty(self, tmp_path):
+        from src.storage.database import MovieDatabase
+
+        db = MovieDatabase(str(tmp_path / "titles_none.db"))
+        db.upsert_movies_bulk([
+            {"id": 1, "title": "Wolf Creek", "release_year": 2005, "vote_count": 1500},
+        ])
+        engine = HybridRetrievalEngine(db=db, vector_store=None, reranker_enabled=False)
+        assert engine._title_anchor_movies("no such title anywhere", []) == []

@@ -473,25 +473,6 @@ class MovieDatabase:
             cursor = conn.execute(query, params)
             return [MovieRecord.model_validate(self._row_to_dict(r)) for r in cursor.fetchall()]
 
-    def find_movies_by_title(self, title_fragment: str, limit: int = 5) -> list[MovieRecord]:
-        """#121b: exact/substring title match, case-insensitive.
-
-        Newest-then-most-voted ranking (a title question usually wants the
-        most recent bearer). Same ``_get_connection`` seam as every query
-        here; the retrieval pin lane uses the engine-side title index —
-        this is the direct DB seam (and what tests exercise).
-        """
-        query = (
-            "SELECT * FROM movies WHERE lower(title) LIKE lower(?) "
-            "ORDER BY release_year DESC, vote_count DESC LIMIT ?"
-        )
-        with self._get_connection() as conn:
-            cursor = conn.execute(query, (f"%{title_fragment}%", limit))
-            return [
-                MovieRecord.model_validate(self._row_to_dict(r))
-                for r in cursor.fetchall()
-            ]
-
     def get_all_movies(self) -> list[MovieRecord]:
         """Fetch all movies as typed MovieRecord models."""
         with self._get_connection() as conn:

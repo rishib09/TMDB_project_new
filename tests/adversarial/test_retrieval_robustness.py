@@ -586,3 +586,58 @@ def test_title_anchor_suppressed_for_already_shown_id(tmp_path):
         top_k=5, shown_ids=[1],
     )
     assert all(r.movie.id != 1 for r in results), "shown ids stay excluded"
+
+
+@pytest.mark.adversarial
+def test_title_anchor_failure_is_recorded_not_silent(tmp_path, monkeypatch):
+    """#121b review (P1): a crash in the title-anchor lane must be recorded
+    (mirroring ``last_dense_failure``), never swallowed — a permanently
+    disabled lane must be trace-distinguishable from 'title not in DB'."""
+    db = MovieDatabase(str(tmp_path / "anchor_fail.db"))
+    db.upsert_movies_bulk([
+        {"id": 1, "title": "The Wolf of Wall Street", "release_year": 2013,
+         "director": "Martin Scorsese", "vote_count": 20500, "genres": ["Comedy"],
+         "overview": "Jordan Belfort's rise and fall in 1990s stock brokerage"},
+    ])
+
+    def _explode():
+        raise RuntimeError("title scan exploded")
+
+    monkeypatch.setattr(db, "get_all_movies", _explode)
+    engine = HybridRetrievalEngine(db=db, vector_store=None, reranker_enabled=False)
+    routing = make_routing(
+        standalone_query="who created and directed The Wolf of Wall Street"
+    )
+    results = engine.retrieve(
+        "who created and directed The Wolf of Wall Street", routing, top_k=5
+    )
+    assert "title scan exploded" in engine.last_title_anchor_failure
+    assert all(r.source != "title_anchor" for r in results)  # fail-open: lane is an addition
+
+
+@pytest.mark.adversarial
+def test_title_anchor_failure_marker_resets_on_next_retrieve(tmp_path, monkeypatch):
+    db = MovieDatabase(str(tmp_path / "anchor_fail_reset.db"))
+    db.upsert_movies_bulk([
+        {"id": 1, "title": "The Wolf of Wall Street", "release_year": 2013,
+         "director": "Martin Scorsese", "vote_count": 20500, "genres": ["Comedy"]},
+    ])
+
+    def _explode():
+        raise RuntimeError("title scan exploded")
+
+    monkeypatch.setattr(db, "get_all_movies", _explode)
+    engine = HybridRetrievalEngine(db=db, vector_store=None, reranker_enabled=False)
+    routing = make_routing(
+        standalone_query="who created and directed The Wolf of Wall Street"
+    )
+    engine.retrieve("who created and directed The Wolf of Wall Street", routing, top_k=5)
+    assert engine.last_title_anchor_failure is not None
+
+    monkeypatch.undo()  # the DB heals; the next turn must clear the marker
+    results = engine.retrieve(
+        "who created and directed The Wolf of Wall Street", routing, top_k=5
+    )
+    assert engine.last_title_anchor_failure is None
+    assert engine.last_title_anchor == ["The Wolf of Wall Street"]
+    assert results[0].source == "title_anchor"
