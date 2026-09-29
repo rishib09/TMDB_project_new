@@ -105,6 +105,30 @@ def fold_preference_years(
     return decision.model_copy(update={"filters": filters})
 
 
+def fold_preference_director(
+    decision: QueryRoutingDecision, prefs: UserSessionPreferences
+) -> QueryRoutingDecision:
+    """Set decision.filters.director from the standing director scope (#121a).
+
+    The most recent scope wins (``preferred_directors[-1]`` — the same
+    scalar last-wins pattern as mood/audience). The fold skips any turn
+    already scoped to its own person (director / cast_member / person):
+    a person-scoped question ANDed with a standing director is a different,
+    narrower filmography question, and the zero-result relaxation does not
+    cover director ∧ cast intersections. Returns the original object when
+    nothing applies (identity, not a copy).
+    """
+    if not prefs.preferred_directors:
+        return decision
+    f = decision.filters
+    if f is not None and (f.director or f.cast_member or f.person):
+        return decision
+    filters = (f or MetadataFilterCriteria()).model_copy(
+        update={"director": prefs.preferred_directors[-1]}
+    )
+    return decision.model_copy(update={"filters": filters})
+
+
 def build_maya_graph(
     config: ExperimentConfig,
     router: MayaRouter | "MayaV2Router",
@@ -229,6 +253,15 @@ def build_maya_graph(
             ),
             excluded_actors=(
                 list(decision.filters.excluded_actors) if decision.filters else []
+            ),
+            # #121a: a v1 ATTRIBUTE_FILTER director scope becomes standing
+            # session scope; record questions (SEMANTIC_SEARCH) never do.
+            preferred_directors=(
+                [decision.filters.director]
+                if decision.intent is IntentType.ATTRIBUTE_FILTER
+                and decision.filters
+                and decision.filters.director
+                else []
             ),
         )
         # #56-F1: era words in a ROUTED query ("show me old classic") must not
@@ -466,6 +499,12 @@ def build_maya_graph(
                 "year_max": effective_years[2],
             }})
         decision = folded
+        # #121a: the standing director scope reaches reference turns that
+        # carry no person of their own.
+        folded_dir = fold_preference_director(decision, prefs)
+        if folded_dir is not decision:
+            tracer.record_local("retrieve", {"prefs_director_applied": True})
+            decision = folded_dir
         # Confirmed funnel genres (#25) drive deterministic genre filters.
         if prefs.preferred_genres and not (
             decision.filters and decision.filters.genres

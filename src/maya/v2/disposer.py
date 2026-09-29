@@ -178,6 +178,15 @@ def dispose(
 
     # C2: delta -> UserSessionPreferences update -> the existing reducer.
     d = u.preference_delta
+    # #121a: an ATTRIBUTE_FILTER director scope becomes standing session
+    # scope (the C06 snapshot discipline, applied to directors). Record
+    # questions never do: "who directed X" (SEMANTIC_SEARCH) scopes this
+    # turn's retrieval only.
+    director_scope = (
+        f.director
+        if u.intent is IntentType.ATTRIBUTE_FILTER and f is not None and f.director
+        else None
+    )
     incoming = UserSessionPreferences(
         preferred_mood=d.set_mood or "",
         audience=d.set_audience or "",
@@ -185,11 +194,14 @@ def dispose(
         excluded_genres=list(d.add_excluded_genres),
         excluded_actors=list(d.add_excluded_actors),
         noted_donts=list(d.add_donts),
+        preferred_directors=[director_scope] if director_scope else [],
         exact_year=f.exact_year if f else None,
         year_min=f.year_min if f and f.year_min is not None else era_year_min,
         year_max=f.year_max if f and f.year_max is not None else era_year_max,
         reset_requested=u.reset_context,
     )
+    if director_scope:
+        notes.append(f"disposition: director scope persists: {director_scope}")
     merged = merge_preferences(prefs, incoming)
 
     # Delta removals the reducer cannot express (prototype #85, proven).

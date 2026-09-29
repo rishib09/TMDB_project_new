@@ -384,3 +384,65 @@ def test_decision_year_beats_preference_year_no_impossible_range():
         if t["node"] == "retrieve" and t["payload"].get("prefs_years_applied")
     ]
     assert applied, "the fold (and its drop) must be on the record"
+
+
+# --- #121a: the standing director scope reaches retrieval -------------------
+
+
+@pytest.mark.adversarial
+def test_reference_turn_after_director_scope_keeps_the_director():
+    """#121a adversarial: after a director-scoped retrieval, a reference
+    turn ('interesting The Odyssey is not part of this list') retrieving
+    with filters=None must STILL retrieve under the standing director."""
+    engine = _RecordingEngine()
+    prefs = UserSessionPreferences(
+        preferred_mood="feel-good",
+        audience="just me",
+        preferred_directors=["Christopher Nolan"],
+    )
+    _graph_invoke(engine, prefs)
+    routing_seen = engine.calls[0][1]
+    assert routing_seen.filters is not None
+    assert routing_seen.filters.director == "Christopher Nolan"
+
+
+@pytest.mark.adversarial
+def test_decision_person_scoped_turn_not_narrowed_by_standing_director():
+    """A turn already scoped to its OWN person (cast_member/person) must not
+    be AND-narrowed by the standing director — that intersection is a
+    different filmography question."""
+    engine = _RecordingEngine()
+    prefs = UserSessionPreferences(preferred_directors=["Christopher Nolan"])
+    decision = _routing(
+        filters=MetadataFilterCriteria(cast_member="Tom Hardy")
+    )
+    _strip_langfuse_env()
+    tracer = DualModeObservabilityManager(session_id="adv-test")
+    graph = build_maya_graph(
+        ExperimentConfig(), _StubRouter(decision), engine, _StubSynth(), tracer
+    )
+    graph.invoke(
+        {"messages": [HumanMessage(content="more with that guy")], "session_preferences": prefs}
+    )
+    seen = engine.calls[0][1].filters
+    assert seen.cast_member == "Tom Hardy"
+    assert seen.director is None, "standing director must not AND into a person-scoped turn"
+
+
+@pytest.mark.adversarial
+def test_director_fold_on_the_record():
+    engine = _RecordingEngine()
+    prefs = UserSessionPreferences(
+        preferred_mood="feel-good",
+        audience="just me",
+        preferred_directors=["Christopher Nolan"],
+    )
+    _strip_langfuse_env()
+    tracer = DualModeObservabilityManager(session_id="adv-test")
+    _graph_invoke(engine, prefs, tracer=tracer)
+    applied = [
+        t
+        for t in tracer._local_traces
+        if t["node"] == "retrieve" and t["payload"].get("prefs_director_applied")
+    ]
+    assert applied, "the standing-director fold must be traceable"

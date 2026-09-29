@@ -185,3 +185,64 @@ class TestSchemaHostility:
         u = deterministic_ask("'; DROP TABLE movies; --")
         assert u.ready_to_retrieve is False
         assert turn_decision(u, UserSessionPreferences(), CFG).decision == "ask"
+
+
+# --- #121a: standing director scope persists across reference turns ----------
+
+
+class TestDirectorPersistence:
+    """C6/director scope: an ATTRIBUTE_FILTER turn carrying a director must
+    become standing session scope (the C06 snapshot discipline, applied to
+    directors) — and a 'who directed X' record question must NOT."""
+
+    def test_attribute_filter_director_persists_into_prefs(self):
+        out = dispose(
+            _u(
+                intent=IntentType.ATTRIBUTE_FILTER,
+                filters=MetadataFilterCriteria(director="Christopher Nolan"),
+            ),
+            UserSessionPreferences(),
+            CFG,
+        )
+        assert out.preferences.preferred_directors == ["Christopher Nolan"]
+
+    def test_record_question_director_does_not_persist(self):
+        """'who created and directed The Wolf of Wall Street' is a
+        SEMANTIC_SEARCH record question — the director must scope THIS
+        turn's retrieval only, never become standing session scope."""
+        out = dispose(
+            _u(
+                intent=IntentType.SEMANTIC_SEARCH,
+                filters=MetadataFilterCriteria(director="Martin Scorsese"),
+            ),
+            UserSessionPreferences(),
+            CFG,
+        )
+        assert out.preferences.preferred_directors == []
+
+    def test_persisted_director_survives_an_unrelated_turn(self):
+        first = dispose(
+            _u(
+                intent=IntentType.ATTRIBUTE_FILTER,
+                filters=MetadataFilterCriteria(director="Christopher Nolan"),
+            ),
+            UserSessionPreferences(),
+            CFG,
+        )
+        second = dispose(
+            _u(standalone_query="something in the same spirit"),
+            first.preferences,
+            CFG,
+        )
+        assert second.preferences.preferred_directors == ["Christopher Nolan"]
+
+    def test_disposition_note_records_the_persistence(self):
+        out = dispose(
+            _u(
+                intent=IntentType.ATTRIBUTE_FILTER,
+                filters=MetadataFilterCriteria(director="Christopher Nolan"),
+            ),
+            UserSessionPreferences(),
+            CFG,
+        )
+        assert any("director" in n.lower() for n in out.notes)
