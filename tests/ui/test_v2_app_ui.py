@@ -123,6 +123,23 @@ def test_admin_input_routes_as_ordinary_turn(monkeypatch):
     assert len(session.turn_log) == 1  # the old admin branch swallowed the input
 
 
+def test_checkpoint_round_trip_no_blocked_types(monkeypatch, caplog):
+    """#119 (review P2): two turns on one thread exercise the real saver
+    save+load; the allowlisted serde must round-trip every domain type with
+    ZERO unregistered-type warnings. Lenient serde (langgraph-checkpoint
+    4.2.0) never logs "Blocked deserialization" — it logs "Deserializing
+    unregistered type …" while silently degrading the value to a dict, so
+    that is the only warning whose absence proves the allowlist load-bearing."""
+    import logging
+
+    at = _boot_app(monkeypatch)
+    with caplog.at_level(logging.WARNING):
+        at.chat_input[0].set_value("show me some movies").run()
+        at.chat_input[0].set_value("feel good").run()  # loads the prior checkpoint
+    assert not at.exception
+    assert "unregistered type" not in caplog.text
+
+
 def test_app_rerun_does_not_double_turn(monkeypatch):
     """chat_tab draws standing-grid replies on idle reruns only (#80)."""
     at = _boot_app(monkeypatch)
