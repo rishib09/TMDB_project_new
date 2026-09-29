@@ -38,6 +38,15 @@ def test_superlative_section_only_when_flagged():
     assert "<ranking_criteria>" in with_s
 
 
+def test_mechanics_rule_present():
+    """#117 / ADR 0011: the voice contract is quoted verbatim in every prompt."""
+    from src.maya import prompts
+    for retrieval in (True, False):
+        prompt = build_system_prompt(has_retrieval=retrieval)
+        assert "# MECHANICS" in prompt
+        assert prompts.MECHANICS_RULE in prompt
+
+
 def test_prompt_is_deterministic():
     assert (build_system_prompt(has_retrieval=True, is_superlative=True)
             == build_system_prompt(has_retrieval=True, is_superlative=True))

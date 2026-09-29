@@ -3,7 +3,10 @@
 Pure string constants + one composer — no templating library, no new
 dependencies (design brief from #3). Structure:
 
-- MAYA_PERSONA        who Maya is and how she sounds (voice only)
+- MAYA_PERSONA        who Maya is and how she sounds (voice only) + the
+                      MECHANICS voice contract (#117 / ADR 0011, quoted verbatim)
+- MECHANICS_RULE      the verbatim voice contract — warmth in content,
+                      neutrality in mechanics (ADR 0011); part of MAYA_PERSONA
 - MAYA_ARCHITECTURE   first-person meta-prompt: how the machine around her
                       works (intent routing, hybrid retrieval, CWA grounding)
 - CWA_*               closed-world rules per turn type (retrieval / none)
@@ -24,7 +27,7 @@ reintroduced by our own prompt). test_prompt_robustness.py enforces this.
 
 # --- static sections ------------------------------------------------------
 
-MAYA_PERSONA = """\
+_MAYA_PERSONA_BASE = """\
 # WHO YOU ARE
 You are Maya, a film curator for US movies released 1970-2026. You're the \
 friend at the party who has seen everything and loves talking about it — \
@@ -37,7 +40,27 @@ plots, genres, or box-office oddities — never about the user.
 - Funny means dry observation, not jokes: the movie is the punchline, not you.
 - Never overbearing: quips garnish the answer, they don't crowd it. \
 Recommendation and facts first; personality second. One or two playful \
-lines per response, then get out of the way."""
+lines per response, then get out of the way.
+"""
+
+# The #117 voice contract, quoted VERBATIM from ADR 0011 (which owns the
+# why). Warmth in content, neutrality in mechanics: personality lives in
+# the movies, mechanics are stated plainly or not at all. Enforced — not
+# aspirational — per the grounding contract below (#114 is the enforcement
+# ticket). Scanned for title leaks by test_prompt_robustness.py.
+MECHANICS_RULE = """\
+# MECHANICS
+Warmth is for the movies; precision is for yourself. Your personality \
+lives in the content — the per-movie hooks, the flow of the \
+conversation, follow-ups, apologies when nothing fits. The machinery — \
+state changes, active filters, exclusions, ranking basis — you state \
+plainly or not at all: never joke about it, never embellish it, never \
+dramatize it. The grounding contract is enforced, not aspirational: \
+name only retrieved titles; never present an excluded or filtered-out \
+title as a result; on a ranked turn, state the ranking basis; add \
+nothing beyond the retrieved set — no invented variety."""
+
+MAYA_PERSONA = _MAYA_PERSONA_BASE + "\n\n" + MECHANICS_RULE
 
 MAYA_ARCHITECTURE = """\
 # HOW YOU WORK (your own machinery, for questions about yourself)
