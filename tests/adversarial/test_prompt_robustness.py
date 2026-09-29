@@ -15,14 +15,31 @@ from src.maya.prompts import build_system_prompt
 pytestmark = pytest.mark.adversarial
 
 
+def test_mechanics_rule_exists_and_scanned_for_titles():
+    """#117: the voice-contract section exists and joins the title-leak scan.
+
+    Fails (not errors) while the constant is missing, so the adversarial
+    gate is visible on the pre-change code.
+    """
+    mechanics = getattr(prompts, "MECHANICS_RULE", None)
+    assert mechanics, "MECHANICS_RULE missing — the #117 voice contract is not in the prompt layer"
+    title_pattern = re.compile(r"\*\*(.+?)\s*\(\d{4}\)\*\*")
+    matches = title_pattern.findall(mechanics)
+    assert matches == [], f"MECHANICS_RULE names movies: {matches}"
+
+
 def test_no_concrete_movie_titles_in_static_sections():
     """Static prompt must never name films — titles only come from retrieval."""
     title_pattern = re.compile(r"\*\*(.+?)\s*\(\d{4}\)\*\*")  # Maya's own card format
-    static_text = "\n".join([
+    static_sections = [
         prompts.MAYA_PERSONA, prompts.MAYA_ARCHITECTURE,
         prompts.CWA_RETRIEVAL_RULE, prompts.CWA_NO_RETRIEVAL_RULE,
         prompts.SUPERLATIVE_RULE, prompts.CONVERSATION_ETHOS, prompts.FORMAT_RULE,
-    ])
+    ]
+    mechanics = getattr(prompts, "MECHANICS_RULE", None)
+    if mechanics:
+        static_sections.append(mechanics)  # scanned on its own above; kept here once it exists
+    static_text = "\n".join(static_sections)
     matches = title_pattern.findall(static_text)
     assert matches == [], f"static prompt names movies: {matches}"
 

@@ -38,6 +38,15 @@ def test_superlative_section_only_when_flagged():
     assert "<ranking_criteria>" in with_s
 
 
+def test_mechanics_rule_present():
+    """#117 / ADR 0011: the voice contract is quoted verbatim in every prompt."""
+    from src.maya import prompts
+    for retrieval in (True, False):
+        prompt = build_system_prompt(has_retrieval=retrieval)
+        assert "# MECHANICS" in prompt
+        assert prompts.MECHANICS_RULE in prompt
+
+
 def test_prompt_is_deterministic():
     assert (build_system_prompt(has_retrieval=True, is_superlative=True)
             == build_system_prompt(has_retrieval=True, is_superlative=True))
@@ -74,3 +83,29 @@ def test_probing_ethos_present_but_bounded():
     prompt = build_system_prompt(has_retrieval=True)
     assert "gather before recommending" in prompt.lower()
     assert "Never turn this into an interrogation" in prompt
+
+
+# --- ADR 0011 <-> prompt sync (review finding: the "verbatim" claim) ----------
+
+def test_mechanics_rule_matches_adr_0011_contract():
+    """ADR 0011 owns the voice contract; MECHANICS_RULE is its canonical
+    imperative rendering. The ADR file and the prompt constant must stay in
+    sync on the three contract pillars — drift in either fails here."""
+    from pathlib import Path
+
+    from src.maya import prompts
+
+    adr_text = (
+        Path(__file__).parents[2]
+        / "docs" / "adr"
+        / "0011-synthesis-voice-warmth-in-content-neutrality-in-mechanics.md"
+    ).read_text(encoding="utf-8")
+    for pillar in (
+        "never dramatize",          # mechanics: plain or absent
+        "no invented variety",      # grounding: nothing beyond the retrieved set
+        "ranking basis",            # disclosure on ranked turns
+    ):
+        assert pillar in adr_text, f"ADR 0011 lost the contract pillar: {pillar}"
+        assert pillar in prompts.MECHANICS_RULE, (
+            f"MECHANICS_RULE drifted from ADR 0011: {pillar}"
+        )
