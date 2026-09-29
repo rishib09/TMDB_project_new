@@ -462,7 +462,7 @@ class MayaSession:
 
 #115: one visible confirmation for preference/history wipes — both stack
 # signals the pipeline already computes per turn (v1 guard fresh_start, v2
-# reset_context disposition note), deduped. Residual: the visitor's exact
+# reset_context structured flag), deduped. Residual: the visitor's exact
 # phrase is v2-decided; on v1 the fresh-start vocabulary is a separate gap.
 _STATE_CLEAR_CHIP = "Preferences & history cleared — fresh start"
 
@@ -480,7 +480,10 @@ def state_transition_chips(new_traces: list[dict]) -> list[str]:
         payload = t.get("payload") or {}
         if node == "guard_input" and payload.get("fresh_start"):
             chips.append(_STATE_CLEAR_CHIP)
-        elif node == "route_v2" and "reset_context" in str(payload.get("note", "")):
+        elif node == "route_v2" and payload.get("reset_context"):
+            # #115 review P2: the structured boolean, never note-text
+            # sniffing — reworded notes must not kill the chip, and an
+            # unrelated note mentioning reset_context must not fake one.
             chips.append(_STATE_CLEAR_CHIP)
     return list(dict.fromkeys(chips))
 

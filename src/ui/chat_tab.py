@@ -77,6 +77,15 @@ def _widget_rating_to_canonical(value: int) -> int:
     return 1 if value == 1 else -1
 
 
+def _feedback_toast(rating: int) -> tuple[str, str]:
+    """Pure (unit-tested) toast choice for a saved Rating (#115 review P2):
+    (message, icon) honest to the rating — a thumbs-down never wears
+    thumbs-up chrome."""
+    if rating > 0:
+        return "Feedback saved — thank you", ":material/thumb_up:"
+    return "Feedback saved — thanks, that helps", ":material/thumb_down:"
+
+
 def render_feedback(session: MayaSession, turn_index: int) -> None:
     """Thumbs up/down per assistant turn; persisted + pushed on change (#9).
 
@@ -89,7 +98,8 @@ def render_feedback(session: MayaSession, turn_index: int) -> None:
     rating = _widget_rating_to_canonical(value)
     if rating != session.feedback_log.get(turn_index):
         session.record_feedback(turn_index, rating)
-        st.toast("Feedback saved — thank you", icon=":material/thumb_up:")  # #115
+        message, icon = _feedback_toast(rating)  # #115, rating-honest (review P2)
+        st.toast(message, icon=icon)
 
 
 def render_report_receipt(session: MayaSession, row: dict) -> None:

@@ -80,15 +80,20 @@ def test_turn_row_carries_state_notes():
 
 
 def test_state_transition_chips_v2_and_false_positives():
-    """#115 unit: v2's reset_context note yields the chip; ordinary notes
-    and guard traces do not; both signals dedupe to one chip."""
+    """#115 unit (review P2): v2's structured reset_context flag yields the
+    chip; notes never do — not even one merely mentioning reset_context —
+    and guard traces without the flag do not; both signals dedupe."""
     from src.ui.session import state_transition_chips
 
     chip = "Preferences & history cleared — fresh start"
     assert state_transition_chips(
+        [{"node": "route_v2", "payload": {"reset_context": True}}]
+    ) == [chip]
+    # A reworded/mere-mention note alone must NOT trigger the chip.
+    assert state_transition_chips(
         [{"node": "route_v2",
           "payload": {"note": "disposition: reset_context -> clean slate"}}]
-    ) == [chip]
+    ) == []
     assert state_transition_chips(
         [{"node": "route_v2", "payload": {"note": "scripted retrieve"}}]
     ) == []
@@ -97,9 +102,41 @@ def test_state_transition_chips_v2_and_false_positives():
     ) == []
     assert state_transition_chips([
         {"node": "guard_input", "payload": {"fresh_start": True}},
-        {"node": "route_v2",
-         "payload": {"note": "disposition: reset_context -> clean slate"}},
+        {"node": "route_v2", "payload": {"reset_context": True}},
     ]) == [chip]  # deduped
+
+
+def test_state_transition_chips_reads_structured_reset_flag():
+    """#115 review P2 adversarial: the v2 wipe chip must key on the
+    STRUCTURED reset_context flag the orchestrator emits, not on substring-
+    sniffing the human-readable disposition note — rewording that note must
+    not kill the chip, and a note merely mentioning reset_context must not
+    fake one. Fails on current code (note-text sniffing)."""
+    from src.ui.session import state_transition_chips
+
+    chip = "Preferences & history cleared — fresh start"
+    # Flag true, note deliberately free of the word reset_context.
+    assert state_transition_chips(
+        [{"node": "route_v2",
+          "payload": {"reset_context": True, "note": "disposition: wiped the slate"}}]
+    ) == [chip]
+    # Explicit false: no wipe, no chip.
+    assert state_transition_chips(
+        [{"node": "route_v2", "payload": {"reset_context": False}}]
+    ) == []
+
+
+def test_feedback_toast_is_rating_honest():
+    """#115 review P2: the toast must match the Rating it confirms — a
+    thumbs-down never wears thumbs-up chrome."""
+    from src.ui.chat_tab import _feedback_toast
+
+    assert _feedback_toast(1) == (
+        "Feedback saved — thank you", ":material/thumb_up:"
+    )
+    assert _feedback_toast(-1) == (
+        "Feedback saved — thanks, that helps", ":material/thumb_down:"
+    )
 
 
 def test_lab_labels_carry_no_ticket_numbers():
