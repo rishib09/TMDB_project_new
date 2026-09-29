@@ -438,3 +438,74 @@ def test_retrieve_node_records_dense_loss(tracer):
         p.get("dense_failed") is True and "401" in p.get("error", "")
         for p in retrieve_payloads
     )
+
+
+# --- #78/#116: fold_preference_years (pure helper) ---------------------------
+
+from src.graph.orchestrator import fold_preference_years
+
+
+class TestFoldPreferenceYears:
+    def _decision(self, filters=None):
+        return QueryRoutingDecision(
+            intent=IntentType.SEMANTIC_SEARCH,
+            confidence=0.9,
+            standalone_query="q",
+            requires_rag=True,
+            filters=filters,
+        )
+
+    def test_no_pref_years_returns_identity(self):
+        decision = self._decision()
+        assert fold_preference_years(decision, UserSessionPreferences()) is decision
+
+    def test_decision_exact_year_beats_prefs_wholesale(self):
+        from src.domain.routing import MetadataFilterCriteria
+
+        decision = self._decision(MetadataFilterCriteria(exact_year=1999))
+        prefs = UserSessionPreferences(year_min=2015)
+        folded = fold_preference_years(decision, prefs)
+        assert folded is decision, "a decision exact_year is a complete constraint"
+
+    def test_decision_with_any_year_stands_completely(self):
+        """Strict #78 scope: no per-field mixing — one utterance can be read
+        twice (model year_min + era-extractor year_max), and composing the
+        two readings over-constrains retrieval (the conversation-runner
+        fidelity contract caught this)."""
+        from src.domain.routing import MetadataFilterCriteria
+
+        decision = self._decision(MetadataFilterCriteria(year_max=2020))
+        prefs = UserSessionPreferences(year_min=2015)
+        assert fold_preference_years(decision, prefs) is decision
+
+    def test_decision_beats_prefs_no_impossible_range_possible(self):
+        from src.domain.routing import MetadataFilterCriteria
+
+        decision = self._decision(MetadataFilterCriteria(year_max=2000))
+        prefs = UserSessionPreferences(year_min=2015)
+        folded = fold_preference_years(decision, prefs)
+        assert folded is decision
+        assert folded.filters.year_max == 2000
+        assert folded.filters.year_min is None
+
+    def test_both_decision_bounds_contradiction_untouched(self):
+        from src.domain.routing import MetadataFilterCriteria
+
+        bad = MetadataFilterCriteria(year_min=2020, year_max=2000)
+        decision = self._decision(bad)
+        prefs = UserSessionPreferences(year_min=2015)
+        assert fold_preference_years(decision, prefs) is decision
+
+    def test_no_year_decision_takes_prefs_wholesale_including_exact(self):
+        decision = self._decision()
+        prefs = UserSessionPreferences(exact_year=1999)
+        folded = fold_preference_years(decision, prefs).filters
+        assert folded.exact_year == 1999
+        assert folded.year_min is None and folded.year_max is None
+
+    def test_decision_range_leaves_pref_exact_year_unmixed(self):
+        from src.domain.routing import MetadataFilterCriteria
+
+        decision = self._decision(MetadataFilterCriteria(year_min=2000))
+        prefs = UserSessionPreferences(exact_year=1999)
+        assert fold_preference_years(decision, prefs) is decision

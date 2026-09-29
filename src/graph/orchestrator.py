@@ -68,6 +68,43 @@ from src.observability.tracer import DualModeObservabilityManager
 from src.retrieval.hybrid_engine import HybridRetrievalEngine
 
 
+def fold_preference_years(
+    decision: QueryRoutingDecision, prefs: UserSessionPreferences
+) -> QueryRoutingDecision:
+    """Fill decision.filters year gaps from session preferences (#78, #116).
+
+    Preference years (era snapshots persisted via merge_preferences) fill a
+    decision that carries NO year constraint at all; a decision with any
+    year stands completely. Per-field composition was tried and rejected:
+    one utterance can be read twice (the model's ``year_min`` AND the era
+    extractor's ``year_max`` from the same phrase — the "older movies"
+    case), and mixing the two readings over-constrains retrieval against
+    the model's intent. The prefs years are merge_preferences output
+    (#56-F3), so the fill can never create an impossible range.
+    Returns the original object when nothing applies (identity, not a copy).
+    """
+    f = decision.filters
+    if f is not None and (
+        f.exact_year is not None or f.year_min is not None or f.year_max is not None
+    ):
+        return decision  # decision-sourced years stand; no per-field mixing
+    if (
+        prefs.exact_year is None
+        and prefs.year_min is None
+        and prefs.year_max is None
+    ):
+        return decision
+    # decision carries no years: the prefs years fill wholesale
+    filters = (f or MetadataFilterCriteria()).model_copy(
+        update={
+            "exact_year": prefs.exact_year,
+            "year_min": prefs.year_min,
+            "year_max": prefs.year_max,
+        }
+    )
+    return decision.model_copy(update={"filters": filters})
+
+
 def build_maya_graph(
     config: ExperimentConfig,
     router: MayaRouter | "MayaV2Router",
@@ -407,6 +444,28 @@ def build_maya_graph(
         query = decision.standalone_query
         if flavor:
             query = f"{query} ({flavor})"
+        # #78/#116: preference years (era snapshots) reach retrieval when the
+        # decision carries none — decision years win per-field (see helper).
+        # On the record when the fold changed the decision OR resolved pref
+        # years differently (a dropped/overridden pref bound is a state
+        # transition the trace must show).
+        prefs_years = (prefs.exact_year, prefs.year_min, prefs.year_max)
+        folded = fold_preference_years(decision, prefs)
+        final_f = folded.filters
+        effective_years = (
+            (final_f.exact_year, final_f.year_min, final_f.year_max)
+            if final_f
+            else (None, None, None)
+        )
+        if folded is not decision or (
+            any(y is not None for y in prefs_years) and effective_years != prefs_years
+        ):
+            tracer.record_local("retrieve", {"prefs_years_applied": {
+                "exact_year": effective_years[0],
+                "year_min": effective_years[1],
+                "year_max": effective_years[2],
+            }})
+        decision = folded
         # Confirmed funnel genres (#25) drive deterministic genre filters.
         if prefs.preferred_genres and not (
             decision.filters and decision.filters.genres
