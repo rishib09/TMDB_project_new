@@ -62,9 +62,28 @@ def render_intent_badge(log_row: dict) -> None:
     st.caption(intent_badge_text(log_row))
 
 
+def render_state_notes(row: dict) -> None:
+    """Visible confirmation of state transitions this turn made (#115).
+
+    No-op on ordinary turns — the chip exists only when the pipeline itself
+    recorded a wipe (v1 fresh_start / v2 reset_context).
+    """
+    for note in row.get("state_notes", []):
+        st.caption(note)
+
+
 def _widget_rating_to_canonical(value: int) -> int:
     """Pure boundary mapping: st.feedback 1/0 → canonical +1/-1 (unit-tested)."""
     return 1 if value == 1 else -1
+
+
+def _feedback_toast(rating: int) -> tuple[str, str]:
+    """Pure (unit-tested) toast choice for a saved Rating (#115 review P2):
+    (message, icon) honest to the rating — a thumbs-down never wears
+    thumbs-up chrome."""
+    if rating > 0:
+        return "Feedback saved — thank you", ":material/thumb_up:"
+    return "Feedback saved — thanks, that helps", ":material/thumb_down:"
 
 
 def render_feedback(session: MayaSession, turn_index: int) -> None:
@@ -79,6 +98,8 @@ def render_feedback(session: MayaSession, turn_index: int) -> None:
     rating = _widget_rating_to_canonical(value)
     if rating != session.feedback_log.get(turn_index):
         session.record_feedback(turn_index, rating)
+        message, icon = _feedback_toast(rating)  # #115, rating-honest (review P2)
+        st.toast(message, icon=icon)
 
 
 def render_report_receipt(session: MayaSession, row: dict) -> None:
@@ -229,6 +250,7 @@ def render_chat(session: MayaSession) -> None:
             row = resolve_turn_row(session, turn_index)  # #26-K identity join
             if row is not None:
                 render_intent_badge(row)
+                render_state_notes(row)
             render_feedback(session, turn_index)
             if row is not None:
                 render_report_receipt(session, row)
@@ -277,6 +299,7 @@ def render_chat(session: MayaSession) -> None:
         last = resolve_turn_row(session, idx) or session.turn_log[idx]
         st.markdown(last["response"])
         render_intent_badge(last)
+        render_state_notes(last)
         render_feedback(session, idx)
     render_poster_grid(session.last_movies)
     scroll_to_newest()  # #27-R: land on the fresh response, not the page top

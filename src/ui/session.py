@@ -362,6 +362,7 @@ class MayaSession:
             "probe": any(t["node"] == "probe" for t in new_traces),
             "narrowing": preference_chips(prefs) if prefs else [],
             "filters": MayaSession._filter_chips(decision),
+            "state_notes": state_transition_chips(new_traces),
         }
 
     @staticmethod
@@ -457,6 +458,34 @@ class MayaSession:
             if ref is not None and 0 <= (ref := ref) < len(self.turn_log):
                 return self.turn_log[ref]
         return None
+
+
+#115: one visible confirmation for preference/history wipes — both stack
+# signals the pipeline already computes per turn (v1 guard fresh_start, v2
+# reset_context structured flag), deduped. Residual: the visitor's exact
+# phrase is v2-decided; on v1 the fresh-start vocabulary is a separate gap.
+_STATE_CLEAR_CHIP = "Preferences & history cleared — fresh start"
+
+
+def state_transition_chips(new_traces: list[dict]) -> list[str]:
+    """Pure scan of this turn's traces for state transitions (#115).
+
+    Reads t["node"] / t["payload"] only; returns the (deduped) chips to
+    render under the turn's intent badge. Kept beside the other pure
+    turn-row builders so _build_turn_row stays atomic and widget-free.
+    """
+    chips: list[str] = []
+    for t in new_traces:
+        node = t.get("node")
+        payload = t.get("payload") or {}
+        if node == "guard_input" and payload.get("fresh_start"):
+            chips.append(_STATE_CLEAR_CHIP)
+        elif node == "route_v2" and payload.get("reset_context"):
+            # #115 review P2: the structured boolean, never note-text
+            # sniffing — reworded notes must not kill the chip, and an
+            # unrelated note mentioning reset_context must not fake one.
+            chips.append(_STATE_CLEAR_CHIP)
+    return list(dict.fromkeys(chips))
 
 
 def get_session() -> MayaSession:

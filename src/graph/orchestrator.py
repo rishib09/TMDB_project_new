@@ -648,6 +648,10 @@ def build_maya_graph(
             last_assistant=last_assistant_text(state),
             probe_count=probe_count,
         )
+        # #115 review P2: the wipe chip reads THIS structured boolean (the v1
+        # guard_input fresh_start record is its mirror), never the human-
+        # readable disposition note — reworded notes must not break the UI.
+        tracer.record_local("route_v2", {"reset_context": u.reset_context})
         for note in notes:  # telemetry rule: every invariant on the record
             tracer.record_local("route_v2", {"note": note})
         disposition = dispose(u, state.session_preferences, config)
