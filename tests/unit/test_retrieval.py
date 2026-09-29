@@ -433,3 +433,90 @@ class TestOrderByChannel:
         routing_plain = self._routing(MetadataFilterCriteria())
         engine.retrieve("anything", routing_plain, top_k=3)
         assert engine.last_unenforceable_ordering is None
+
+
+# --- #121b: title anchor matcher + DB lookup ---------------------------------
+
+class TestTitleAnchors:
+    def test_whole_phrase_match(self):
+        from src.retrieval.hybrid_engine import find_title_anchors
+
+        titles = ["The Wolf of Wall Street", "Casino"]
+        assert find_title_anchors(
+            "who created and directed The Wolf of Wall Street", titles
+        ) == ["The Wolf of Wall Street"]
+
+    def test_partial_tokens_never_match(self):
+        from src.retrieval.hybrid_engine import find_title_anchors
+
+        titles = ["The Wolf of Wall Street"]
+        # the question mentions tokens of the title, not the title
+        assert find_title_anchors("wolves of wall street", titles) == []
+        assert find_title_anchors("wolf", titles) == []
+        assert find_title_anchors("the wolf of", titles) == []
+
+    def test_direction_check_title_must_be_in_query(self):
+        """The DB title must occur in the query — not the query in the title:
+        a LONGER db title never anchors on a shorter mention."""
+        from src.retrieval.hybrid_engine import find_title_anchors
+
+        titles = ["The Wolf of Wall Street Journal"]
+        assert (
+            find_title_anchors(
+                "who created and directed The Wolf of Wall Street", titles
+            )
+            == []
+        )
+
+    def test_contained_match_is_a_fragment_not_an_anchor(self):
+        """'Wolf' inside a mention of the long title is that mention's
+        fragment — only the compound title anchors (#121b incident)."""
+        from src.retrieval.hybrid_engine import find_title_anchors
+
+        titles = ["Wolf", "The Wolf of Wall Street", "Casino"]
+        matched = find_title_anchors(
+            "watching THE WOLF OF WALL STREET tonight", titles
+        )
+        assert matched == ["The Wolf of Wall Street"]
+
+    def test_disjoint_mentions_anchor_independently(self):
+        from src.retrieval.hybrid_engine import find_title_anchors
+
+        titles = ["Wolf Creek", "Wall Street", "Casino"]
+        matched = find_title_anchors(
+            "Wolf Creek then Wall Street tonight", titles
+        )
+        assert matched == ["Wall Street", "Wolf Creek"]
+
+    def test_punctuation_boundaries_still_match(self):
+        from src.retrieval.hybrid_engine import find_title_anchors
+
+        titles = ["The Wolf of Wall Street"]
+        assert find_title_anchors(
+            "who directed The Wolf of Wall Street?", titles
+        ) == ["The Wolf of Wall Street"]
+
+    def test_single_word_titles_never_anchor(self):
+        """Natural language names single-word titles constantly ('trapped on
+        a ship'); BM25 already ranks lone title tokens well."""
+        from src.retrieval.hybrid_engine import find_title_anchors
+
+        assert find_title_anchors("trapped on a ship", ["Ship"]) == []
+        assert find_title_anchors("anything about it really", ["It"]) == []
+
+
+class TestFindMoviesByTitle:
+    def test_substring_lookup_ranked_and_limited(self, tmp_path):
+        from src.storage.database import MovieDatabase
+
+        db = MovieDatabase(str(tmp_path / "titles.db"))
+        db.upsert_movies_bulk([
+            {"id": 1, "title": "The Wolf of Wall Street", "release_year": 2013,
+             "vote_count": 20500},
+            {"id": 2, "title": "Wolf", "release_year": 1994, "vote_count": 3000},
+            {"id": 3, "title": "Wolf Creek", "release_year": 2005, "vote_count": 1500},
+        ])
+        hits = db.find_movies_by_title("wolf", limit=2)
+        assert [m.title for m in hits] == ["The Wolf of Wall Street", "Wolf Creek"]
+        assert len(db.find_movies_by_title("wolf", limit=10)) == 3
+        assert db.find_movies_by_title("no such title anywhere") == []
