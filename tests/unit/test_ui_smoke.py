@@ -66,6 +66,42 @@ def test_stack_label_v2_and_v1():
     assert "Understand model" not in v1
 
 
+def test_turn_row_carries_state_notes():
+    """#115 adversarial: a fresh-start turn must carry a visible state chip.
+    Fails on current code (the row has no state_notes key)."""
+    row = MayaSession._build_turn_row(
+        {"final_response": "Fresh start — what would you like?"},
+        query="please clear all previous filters",
+        trace_id="t", rag_version="v",
+        new_traces=[{"node": "guard_input", "payload": {"fresh_start": True}}],
+        prev_tokens=0,
+    )
+    assert row["state_notes"] == ["Preferences & history cleared — fresh start"]
+
+
+def test_state_transition_chips_v2_and_false_positives():
+    """#115 unit: v2's reset_context note yields the chip; ordinary notes
+    and guard traces do not; both signals dedupe to one chip."""
+    from src.ui.session import state_transition_chips
+
+    chip = "Preferences & history cleared — fresh start"
+    assert state_transition_chips(
+        [{"node": "route_v2",
+          "payload": {"note": "disposition: reset_context -> clean slate"}}]
+    ) == [chip]
+    assert state_transition_chips(
+        [{"node": "route_v2", "payload": {"note": "scripted retrieve"}}]
+    ) == []
+    assert state_transition_chips(
+        [{"node": "guard_input", "payload": {"fresh_start": False}}]
+    ) == []
+    assert state_transition_chips([
+        {"node": "guard_input", "payload": {"fresh_start": True}},
+        {"node": "route_v2",
+         "payload": {"note": "disposition: reset_context -> clean slate"}},
+    ]) == [chip]  # deduped
+
+
 def test_lab_labels_carry_no_ticket_numbers():
     """#91: rendered Lab strings must not leak internal ticket numbers."""
     labels = _st_label_strings(
