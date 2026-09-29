@@ -249,7 +249,7 @@ def test_graph_turn_meters_route_and_synthesis_into_limiter_and_ledger(tmp_path)
             )
 
     class _NoEngine:
-        def retrieve(self, query, routing, top_k=8, candidate_pool=50, shown_ids=None):
+        def retrieve(self, query, routing, top_k=8, candidate_pool=50, shown_ids=None, boost=None):
             return []
 
     route_cost = estimate_cost("glm-5.3-flash", 500, 200)
@@ -303,7 +303,7 @@ def test_meter_llm_unusable_usage_costs_nothing_but_is_recorded(tmp_path):
             return "reply", SynthesisUsage(model="fake", prompt_tokens=0, completion_tokens=0)
 
     class _NoEngine:
-        def retrieve(self, query, routing, top_k=8, candidate_pool=50, shown_ids=None):
+        def retrieve(self, query, routing, top_k=8, candidate_pool=50, shown_ids=None, boost=None):
             return []
 
     db = MovieDatabase(str(tmp_path / "budget2.db"))

@@ -36,6 +36,12 @@ from src.domain.memory import (
     UserSessionPreferences,
     merge_preferences,
 )
+from src.domain.moods import (
+    boost_spec_of,
+    expand_query_text,
+    merge_profile_floors,
+    resolve_mood_profile,
+)
 from src.domain.routing import IntentType, MetadataFilterCriteria, QueryRoutingDecision
 from src.domain.usage import LLMUsage
 from src.graph.state import MayaGraphState
@@ -510,6 +516,16 @@ def build_maya_graph(
             )
         )
         query = decision.standalone_query
+        # #137: MoodProfile translation — the mood's concrete retrieval
+        # meaning (phrasebook, floors, boosts) is curated data applied by
+        # code, in the ONE seam both routing stacks share. Unmapped moods
+        # fail open to flavor-only behavior, recorded.
+        session_mood = prefs.preferred_mood or decision.mood
+        profile = resolve_mood_profile(session_mood) if config.mood_profiles_enabled else None
+        if profile:
+            query = expand_query_text(query, profile)
+        elif config.mood_profiles_enabled and session_mood:
+            tracer.record_local("retrieve", {"mood_profile": "unmapped", "mood": session_mood})
         if flavor:
             query = f"{query} ({flavor})"
         # #78/#116: preference years (era snapshots) reach retrieval when the
@@ -551,12 +567,29 @@ def build_maya_graph(
                     else "all"
                 ),
             })})
+        # #137: profile floors tighten AFTER the genre merge so neither can
+        # lose the other's update (both are additive model_copy chains).
+        if profile:
+            decision = decision.model_copy(
+                update={"filters": merge_profile_floors(decision.filters, profile)}
+            )
+        boost = {**boost_spec_of(profile), "scale": config.mood_boost_scale} if profile else None
         results = engine.retrieve(
             query=query,
             routing=decision,
             top_k=config.retrieval_top_k,
             shown_ids=list(state.shown_movie_ids),  # #88: store-level exclusion
+            boost=boost,
         )
+        if profile:
+            applied = getattr(engine, "last_profile_applied", None) or {}
+            tracer.record_local("retrieve", {
+                "mood_profile": profile.id,
+                "phrases_applied": len(profile.query_phrases),
+                "floors": profile.floors.model_dump(exclude_none=True),
+                "boost_scale": config.mood_boost_scale,
+                "floors_relaxed": applied.get("floors_relaxed", False),
+            })
         # Intersection too narrow? (#25) retry ANY-match, relaxation on record.
         if not results and decision.filters and decision.filters.genre_match == "all":
             relaxed = decision.model_copy(update={"filters": decision.filters.model_copy(

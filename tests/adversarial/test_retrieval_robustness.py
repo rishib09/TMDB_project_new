@@ -264,7 +264,7 @@ class _RecordingEngine:
     def __init__(self):
         self.calls = []
 
-    def retrieve(self, query, routing, top_k=8, candidate_pool=50, shown_ids=None):
+    def retrieve(self, query, routing, top_k=8, candidate_pool=50, shown_ids=None, boost=None):
         self.calls.append((query, routing, top_k, shown_ids))
         movie = MovieRecord(id=1, title="Inception", release_year=2010, genres=["Sci-Fi"])
         return [RetrievalResult(movie=movie, score=1.0, source="sql")]

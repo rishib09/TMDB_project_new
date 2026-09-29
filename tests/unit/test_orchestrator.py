@@ -41,7 +41,7 @@ class FakeEngine:
         self.movies = movies or []
         self.calls = []  # (query, routing, top_k)
 
-    def retrieve(self, query, routing, top_k=8, candidate_pool=50, shown_ids=None):
+    def retrieve(self, query, routing, top_k=8, candidate_pool=50, shown_ids=None, boost=None):
         self.calls.append((query, routing, top_k))
         return [
             RetrievalResult(movie=m, score=1.0, source="sql") for m in self.movies
@@ -425,7 +425,7 @@ def test_empty_retrieval_text_inject_safe():
 class DenseLossEngine(FakeEngine):
     last_dense_failure = "RuntimeError: provider 401"
 
-    def retrieve(self, query, routing, top_k=8, candidate_pool=50, shown_ids=None):
+    def retrieve(self, query, routing, top_k=8, candidate_pool=50, shown_ids=None, boost=None):
         return [
             r.model_copy(update={"source": "rrf", "dense_failed": True})
             for r in super().retrieve(query, routing, top_k, candidate_pool)

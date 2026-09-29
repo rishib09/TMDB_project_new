@@ -41,7 +41,7 @@ class PoolEngine:
     def __init__(self, ids):
         self.ids = ids
 
-    def retrieve(self, query, routing, top_k=8, candidate_pool=50, shown_ids=None):
+    def retrieve(self, query, routing, top_k=8, candidate_pool=50, shown_ids=None, boost=None):
         return [
             type("R", (), {"movie": MovieRecord(id=i, title=f"M{i}", release_year=2001),
                            "score": 1.0, "source": "sql"})()

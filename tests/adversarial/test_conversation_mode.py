@@ -44,7 +44,7 @@ class RecordingEngine:
         self.movies = movies or []
         self.calls = []
 
-    def retrieve(self, query, routing, top_k=8, candidate_pool=50, shown_ids=None):
+    def retrieve(self, query, routing, top_k=8, candidate_pool=50, shown_ids=None, boost=None):
         self.calls.append({"query": query, "routing": routing, "top_k": top_k})
         return [
             type("R", (), {"movie": m, "score": 1.0, "source": "dense"})()
@@ -212,6 +212,7 @@ def test_retrieve_records_filters_applied_and_engine_invoked_signal():
         "cast_member": None, "person": None,
         "excluded_genres": [], "excluded_actors": [],
         "runtime_max": None, "rating_min": None,  # #82 C6: additive v2 fields
+        "vote_count_min": None,  # #137: additive mood-floor field
     }
     # the engine saw exactly those filters
     assert engine.calls[0]["routing"].filters.year_min == 2015
@@ -243,7 +244,7 @@ def test_relaxation_retry_records_final_match_mode():
         """Empty on intersection ("all"), results on union ("any")."""
         last_dense_failure = None
 
-        def retrieve(self, query, routing, top_k=8, candidate_pool=50, shown_ids=None):
+        def retrieve(self, query, routing, top_k=8, candidate_pool=50, shown_ids=None, boost=None):
             if routing.filters.genre_match == "all":
                 return []
             return [
@@ -279,7 +280,7 @@ class PooledEngine:
     def _results(self, movies):
         return [type("R", (), {"movie": m, "score": 1.0, "source": "dense"})() for m in movies]
 
-    def retrieve(self, query, routing, top_k=8, candidate_pool=50, shown_ids=None):
+    def retrieve(self, query, routing, top_k=8, candidate_pool=50, shown_ids=None, boost=None):
         self.shown_seen.append(list(shown_ids or []))
         return self._results(self.pools.pop(0)[:top_k])
 
@@ -287,7 +288,7 @@ class PooledEngine:
 class HonoringEngine(PooledEngine):
     """Same contract as the real engine: excludes shown ids before top-k."""
 
-    def retrieve(self, query, routing, top_k=8, candidate_pool=50, shown_ids=None):
+    def retrieve(self, query, routing, top_k=8, candidate_pool=50, shown_ids=None, boost=None):
         shown = set(shown_ids or [])
         self.shown_seen.append(list(shown_ids or []))
         fresh = [m for m in self.pools.pop(0) if m.id not in shown]

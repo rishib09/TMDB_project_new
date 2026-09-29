@@ -14,6 +14,7 @@ so the two cannot drift.
 from typing import Literal
 
 #: #82 C3: closed mood set with the hint text the v2 prompt shows the model.
+#: #137: 'hidden-gem' joins the closed set — profile-backed, inverted polarity.
 MOOD_HINTS: dict[str, str] = {
     "edge-of-your-seat": "tense, suspenseful, gripping",
     "thrilling": "exciting, action-packed, adrenaline",
@@ -23,6 +24,7 @@ MOOD_HINTS: dict[str, str] = {
     "romantic": "love stories, romance-forward",
     "tearjerker": "emotional, moving, sad",
     "epic": "grand scale, sweeping, monumental",
+    "hidden-gem": "underrated, overlooked, under-seen",
 }
 
 #: #82 C4: closed audience set.
@@ -38,7 +40,7 @@ GENRES: tuple[str, ...] = (
 
 Mood = Literal[
     "edge-of-your-seat", "thrilling", "funny", "feel-good",
-    "scary", "romantic", "tearjerker", "epic",
+    "scary", "romantic", "tearjerker", "epic", "hidden-gem",
 ]
 Audience = Literal["solo", "date night", "family", "kids", "adults"]
 Genre = Literal[

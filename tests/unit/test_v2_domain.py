@@ -54,7 +54,7 @@ def test_genre_vocabulary_matches_the_dataset():
 def test_mood_and_audience_sets_match_contract():
     from src.maya.v2 import AUDIENCES, MOOD_HINTS
 
-    assert len(MOOD_HINTS) == 8
+    assert len(MOOD_HINTS) == 9  # #137: hidden-gem joins the closed set
     assert set(AUDIENCES) == {"solo", "date night", "family", "kids", "adults"}
 
 

@@ -95,6 +95,16 @@ class ExperimentConfig(BaseModel):
         description="FlashRank model when enabled (best of 4 measured: 71% vs RRF 86%)"
     )
     retrieval_top_k: int = Field(default=5, ge=1, le=20, description="Number of final context movies")
+    #: #137: MoodProfile translation (canonical mood -> floors + boosts +
+    #: phrasebook). Off = pre-#137 flavor-only behavior for A/B runs.
+    mood_profiles_enabled: bool = Field(
+        default=True,
+        description="Apply MoodProfile floors/boosts/phrasebook at retrieval (#137)",
+    )
+    mood_boost_scale: float = Field(
+        default=1.0, ge=0.0, le=3.0,
+        description="Global multiplier on MoodProfile boost terms (#137; 0 = floors only)",
+    )
 
     # Memory & Guardrails
     multi_turn_mode: str = Field(default="fused_single_pass", description="fused_single_pass | dedicated_2step_llm")
