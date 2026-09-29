@@ -7,8 +7,12 @@ and pure-logic regressions cheaply.
 """
 
 
+import ast
+import re
+from pathlib import Path
+
 from src.ui.chat_tab import intent_badge_text
-from src.ui.session import ADMIN_COMMAND, MayaSession
+from src.ui.session import MayaSession
 
 
 def test_modules_import():
@@ -25,12 +29,35 @@ def test_modules_import():
         importlib.import_module(module)
 
 
-def test_admin_command_detection():
-    assert MayaSession.is_admin_command("/admin")
-    assert MayaSession.is_admin_command("  /ADMIN ")
-    assert not MayaSession.is_admin_command("/admin what movies")
-    assert not MayaSession.is_admin_command("hello")
-    assert ADMIN_COMMAND == "/admin"
+def _st_label_strings(path: str) -> list[str]:
+    """String constants passed to st.* calls (args + label/help/text/body)."""
+    tree = ast.parse(Path(path).read_text(encoding="utf-8"))
+    rendered: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if not (isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name)
+                and func.value.id == "st"):
+            continue
+        for arg in node.args:
+            if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+                rendered.append(arg.value)
+        for kw in node.keywords:
+            if kw.arg in {"label", "help", "text", "body"} and isinstance(
+                kw.value, ast.Constant
+            ) and isinstance(kw.value.value, str):
+                rendered.append(kw.value.value)
+    return rendered
+
+
+def test_lab_labels_carry_no_ticket_numbers():
+    """#91: rendered Lab strings must not leak internal ticket numbers."""
+    labels = _st_label_strings(
+        str(Path(__file__).resolve().parents[2] / "src" / "ui" / "sidebar_lab.py")
+    )
+    leaks = [s for s in labels if re.search(r"#\d+", s)]
+    assert leaks == []
 
 
 def test_intent_badge_text_formatting():
