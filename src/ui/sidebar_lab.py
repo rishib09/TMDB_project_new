@@ -323,9 +323,23 @@ def _lab_store(session):
     return store
 
 
+def stack_label(config: ExperimentConfig) -> str:
+    """One-line indicator of the active Routing Stack (#112).
+
+    Pure so the v2-visibility fact is unit-testable without a Streamlit
+    runtime (same pattern as format_week_caption). v1 renders unchanged;
+    v2 additionally names the Understand model actually driving turns.
+    """
+    label = f"Routing stack: {config.routing_stack}"
+    if config.routing_stack == "v2":
+        label += f" — Understand model: {config.v2_router_model}"
+    return label
+
+
 def render_lab(session) -> None:
     st.markdown("**Experimentation Lab**")
     st.caption("Live architecture knobs — applied from the next message.")
+    st.caption(stack_label(session.config))
 
     active = matching_preset(session.config)
     if active is not None:
