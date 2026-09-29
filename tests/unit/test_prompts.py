@@ -47,6 +47,20 @@ def test_mechanics_rule_present():
         assert prompts.MECHANICS_RULE in prompt
 
 
+def test_superlative_rule_demands_basis_disclosure():
+    """#114 / ADR 0011: ranked turns must state their basis."""
+    prompt = build_system_prompt(has_retrieval=True, is_superlative=True)
+    assert "<ranking_basis>" in prompt
+    assert "ranking basis" in prompt.lower()
+
+
+def test_cwa_retrieval_rule_forbids_excluded_titles_as_results():
+    """#114 / ADR 0011 grounding contract, quoted in the hard rules."""
+    from src.maya import prompts
+    assert "Excluded is not a result" in prompts.CWA_RETRIEVAL_RULE
+    assert "no invented variety" in prompts.CWA_RETRIEVAL_RULE
+
+
 def test_prompt_is_deterministic():
     assert (build_system_prompt(has_retrieval=True, is_superlative=True)
             == build_system_prompt(has_retrieval=True, is_superlative=True))

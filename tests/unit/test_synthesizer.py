@@ -237,3 +237,74 @@ def test_normalize_runs_before_cwa_verification(synthesizer):
     assert "**Inception (2010)**" in text
     # unbolded Inception was normalized to bold -> verified against context, no violation
     assert synthesizer.cwa_violations(text, [_inception(), _titanic()]) == []
+
+
+# --- #114 / ADR 0011: ranking-basis disclosure -------------------------------
+
+def _superlative_decision(**overrides):
+    from src.domain.routing import SuperlativeCriteria, SuperlativeMetric
+    defaults = dict(
+        intent=IntentType.SUPERLATIVE_RANKING,
+        confidence=0.9,
+        standalone_query="most popular movie",
+        requires_rag=True,
+        is_superlative=True,
+        superlative=SuperlativeCriteria(metric=SuperlativeMetric.POPULARITY),
+    )
+    defaults.update(overrides)
+    return QueryRoutingDecision(**defaults)
+
+
+def test_ranking_basis_for_names_v1_metric_and_direction():
+    from src.maya.agent import ranking_basis_for
+    assert ranking_basis_for(_superlative_decision()) == "popularity, highest first"
+
+
+def test_ranking_basis_for_v2_projection_is_honest():
+    """v2 Understandings project intent without criteria — disclose the truth."""
+    from src.maya.agent import ranking_basis_for
+    basis = ranking_basis_for(
+        _superlative_decision(is_superlative=False, superlative=None)
+    )
+    assert basis == "relevance-ranked retrieval"
+
+
+def test_ranking_basis_for_plain_turn_is_none():
+    from src.maya.agent import ranking_basis_for
+    assert ranking_basis_for(_decision()) is None
+
+
+def test_user_message_includes_ranking_basis_block(synthesizer):
+    msg = synthesizer._build_user_message(
+        "q", _superlative_decision(), [_inception()],
+        ranking_basis="popularity, highest first",
+    )
+    assert "<ranking_basis>" in msg
+    assert "popularity, highest first" in msg
+    assert "Disclose this ranking basis" in msg
+
+
+def test_user_message_no_basis_block_on_plain_turn(synthesizer):
+    msg = synthesizer._build_user_message("q", _decision(), [_inception()])
+    assert "<ranking_basis>" not in msg
+
+
+def test_synthesize_threads_basis_into_user_message(synthesizer):
+    """End-to-end offline: synthesize derives the basis from the decision."""
+    seen: list = []
+
+    def fake_invoke(messages):
+        seen.append(list(messages))
+        return AIMessage(
+            content="Ranked by popularity, highest first: **Inception (2010)** soars.",
+            usage_metadata={"input_tokens": 10, "output_tokens": 5, "total_tokens": 15},
+        )
+
+    synthesizer._llm.invoke = fake_invoke
+    text, _ = synthesizer.synthesize(
+        "most popular movie", _superlative_decision(), [_inception()], history=[]
+    )
+    human_msg = seen[0][-1]
+    human_msg = human_msg[1] if isinstance(human_msg, tuple) else human_msg.content
+    assert "<ranking_basis>" in human_msg
+    assert "Ranked by popularity" in text
