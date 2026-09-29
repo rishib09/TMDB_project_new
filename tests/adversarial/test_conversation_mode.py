@@ -352,7 +352,8 @@ from src.maya.v2 import MayaV2Router, PreferenceDelta, Understanding
 
 class ScriptedV2(MayaV2Router):
     """Real constructor (no network — chain is bound but never invoked);
-    understand() pops scripted (Understanding, notes) results."""
+    understand() pops scripted (Understanding, notes, usage) results
+    (3-tuple since #123)."""
 
     def __init__(self, results):
         super().__init__(ExperimentConfig(routing_stack="v2"), api_key="test-key")
@@ -364,7 +365,10 @@ class ScriptedV2(MayaV2Router):
             "query": query, "prefs": prefs, "shown_titles": list(shown_titles),
             "last_assistant": last_assistant, "probe_count": probe_count,
         })
-        return self.results.pop(0)
+        result = self.results.pop(0)
+        if len(result) == 2:  # scripted as (u, notes) — metered usage is None
+            return result[0], result[1], None
+        return result
 
 
 def _v2u(**kw) -> Understanding:

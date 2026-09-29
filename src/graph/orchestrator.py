@@ -37,6 +37,7 @@ from src.domain.memory import (
     merge_preferences,
 )
 from src.domain.routing import IntentType, MetadataFilterCriteria, QueryRoutingDecision
+from src.domain.usage import LLMUsage
 from src.graph.state import MayaGraphState
 from src.maya.agent import MayaSynthesizer
 from src.maya.guardrails import (
@@ -91,6 +92,39 @@ def build_maya_graph(
     # collapses into its route node; v1 wiring is byte-for-byte unchanged.
     stack_v2 = isinstance(router, MayaV2Router)
     router_v2 = router if stack_v2 else None
+
+    def _meter_llm(usage: LLMUsage | None, node: str) -> float:
+        """Record one LLM call everywhere it matters (#123).
+
+        Session limiter (the gate), weekly ledger (the ceiling), and one
+        ``cost`` trace row per call — then returns the estimated cost so the
+        calling node writes ``session_cost_usd`` (and tokens to
+        ``session_tokens``, feeding the #93 metrics). ``usage=None`` (stubbed
+        clients, failed calls) meters nothing and costs nothing.
+        """
+        if usage is None:
+            return 0.0
+        budget_status = limiter.record(
+            usage.model, usage.prompt_tokens, usage.completion_tokens
+        )
+        weekly_status = None
+        if budget_tracker is not None:
+            weekly_status = budget_tracker.record(
+                usage.model, usage.prompt_tokens, usage.completion_tokens
+            )
+        cost = estimate_cost(usage.model, usage.prompt_tokens, usage.completion_tokens)
+        tracer.record_local(
+            "cost",
+            {
+                "node": node,
+                "model": usage.model,
+                "tokens": usage.prompt_tokens + usage.completion_tokens,
+                "cost_usd": cost,
+                "budget": budget_status.value,
+                "weekly_budget": weekly_status.value if weekly_status else "off",
+            },
+        )
+        return cost
 
     def guard_input_node(state: MayaGraphState) -> dict:
         """Injection filter + session budget gate (issue #8, zero LLM)."""
@@ -172,6 +206,11 @@ def build_maya_graph(
             _to_conversation_state(state),
             feedback=feedback,
         )
+        # #123: the router call is metered — last_usage is an LLMUsage on the
+        # real router; MagicMock/fake routers fail the guard and meter zero.
+        raw_usage = getattr(router, "last_usage", None)
+        route_usage = raw_usage if isinstance(raw_usage, LLMUsage) else None
+        route_cost = _meter_llm(route_usage, "route")
         # Guided narrowing (#22/#24): mood/audience extracted by the router
         # itself (open vocabulary), with the deterministic vocab as fallback.
         mood = (decision.mood or "").strip()
@@ -245,6 +284,12 @@ def build_maya_graph(
             "routing_decision": decision,
             "route_attempts": attempts,
             "session_preferences": signals,
+            "session_tokens": (
+                route_usage.prompt_tokens + route_usage.completion_tokens
+                if route_usage
+                else 0
+            ),
+            "session_cost_usd": route_cost,
         }
 
     def probe_node(state: MayaGraphState) -> dict:
@@ -534,17 +579,15 @@ def build_maya_graph(
             response_text = _no_retrieval_steer(state.current_query)
             violations = []  # the shipped response is title-free
         tokens_used = usage.prompt_tokens + usage.completion_tokens
-        budget_status = limiter.record(usage.model, usage.prompt_tokens, usage.completion_tokens)
-        # Weekly $ accounting (#8): one row per LLM call, cost-estimated.
-        weekly_status = None
-        if budget_tracker is not None:
-            weekly_status = budget_tracker.record(
-                usage.model, usage.prompt_tokens, usage.completion_tokens
-            )
+        cost_usd = _meter_llm(usage, "synthesize")
         tracer.record_local(
             "synthesize",
-            {"movies": len(movies), "tokens": tokens_used, "budget": budget_status.value,
-             "weekly_budget": weekly_status.value if weekly_status else "off",
+            {"movies": len(movies), "tokens": tokens_used,
+             "budget": limiter.check_current().verdict.value,
+             "weekly_budget": (
+                 budget_tracker.current_verdict().value
+                 if budget_tracker is not None else "off"
+             ),
              "cwa_violations": violations},
         )
         # #26-E: the first recommendation after funnel narrowing announces the
@@ -559,9 +602,7 @@ def build_maya_graph(
             "synthesis_usage": usage,
             "messages": [AIMessage(content=response_text)],
             "session_tokens": tokens_used,
-            "session_cost_usd": estimate_cost(
-                usage.model, usage.prompt_tokens, usage.completion_tokens
-            ),
+            "session_cost_usd": cost_usd,
             "rolling_summary": _update_summary(state, decision),
         }
 
@@ -641,13 +682,14 @@ def build_maya_graph(
         the union reducer.
         """
         probe_count = state.probe_count
-        u, notes = router_v2.understand(
+        u, notes, usage = router_v2.understand(
             state.current_query,
             state.session_preferences,
             shown_titles=state.shown_movie_titles,
             last_assistant=last_assistant_text(state),
             probe_count=probe_count,
         )
+        understand_cost = _meter_llm(usage, "route_v2")
         for note in notes:  # telemetry rule: every invariant on the record
             tracer.record_local("route_v2", {"note": note})
         disposition = dispose(u, state.session_preferences, config)
@@ -667,6 +709,10 @@ def build_maya_graph(
             "session_preferences": PreferencesUpdate(
                 prefs=disposition.preferences, replace=True
             ),
+            "session_tokens": (
+                usage.prompt_tokens + usage.completion_tokens if usage else 0
+            ),
+            "session_cost_usd": understand_cost,
         }
         if td.decision == "ask":  # C9: the model-authored question IS the reply
             question = disposition.understanding.clarifying_question or ""

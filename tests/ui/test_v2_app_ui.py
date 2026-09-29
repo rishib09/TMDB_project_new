@@ -48,6 +48,7 @@ class _FakeRouter(MayaV2Router):
                     clarifying_question="What mood are you after?",
                 ),
                 ["scripted ask"],
+                None,  # #123 usage — stubbed client meters nothing
             )
         return (
             Understanding(
@@ -58,6 +59,7 @@ class _FakeRouter(MayaV2Router):
                 preference_delta=PreferenceDelta(set_mood="feel-good"),
             ),
             ["scripted retrieve"],
+            None,
         )
 
 

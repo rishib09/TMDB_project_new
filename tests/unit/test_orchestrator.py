@@ -106,9 +106,10 @@ def test_happy_path_semantic_search(tracer):
     assert isinstance(out["messages"][-1], AIMessage)
     # budget recorded via the reducer: 10 prompt + 5 completion
     assert out["session_tokens"] == 15
-    # exact node path taken
+    # exact node path taken (#123: a `cost` row precedes each METERED LLM
+    # node's own record — FakeRouter reports no usage, FakeSynthesizer does)
     nodes = [t["node"] for t in tracer.traces()]
-    assert nodes == ["guard_input", "route", "retrieve", "synthesize"]
+    assert nodes == ["guard_input", "route", "retrieve", "cost", "synthesize"]
     # engine received the router's standalone query and config top_k
     assert engine.calls[0][0] == "a mind-bending sci-fi thriller about dream heists"
     assert engine.calls[0][2] == config.retrieval_top_k
@@ -301,8 +302,12 @@ def test_reroute_cycle_does_not_accumulate_retrieved_movies(tracer):
 
     assert len(engine.calls) == 1  # single retrieval despite 3 routing attempts
     assert [m.id for m in out["retrieved_movies"]] == [1, 2, 3, 4, 5]  # no duplication
+    # #123: FakeRouter reports no usage (no cost rows); the synthesis call
+    # is metered — its `cost` row precedes the synthesize record.
     nodes = [t["node"] for t in tracer.traces()]
-    assert nodes == ["guard_input", "route", "route", "route", "retrieve", "synthesize"]
+    assert nodes == [
+        "guard_input", "route", "route", "route", "retrieve", "cost", "synthesize",
+    ]
 
 
 # --- zero-retrieval determinism (issue #21) ------------------------------

@@ -24,6 +24,7 @@ from src.domain.routing import (
     MetadataFilterCriteria,
     QueryRoutingDecision,
 )
+from src.domain.usage import LLMUsage
 from src.maya.probing import canonical_mood, extract_probe_answers, strip_markup
 from src.maya.providers import (
     DEFAULT_ZAI_BASE_URL,
@@ -135,9 +136,15 @@ class _FenceTolerantChain:
 
     def __init__(self, llm) -> None:
         self._llm = llm
+        #: #123: usage of the LAST invoke. Reset at each invoke start so a
+        #: failed call never reports stale usage. Stubs that replace the
+        #: chain leave this unset; the meter isinstance-guards on it.
+        self.last_usage: LLMUsage | None = None
 
     def invoke(self, messages) -> QueryRoutingDecision:
+        self.last_usage = None
         resp = self._llm.invoke(messages)
+        self.last_usage = LLMUsage.from_response(resp)
         text = resp.content
         if isinstance(text, list):  # content blocks -> joined text
             text = "".join(getattr(b, "text", "") for b in text)
@@ -217,6 +224,19 @@ class MayaRouter:
         # the text in str(exc)), which no fallback could recover. Same seam,
         # tolerant parse: transport -> fence strip -> pydantic validate.
         self._chain = _FenceTolerantChain(self._llm)
+
+    @property
+    def last_usage(self) -> LLMUsage | None:
+        """#123: token usage of the most recent :meth:`route` call.
+
+        ``None`` before the first call and after a failed call. The model is
+        re-stamped with the configured router model — the chain sees only
+        the transport, and pricing keys on the config id.
+        """
+        usage = self._chain.last_usage
+        if usage is None:
+            return None
+        return usage.model_copy(update={"model": self.config.router_model})
 
     def route(
         self,

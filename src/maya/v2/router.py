@@ -17,6 +17,7 @@ from pydantic import ValidationError
 
 from src.domain.config import ExperimentConfig
 from src.domain.memory import UserSessionPreferences
+from src.domain.usage import LLMUsage
 from src.maya.providers import DEFAULT_ZAI_BASE_URL, resolve_chat_endpoint
 from src.maya.v2.disposer import (
     MAX_SCHEMA_ATTEMPTS,
@@ -106,12 +107,14 @@ class MayaV2Router:
         shown_titles: Sequence[str],
         last_assistant: str | None,
         probe_count: int,
-    ) -> tuple[Understanding, list[str]]:
+    ) -> tuple[Understanding, list[str], LLMUsage | None]:
         """One Understand call: C14 payload -> structured response -> guards.
 
-        Returns ``(understanding, notes)``; the notes carry every
-        disposition for the trace (telemetry rule). Schema failures get
-        ONE retry with the validation error, then the deterministic ask
+        Returns ``(understanding, notes, usage)``; the notes carry every
+        disposition for the trace (telemetry rule) and ``usage`` is the
+        token total of ALL attempts this call made (schema retries and the
+        #113 fallback included), for budget metering (#123). Schema failures
+        get ONE retry with the validation error, then the deterministic ask
         (C12, ``MAX_SCHEMA_ATTEMPTS``). API errors degrade the same way,
         recorded — never raised.
         """
@@ -124,7 +127,17 @@ class MayaV2Router:
         messages.append(("human", query))
 
         notes: list[str] = []
-        parsed, api_error = self._try_chain(messages)
+        total_prompt = 0
+        total_completion = 0
+
+        def _accrue(usage: LLMUsage | None) -> None:
+            nonlocal total_prompt, total_completion
+            if usage is not None:
+                total_prompt += usage.prompt_tokens
+                total_completion += usage.completion_tokens
+
+        parsed, api_error, usage = self._try_chain(messages)
+        _accrue(usage)
         attempts = 1
         while (
             parsed is None
@@ -133,14 +146,16 @@ class MayaV2Router:
         ):
             attempts += 1
             notes.append(f"schema failure on attempt {attempts - 1}; retrying with the error")
-            parsed, api_error = self._try_chain(messages)
+            parsed, api_error, usage = self._try_chain(messages)
+            _accrue(usage)
         if parsed is None:
             # #113: one attempt on the fallback model before the ask — the
             # sweep winner (glm) must not degrade a whole turn when a spare
             # model is configured. Fired-or-not lands in the trace (notes).
             fb_llm = self._resolve_fallback()
             if fb_llm is not None:
-                fb_parsed, fb_error = self._try_chain(messages, llm=fb_llm)
+                fb_parsed, fb_error, usage = self._try_chain(messages, llm=fb_llm)
+                _accrue(usage)  # D3: priced at the primary rate — see _summed_usage
                 if fb_parsed is not None:
                     notes.append(
                         f"understand fallback fired: {self.config.v2_router_fallback_model} "
@@ -159,34 +174,56 @@ class MayaV2Router:
                 notes.append(
                     f"schema failures on all {attempts} attempts -> deterministic ask (C12)"
                 )
-            return deterministic_ask(query), notes
+            return deterministic_ask(query), notes, self._summed_usage(total_prompt, total_completion)
 
         u, guard_notes = enforce_question(parsed)
         notes.extend(guard_notes)
         u, budget_notes = enforce_probe_budget(u, probe_count)
         notes.extend(budget_notes)
-        return u, notes
+        return u, notes, self._summed_usage(total_prompt, total_completion)
+
+    def _summed_usage(self, total_prompt: int, total_completion: int) -> LLMUsage | None:
+        """One LLMUsage for the whole understand() attempt chain (#123).
+
+        Token counts are exact (summed across schema retries and the #113
+        fallback attempt — token-linear). The model is attributed to the
+        PRIMARY config model (user decision D3): fallback-attempt tokens are
+        priced at the primary rate, a bounded error (both models sit in the
+        same price row; < $0.0005/turn), disclosed here rather than hidden.
+        Returns ``None`` when no attempt consumed tokens (stubbed clients).
+        """
+        if total_prompt + total_completion == 0:
+            return None
+        return LLMUsage(
+            model=self.config.v2_router_model,
+            prompt_tokens=total_prompt,
+            completion_tokens=total_completion,
+        )
 
     # --- private -------------------------------------------------------------
 
-    def _try_chain(self, messages, llm=None) -> tuple[Understanding | None, str | None]:
-        """One client call; ``(None, error)`` on API failure, ``(None, None)``
-        on unusable JSON. The fence is stripped and pydantic validates HERE —
+    def _try_chain(
+        self, messages, llm=None
+    ) -> tuple[Understanding | None, str | None, LLMUsage | None]:
+        """One client call; ``(None, error, None)`` on API failure,
+        ``(None, None, usage)`` on unusable JSON (tokens were still spent —
+        metered, #123). The fence is stripped and pydantic validates HERE —
         within the SAME attempt, before any C12 retry is spent. ``llm``
         overrides the client (#113 fallback); defaults to the primary."""
         try:
             resp = (llm or self._llm).invoke(messages)
         except Exception as exc:  # noqa: BLE001 — D17 client exhausted; degrade (C12)
-            return None, f"{type(exc).__name__}: {exc}"
+            return None, f"{type(exc).__name__}: {exc}", None
+        usage = LLMUsage.from_response(resp)
         text = getattr(resp, "content", None)
         if isinstance(text, list):  # content blocks -> joined text
             text = "".join(getattr(b, "text", "") for b in text)
         if not isinstance(text, str) or not text.strip():
-            return None, None
+            return None, None, usage
         stripped = re.sub(
             r"^```(?:json)?\s*|\s*```$", "", text.strip(), flags=re.DOTALL
         )
         try:
-            return Understanding.model_validate_json(stripped), None
+            return Understanding.model_validate_json(stripped), None, usage
         except ValidationError:
-            return None, None
+            return None, None, usage

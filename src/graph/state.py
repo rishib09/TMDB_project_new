@@ -25,19 +25,15 @@ from src.domain.memory import (
     UserSessionPreferences,
     merge_preferences,
     merge_shown_ids,
-    merge_unique_ids,
 )
 from src.domain.movie import MovieRecord
 from src.domain.routing import QueryRoutingDecision
+from src.domain.usage import LLMUsage
 from src.maya.guardrails import GuardrailResult
 
-
-class SynthesisUsage(BaseModel):
-    """Token usage of one synthesis LLM call, for budget accounting (#8)."""
-
-    model: str
-    prompt_tokens: int = 0
-    completion_tokens: int = 0
+#: #123: one usage taxonomy for every stack call — synthesis usage IS an
+#: LLMUsage. Alias kept so existing imports (agent.py, tests) hold.
+SynthesisUsage = LLMUsage
 
 
 class MayaGraphState(BaseModel):

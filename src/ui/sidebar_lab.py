@@ -284,12 +284,24 @@ def format_week_caption(
     )
 
 
+def format_session_spend(used_cost: float, cap: float) -> str:
+    """Sub-cent aware session meter text (#123, user decision D1).
+
+    A glm turn costs ~$0.0003 — at two decimals the meter read ``$0.00`` for
+    the first ~30 turns, which the visitor read as a broken meter. Sub-cent
+    values show 4 decimals; dollar-scale values keep 2.
+    """
+    if used_cost < 0.01:
+        return f"Session spend: ${used_cost:.4f} / ${cap:.2f} — resets on new session"
+    return f"Session spend: ${used_cost:.2f} / ${cap:.2f} — resets on new session"
+
+
 def render_budget_meter(session) -> None:
     """Session $ spend vs the $0.10 cap + weekly $ spend vs the $10 cap (#39)."""
     used_cost = session.conversation.session_cost_usd
     cap = SessionCostLimiter.SESSION_CAP_USD
     ratio = min(used_cost / cap, 1.0)
-    st.progress(ratio, text=f"Session spend: ${used_cost:.2f} / ${cap:.2f} — resets on new session")
+    st.progress(ratio, text=format_session_spend(used_cost, cap))
     if session.limiter.check_current().verdict.value == "suspicious":
         st.warning("Near the session cost cap — wrap up this session soon.")
 
