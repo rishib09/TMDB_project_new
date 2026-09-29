@@ -236,3 +236,151 @@ def test_c6_runtime_and_rating_predicates_reach_the_sql(db):
         MetadataFilterCriteria(runtime_max=95, rating_min=7.5), limit=5
     )
     assert all(m.runtime <= 95 and m.vote_average >= 7.5 for m in both)
+
+
+# --- #78 / #116: preference years must reach retrieval on BOTH stacks -------
+#
+# Graph-seam tests: a routed decision without year filters must still
+# retrieve under the session's standing year preferences (era snapshots).
+# Drives build_maya_graph with a recording fake engine — no LLM, no ChromaDB.
+
+import os
+
+from langchain_core.messages import HumanMessage
+
+from src.domain.config import ExperimentConfig
+from src.domain.memory import UserSessionPreferences
+from src.domain.movie import MovieRecord
+from src.graph.orchestrator import build_maya_graph
+from src.graph.state import SynthesisUsage
+from src.observability.tracer import DualModeObservabilityManager
+from src.maya.v2 import Understanding, dispose
+from src.retrieval.hybrid_engine import RetrievalResult
+
+
+class _RecordingEngine:
+    """Records every retrieve call; returns one fixed movie."""
+
+    def __init__(self):
+        self.calls = []
+
+    def retrieve(self, query, routing, top_k=8, candidate_pool=50, shown_ids=None):
+        self.calls.append((query, routing, top_k, shown_ids))
+        movie = MovieRecord(id=1, title="Inception", release_year=2010, genres=["Sci-Fi"])
+        return [RetrievalResult(movie=movie, score=1.0, source="sql")]
+
+
+class _StubRouter:
+    def __init__(self, decision):
+        self.decision = decision
+
+    def route(self, query, state, feedback=None):
+        return self.decision
+
+
+class _StubSynth:
+    def synthesize(self, query, decision, movies, history):
+        return "done.", SynthesisUsage(model="m", prompt_tokens=1, completion_tokens=1)
+
+
+def _routing(**kwargs):
+    defaults = dict(
+        intent=IntentType.SEMANTIC_SEARCH,
+        confidence=0.9,
+        standalone_query="give me recent ones",
+        requires_rag=True,
+    )
+    defaults.update(kwargs)
+    return QueryRoutingDecision(**defaults)
+
+
+def _strip_langfuse_env():
+    for var in ("LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY"):
+        os.environ.pop(var, None)
+
+
+def _graph_invoke(engine, prefs, decision=None, tracer=None):
+    _strip_langfuse_env()
+    tracer = tracer or DualModeObservabilityManager(session_id="adv-test")
+    graph = build_maya_graph(
+        ExperimentConfig(),
+        _StubRouter(decision or _routing()),
+        engine,
+        _StubSynth(),
+        tracer,
+    )
+    out = graph.invoke(
+        {
+            "messages": [HumanMessage(content="give me recent ones")],
+            "session_preferences": prefs,
+        }
+    )
+    return out, tracer
+
+
+@pytest.mark.adversarial
+def test_preference_year_min_reaches_retrieval_when_decision_has_no_filters():
+    """#78 adversarial: 'give me recent movie' after an era snapshot must
+    retrieve WITH the standing year floor, not against stale top-k."""
+    engine = _RecordingEngine()
+    # funnel had settled mood+audience (the live #78 conversation shape)
+    prefs = UserSessionPreferences(preferred_mood="feel-good", audience="just me", year_min=2015)
+    _graph_invoke(engine, prefs)
+    assert engine.calls, "engine must run"
+    routing_seen = engine.calls[0][1]
+    assert routing_seen.filters is not None, "prefs years must fold into filters"
+    assert routing_seen.filters.year_min == 2015
+
+
+@pytest.mark.adversarial
+def test_v2_era_snapshot_survives_to_a_bare_retrieval_turn():
+    """#116 adversarial, full v2 chain offline: the era disposition writes the
+    year floor into prefs (disposer), and a later bare turn ("recent ones")
+    retrieving with filters=None must still carry that floor."""
+    disposed = dispose(
+        Understanding(
+            intent=IntentType.SEMANTIC_SEARCH, standalone_query="x", era="recent"
+        ),
+        UserSessionPreferences(),
+        ExperimentConfig(),
+    )
+    assert disposed.preferences.year_min == ExperimentConfig().era_recent_year_min
+
+    engine = _RecordingEngine()
+    disposed_prefs = disposed.preferences.model_copy(
+        update={"preferred_mood": "feel-good", "audience": "just me"}
+    )
+    _graph_invoke(engine, disposed_prefs)
+    routing_seen = engine.calls[0][1]
+    assert routing_seen.filters is not None
+    assert routing_seen.filters.year_min == ExperimentConfig().era_recent_year_min
+
+
+@pytest.mark.adversarial
+def test_decision_year_beats_preference_year_no_impossible_range():
+    """Conflict guard: decision year_max=2000 vs prefs year_min=2015 must
+    resolve in favor of the DECISION (the newer statement) — the engine must
+    never see an impossible range, and the fold must be on the record."""
+    engine = _RecordingEngine()
+    prefs = UserSessionPreferences(preferred_mood="feel-good", audience="just me", year_min=2015)
+    decision = _routing(filters=MetadataFilterCriteria(year_max=2000))
+    _strip_langfuse_env()
+    tracer = DualModeObservabilityManager(session_id="adv-test")
+    graph = build_maya_graph(
+        ExperimentConfig(), _StubRouter(decision), engine, _StubSynth(), tracer
+    )
+    graph.invoke(
+        {
+            "messages": [HumanMessage(content="q")],
+            "session_preferences": prefs,
+        }
+    )
+    seen = engine.calls[0][1].filters
+    assert seen.year_max == 2000
+    assert seen.year_min is None, "pref floor must drop against a decision ceiling"
+    applied = [
+        t
+        for t in tracer._local_traces
+        if t["node"] == "retrieve" and t["payload"].get("prefs_years_applied")
+    ]
+    assert applied, "the fold (and its drop) must be on the record"
