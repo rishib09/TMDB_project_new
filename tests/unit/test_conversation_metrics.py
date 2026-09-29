@@ -9,13 +9,13 @@ import pytest
 
 from src.domain.memory import UserSessionPreferences
 from src.domain.routing import IntentType, QueryRoutingDecision
-from src.evals.conversations import ExpectedConstraints
 from src.evals.conversation_metrics import (
     composite_effective,
     match_mode_rule,
     observed_path_v1,
     score_constraints,
 )
+from src.evals.conversations import ExpectedConstraints
 from src.maya.guardrails import GuardrailResult, GuardrailVerdict
 
 pytestmark = pytest.mark.unit

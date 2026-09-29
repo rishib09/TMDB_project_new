@@ -7,7 +7,7 @@ the caption renders in ``src/ui/sidebar_lab.py`` — all three must agree on
 "which week is it".
 """
 
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 
 
 def utc_today() -> date:
@@ -17,7 +17,7 @@ def utc_today() -> date:
     write side (record), the read side (window query) and the caption on the
     same boundary, independent of any local timezone.
     """
-    return datetime.now(timezone.utc).date()
+    return datetime.now(UTC).date()
 
 
 def week_bounds(reference: date) -> tuple[date, date]:

@@ -18,13 +18,17 @@ from langgraph.checkpoint.memory import InMemorySaver
 from src.domain.config import ExperimentConfig, PresetType
 from src.domain.memory import ConversationState
 from src.feedback.inbox import (
-    REPORTS_PER_SESSION, WINDOW_TURNS, ReportResult, format_rating_comment,
-    format_report_comment, post_inbox_comment, validate_report,
+    REPORTS_PER_SESSION,
+    WINDOW_TURNS,
+    ReportResult,
+    format_rating_comment,
+    format_report_comment,
+    post_inbox_comment,
+    validate_report,
 )
 from src.feedback.langfuse_score import push_feedback_score, push_report_comment
 from src.feedback.store import FeedbackStore
 from src.graph.orchestrator import build_maya_graph
-from src.indexing.embeddings import EmbeddingProvider, provider_from_profile
 from src.indexing.embeddings import collection_name, provider_from_profile
 from src.indexing.vector_store import MovieVectorStore
 from src.maya.agent import MayaSynthesizer
@@ -61,13 +65,6 @@ def shared_vector_store(persist_dir: str = "data/chroma_db") -> MovieVectorStore
     return MovieVectorStore(persist_dir)
 
 
-@st.cache_resource(show_spinner=False)
-def shared_search_provider(profile: str) -> EmbeddingProvider:
-    """Process-wide query-embedding provider, cached per profile."""
-    logger.info("building shared search provider profile=%s", profile)
-    return provider_from_profile(profile)
-
-
 def slice_new_traces(ring_before: int, traces: list[dict]) -> list[dict]:
     """Pure helper (issue #18): only the traces produced during this turn.
 
@@ -99,19 +96,15 @@ class MayaSession:
         # Feedback Receipt (#76 amendment): reported reply's trace id → inbox
         # comment URL, or None when only Langfuse holds the Report.
         self.report_receipts: dict[str, str | None] = {}
-        # #11 Phase 1 verdict (ADR 0008): gemini-embedding-2 via OpenRouter is
-        # the production dense path — 100% golden hit@5 / MRR 0.964 on the
-        # `full` preset, vs 71% for the best free model. Fail-closed: without
-        # OPENROUTER_API_KEY the app refuses to start rather than silently
-        # degrading to a weaker collection.
-        self.rag_version = "full_gemini_embedding_2"
-        self.search_provider = shared_search_provider("gemini_embedding_2")
         # #11/#30: the dense path derives from config — ONE knob pair names
         # the collection AND the query-embedding provider, so user queries are
         # always embedded by the collection's own model. Default = ADR 0008
         # verdict (gemini-embedding-2 · full: 100% golden hit@5 / MRR 0.964).
         # Fail-closed: without OPENROUTER_API_KEY the app refuses to start
         # rather than silently degrading to a weaker collection.
+        # (#96-F2: the stale hard-coded rag_version/search_provider that used
+        # to sit here were dead — both names were overwritten two lines below,
+        # and the stale assignment built an orphaned cached provider.)
         self.rag_version = collection_name(
             self.config.column_preset, self.config.embedding_profile
         )

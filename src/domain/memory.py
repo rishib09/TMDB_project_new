@@ -6,8 +6,8 @@ in ``src/graph/state.py``; the pure merge functions below are domain logic
 shared by both ``ConversationState`` (direct calls) and the graph reducers.
 """
 
+from collections.abc import Sequence
 from datetime import UTC, datetime
-from typing import Sequence
 
 from pydantic import BaseModel, Field
 

@@ -37,6 +37,7 @@ from src.domain.memory import (
     merge_preferences,
 )
 from src.domain.routing import IntentType, MetadataFilterCriteria, QueryRoutingDecision
+from src.domain.usage import LLMUsage
 from src.graph.state import MayaGraphState
 from src.maya.agent import MayaSynthesizer
 from src.maya.guardrails import (
@@ -129,6 +130,60 @@ def build_maya_graph(
     stack_v2 = isinstance(router, MayaV2Router)
     router_v2 = router if stack_v2 else None
 
+    def _meter_llm(usage: LLMUsage | None, node: str) -> float:
+        """Record one LLM call everywhere it matters (#123).
+
+        Session limiter (the gate), weekly ledger (the ceiling), and one
+        ``cost`` trace row per call — then returns the estimated cost so the
+        calling node writes ``session_cost_usd`` (and tokens to
+        ``session_tokens``, feeding the #93 metrics).
+
+        Unusable usage — ``None`` (stubbed clients, failed calls) or
+        non-numeric fields (review P3-2: test doubles that slip the
+        isinstance guard) — never silently disappears: one explicit
+        ``unmetered`` cost row records the spend-invisibility and the call
+        costs nothing (AGENTS.md: fail-open must be explicit and recorded).
+        """
+        if usage is not None:
+            try:
+                prompt_tokens = int(usage.prompt_tokens)
+                completion_tokens = int(usage.completion_tokens)
+            except (TypeError, ValueError, AttributeError):
+                usage = None  # non-numeric usage → marker path, not a crash
+        if usage is None:
+            tracer.record_local(
+                "cost",
+                {
+                    "node": node,
+                    "model": "unknown",
+                    "tokens": 0,
+                    "cost_usd": 0.0,
+                    "unmetered": "no_usage_metadata",
+                },
+            )
+            return 0.0
+        budget_status = limiter.record(
+            usage.model, prompt_tokens, completion_tokens
+        )
+        weekly_status = None
+        if budget_tracker is not None:
+            weekly_status = budget_tracker.record(
+                usage.model, prompt_tokens, completion_tokens
+            )
+        cost = estimate_cost(usage.model, prompt_tokens, completion_tokens)
+        tracer.record_local(
+            "cost",
+            {
+                "node": node,
+                "model": usage.model,
+                "tokens": prompt_tokens + completion_tokens,
+                "cost_usd": cost,
+                "budget": budget_status.value,
+                "weekly_budget": weekly_status.value if weekly_status else "off",
+            },
+        )
+        return cost
+
     def guard_input_node(state: MayaGraphState) -> dict:
         """Injection filter + session budget gate (issue #8, zero LLM)."""
         query = state.messages[-1].text if state.messages else ""
@@ -209,6 +264,11 @@ def build_maya_graph(
             _to_conversation_state(state),
             feedback=feedback,
         )
+        # #123: the router call is metered — a normalized LLMUsage on the
+        # real router (review P3-2: test doubles normalize to None, the
+        # marker path, instead of crashing token accounting below).
+        route_usage = _metered_usage_of(getattr(router, "last_usage", None))
+        route_cost = _meter_llm(route_usage, "route")
         # Guided narrowing (#22/#24): mood/audience extracted by the router
         # itself (open vocabulary), with the deterministic vocab as fallback.
         mood = (decision.mood or "").strip()
@@ -282,6 +342,12 @@ def build_maya_graph(
             "routing_decision": decision,
             "route_attempts": attempts,
             "session_preferences": signals,
+            "session_tokens": (
+                route_usage.prompt_tokens + route_usage.completion_tokens
+                if route_usage
+                else 0
+            ),
+            "session_cost_usd": route_cost,
         }
 
     def probe_node(state: MayaGraphState) -> dict:
@@ -345,7 +411,9 @@ def build_maya_graph(
 
         # 2. Explicit confirmation → retrieve now; otherwise extract + progress.
         if outcome is None:
-            signals = _extract_signals(state, router)
+            # #123 review P2-3: the extractor's router call is a real LLM
+            # call — metered like every other one.
+            signals = _extract_signals(state, router, meter=_meter_llm)
             # #42: deterministic era vocabulary ("old", "recent", "80s") as
             # fallback; LLM-grounded years win at the merge (incoming=signals).
             era = extract_era(
@@ -592,18 +660,17 @@ def build_maya_graph(
             )
             response_text = _no_retrieval_steer(state.current_query)
             violations = []  # the shipped response is title-free
-        tokens_used = usage.prompt_tokens + usage.completion_tokens
-        budget_status = limiter.record(usage.model, usage.prompt_tokens, usage.completion_tokens)
-        # Weekly $ accounting (#8): one row per LLM call, cost-estimated.
-        weekly_status = None
-        if budget_tracker is not None:
-            weekly_status = budget_tracker.record(
-                usage.model, usage.prompt_tokens, usage.completion_tokens
-            )
+        usage = _metered_usage_of(usage)  # review P3-2: doubles → marker path
+        tokens_used = usage.prompt_tokens + usage.completion_tokens if usage else 0
+        cost_usd = _meter_llm(usage, "synthesize")
         tracer.record_local(
             "synthesize",
-            {"movies": len(movies), "tokens": tokens_used, "budget": budget_status.value,
-             "weekly_budget": weekly_status.value if weekly_status else "off",
+            {"movies": len(movies), "tokens": tokens_used,
+             "budget": limiter.check_current().verdict.value,
+             "weekly_budget": (
+                 budget_tracker.current_verdict().value
+                 if budget_tracker is not None else "off"
+             ),
              "cwa_violations": violations},
         )
         # #26-E: the first recommendation after funnel narrowing announces the
@@ -618,9 +685,7 @@ def build_maya_graph(
             "synthesis_usage": usage,
             "messages": [AIMessage(content=response_text)],
             "session_tokens": tokens_used,
-            "session_cost_usd": estimate_cost(
-                usage.model, usage.prompt_tokens, usage.completion_tokens
-            ),
+            "session_cost_usd": cost_usd,
             "rolling_summary": _update_summary(state, decision),
         }
 
@@ -700,13 +765,15 @@ def build_maya_graph(
         the union reducer.
         """
         probe_count = state.probe_count
-        u, notes = router_v2.understand(
+        u, notes, usage = router_v2.understand(
             state.current_query,
             state.session_preferences,
             shown_titles=state.shown_movie_titles,
             last_assistant=last_assistant_text(state),
             probe_count=probe_count,
         )
+        usage = _metered_usage_of(usage)  # review P3-2: doubles → marker path
+        understand_cost = _meter_llm(usage, "route_v2")
         for note in notes:  # telemetry rule: every invariant on the record
             tracer.record_local("route_v2", {"note": note})
         disposition = dispose(u, state.session_preferences, config)
@@ -726,6 +793,10 @@ def build_maya_graph(
             "session_preferences": PreferencesUpdate(
                 prefs=disposition.preferences, replace=True
             ),
+            "session_tokens": (
+                usage.prompt_tokens + usage.completion_tokens if usage else 0
+            ),
+            "session_cost_usd": understand_cost,
         }
         if td.decision == "ask":  # C9: the model-authored question IS the reply
             question = disposition.understanding.clarifying_question or ""
@@ -851,16 +922,45 @@ def begin_turn_node(state: MayaGraphState) -> dict:
 _SMUGGLED_MARKUP_RE = re.compile(r"</?\s*\w+\s*/?>|```.*?```", re.DOTALL)
 
 
-def _extract_signals(state: "MayaGraphState", router) -> "UserSessionPreferences | None":
+def _metered_usage_of(raw: object) -> "LLMUsage | None":
+    """Normalizes a caller-reported usage to a safely meterable LLMUsage.
+
+    Review P3-2: doubles like ``Mock(spec=LLMUsage)`` pass the isinstance
+    guard but explode on ``int()`` — one choke point decides usability for
+    metering AND token accounting. Unusable → ``None`` (the ``_meter_llm``
+    marker path), never a crash.
+    """
+    if isinstance(raw, LLMUsage):
+        try:
+            return LLMUsage(
+                model=str(raw.model),
+                prompt_tokens=int(raw.prompt_tokens),
+                completion_tokens=int(raw.completion_tokens),
+            )
+        except (TypeError, ValueError, AttributeError):
+            return None
+    return None
+
+
+def _extract_signals(
+    state: "MayaGraphState",
+    router,
+    meter=None,
+    node: str = "funnel_extract",
+) -> "UserSessionPreferences | None":
     """Router-as-extractor (#24): intent IGNORED, only mood/audience consumed.
 
     The funnel decides actions deterministically; the LLM only reads meaning.
     Router failure → None (handle_probe_answer falls back to the vocab).
+    ``meter`` (the graph's ``_meter_llm`` closure) records the call's cost —
+    review P2-3: extraction was the one unmetered LLM call on v1 funnels.
     """
     try:
         decision = router.route(state.current_query, _to_conversation_state(state))
     except Exception:  # noqa: BLE001 — extraction must never break the funnel
         return None
+    if meter is not None:
+        meter(_metered_usage_of(getattr(router, "last_usage", None)), node)
     filters = decision.filters
     # #42 gate fix: LLM-grounded year filters survive even without a
     # mood/audience — "before 1995" mid-funnel is a refinement too.

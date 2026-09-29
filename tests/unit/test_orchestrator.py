@@ -106,9 +106,11 @@ def test_happy_path_semantic_search(tracer):
     assert isinstance(out["messages"][-1], AIMessage)
     # budget recorded via the reducer: 10 prompt + 5 completion
     assert out["session_tokens"] == 15
-    # exact node path taken
+    # exact node path taken (#123: a `cost` row follows each LLM call and
+    # precedes the node's own record — FakeRouter reports no usage, so its
+    # cost row is an unmetered marker; FakeSynthesizer's usage meters)
     nodes = [t["node"] for t in tracer.traces()]
-    assert nodes == ["guard_input", "route", "retrieve", "synthesize"]
+    assert nodes == ["guard_input", "cost", "route", "retrieve", "cost", "synthesize"]
     # engine received the router's standalone query and config top_k
     assert engine.calls[0][0] == "a mind-bending sci-fi thriller about dream heists"
     assert engine.calls[0][2] == config.retrieval_top_k
@@ -162,7 +164,7 @@ def test_out_of_scope_goes_to_pivot_without_llm(tracer):
     assert engine.calls == []
     assert "film" in out["final_response"].lower()
     nodes = [t["node"] for t in tracer.traces()]
-    assert nodes == ["guard_input", "route", "pivot"]
+    assert nodes == ["guard_input", "cost", "route", "pivot"]  # cost = unmetered marker
 
 
 # --- bounded re-route cycle (#12) ---
@@ -301,8 +303,14 @@ def test_reroute_cycle_does_not_accumulate_retrieved_movies(tracer):
 
     assert len(engine.calls) == 1  # single retrieval despite 3 routing attempts
     assert [m.id for m in out["retrieved_movies"]] == [1, 2, 3, 4, 5]  # no duplication
+    # #123: FakeRouter reports no usage — each attempt's route_node run
+    # leaves an explicit unmetered marker `cost` row before its own record
+    # (P2-1); synthesis meters normally.
     nodes = [t["node"] for t in tracer.traces()]
-    assert nodes == ["guard_input", "route", "route", "route", "retrieve", "synthesize"]
+    assert nodes == [
+        "guard_input", "cost", "route", "cost", "route", "cost", "route",
+        "retrieve", "cost", "synthesize",
+    ]
 
 
 # --- zero-retrieval determinism (issue #21) ------------------------------

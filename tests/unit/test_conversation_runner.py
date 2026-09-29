@@ -6,14 +6,19 @@ the real turn pipeline, the no-repeat measurement (the #80 detection), the
 result envelope, and the #59 filename/delta contract for mode="conversation".
 """
 
-from pathlib import Path
 
 import pytest
 
 from src.domain.config import ExperimentConfig
 from src.domain.movie import MovieRecord
 from src.domain.routing import IntentType, MetadataFilterCriteria, QueryRoutingDecision
-from src.evals.conversations import ConversationSet, ConversationTurn, ExpectedConstraints, GoldenConversation, TurnExpectation
+from src.evals.conversations import (
+    ConversationSet,
+    ConversationTurn,
+    ExpectedConstraints,
+    GoldenConversation,
+    TurnExpectation,
+)
 from src.evals.runner import BenchmarkRunner
 from src.graph.orchestrator import build_maya_graph
 from src.graph.state import SynthesisUsage
@@ -274,7 +279,7 @@ def test_session_cap_can_be_disabled_for_the_harness():
     graph — a per-user session cap would refuse every turn after the first
     few retrievals. cap=None disables it; the default stays $0.10 for the
     live app (#39)."""
-    from src.maya.guardrails import SessionCostLimiter, GuardrailVerdict
+    from src.maya.guardrails import GuardrailVerdict, SessionCostLimiter
 
     unlimited = SessionCostLimiter(cap=None)
     for _ in range(10):

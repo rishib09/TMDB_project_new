@@ -2,9 +2,10 @@
 
 import json
 import sqlite3
+from collections.abc import Sequence
 from datetime import date
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
 
 from src.domain.budget import utc_today, week_bounds
 from src.domain.movie import MovieRecord

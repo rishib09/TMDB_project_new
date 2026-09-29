@@ -6,7 +6,8 @@ movies with posters out. All libraries are from requirements.txt — no
 custom ML code: rank fusion is arithmetic, reranking is flashrank.
 """
 
-from typing import Any, ClassVar, Sequence
+from collections.abc import Sequence
+from typing import Any, ClassVar
 
 from pydantic import BaseModel, Field
 

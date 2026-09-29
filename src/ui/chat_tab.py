@@ -9,7 +9,10 @@ import streamlit as st
 from streamlit.components.v1 import html as _components_html
 
 from src.feedback.inbox import (
-    REPORT_MAX_CHARS, REPORT_MIN_CHARS, REPORTS_PER_SESSION, ReportResult,
+    REPORT_MAX_CHARS,
+    REPORT_MIN_CHARS,
+    REPORTS_PER_SESSION,
+    ReportResult,
     parse_feedback_command,
 )
 from src.ui.session import MayaSession

@@ -208,3 +208,121 @@ def test_estimate_cost_glm_row_pinned():
     # #97: glm-5.3-flash @ $0.25/1M blended (z.ai list 0.15 in / 0.50 out)
     assert estimate_cost("glm-5.3-flash", 1_000_000, 0) == pytest.approx(0.25)
     assert estimate_cost("z-ai/glm-5.3-flash", 500_000, 500_000) == pytest.approx(0.25)
+
+
+# --- #123: the graph meters every LLM call ------------------------------------
+
+
+def test_graph_turn_meters_route_and_synthesis_into_limiter_and_ledger(tmp_path):
+    """#123: one turn = one route call + one synthesis call. The limiter
+    accumulates the SUM (cap == sum, so BLOCKED proves exact accumulation)
+    and the weekly ledger gains one row per call."""
+    from langchain_core.messages import HumanMessage
+
+    from src.domain.config import ExperimentConfig
+    from src.domain.routing import IntentType, QueryRoutingDecision
+    from src.domain.usage import LLMUsage
+    from src.graph.orchestrator import build_maya_graph
+    from src.graph.state import SynthesisUsage
+    from src.maya.guardrails import SessionCostLimiter
+    from src.observability.tracer import DualModeObservabilityManager
+
+    class _Router:
+        def __init__(self):
+            self.last_usage = LLMUsage(
+                model="glm-5.3-flash", prompt_tokens=500, completion_tokens=200
+            )
+
+        def route(self, query, state, feedback=None):
+            return QueryRoutingDecision(
+                intent=IntentType.CAPABILITIES,
+                confidence=0.9,
+                standalone_query=query,
+                requires_rag=False,
+                reasoning="t",
+            )
+
+    class _Synth:
+        def synthesize(self, query, decision, movies, history):
+            return "reply", SynthesisUsage(
+                model="fake-model", prompt_tokens=10, completion_tokens=5
+            )
+
+    class _NoEngine:
+        def retrieve(self, query, routing, top_k=8, candidate_pool=50, shown_ids=None):
+            return []
+
+    route_cost = estimate_cost("glm-5.3-flash", 500, 200)
+    synth_cost = estimate_cost("fake-model", 10, 5)
+    db = MovieDatabase(str(tmp_path / "budget.db"))
+    limiter = SessionCostLimiter(cap=route_cost + synth_cost)
+    graph = build_maya_graph(
+        ExperimentConfig(),
+        _Router(),
+        _NoEngine(),
+        _Synth(),
+        DualModeObservabilityManager(session_id="unit-budget"),
+        limiter=limiter,
+        budget_tracker=WeeklyBudgetTracker(db),
+    )
+    out = graph.invoke({"messages": [HumanMessage(content="what can you do")]})
+
+    assert out["session_cost_usd"] == pytest.approx(route_cost + synth_cost)
+    assert out["session_tokens"] == 715
+    # limiter holds the exact SUM: at cap -> BLOCKED (under-count -> CLEAN)
+    assert limiter.check_current().verdict is GuardrailVerdict.BLOCKED
+    # ledger: both calls' costs summed for the week
+    assert db.weekly_spend_usd() == pytest.approx(route_cost + synth_cost)
+
+
+def test_meter_llm_unusable_usage_costs_nothing_but_is_recorded(tmp_path):
+    """#123: stubbed clients (no usage) must not distort the ledger — and
+    after the review hardening (P2-1) they leave an explicit ``unmetered``
+    marker row in the Trace instead of vanishing (AGENTS.md: fail-open
+    must be explicit and recorded)."""
+    from langchain_core.messages import HumanMessage
+
+    from src.domain.config import ExperimentConfig
+    from src.domain.routing import IntentType, QueryRoutingDecision
+    from src.graph.orchestrator import build_maya_graph
+    from src.graph.state import SynthesisUsage
+    from src.observability.tracer import DualModeObservabilityManager
+
+    class _Router:  # no last_usage attr at all (old-style fake)
+        def route(self, query, state, feedback=None):
+            return QueryRoutingDecision(
+                intent=IntentType.CAPABILITIES,
+                confidence=0.9,
+                standalone_query=query,
+                requires_rag=False,
+                reasoning="t",
+            )
+
+    class _Synth:
+        def synthesize(self, query, decision, movies, history):
+            return "reply", SynthesisUsage(model="fake", prompt_tokens=0, completion_tokens=0)
+
+    class _NoEngine:
+        def retrieve(self, query, routing, top_k=8, candidate_pool=50, shown_ids=None):
+            return []
+
+    db = MovieDatabase(str(tmp_path / "budget2.db"))
+    graph = build_maya_graph(
+        ExperimentConfig(),
+        _Router(),
+        _NoEngine(),
+        _Synth(),
+        tracer := DualModeObservabilityManager(session_id="unit-budget2"),
+        budget_tracker=WeeklyBudgetTracker(db),
+    )
+    out = graph.invoke({"messages": [HumanMessage(content="hi")]})
+    assert out["session_cost_usd"] == 0.0
+    assert db.weekly_spend_usd() == 0.0
+    # P2-1: the skipped ROUTE call is VISIBLE — one unmetered marker row
+    # (the synth stub reports zero-token usage, which meters normally).
+    markers = [
+        t
+        for t in tracer.traces()
+        if t["node"] == "cost" and t["payload"].get("unmetered") == "no_usage_metadata"
+    ]
+    assert {m["payload"]["node"] for m in markers} == {"route"}
