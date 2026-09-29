@@ -124,8 +124,12 @@ def test_admin_input_routes_as_ordinary_turn(monkeypatch):
 
 
 def test_checkpoint_round_trip_no_blocked_types(monkeypatch, caplog):
-    """#119: two turns on one thread exercise the real saver save+load; no
-    domain type may degrade to a dict (Blocked deserialization)."""
+    """#119 (review P2): two turns on one thread exercise the real saver
+    save+load; the allowlisted serde must round-trip every domain type with
+    ZERO unregistered-type warnings. Lenient serde (langgraph-checkpoint
+    4.2.0) never logs "Blocked deserialization" — it logs "Deserializing
+    unregistered type …" while silently degrading the value to a dict, so
+    that is the only warning whose absence proves the allowlist load-bearing."""
     import logging
 
     at = _boot_app(monkeypatch)
@@ -133,7 +137,7 @@ def test_checkpoint_round_trip_no_blocked_types(monkeypatch, caplog):
         at.chat_input[0].set_value("show me some movies").run()
         at.chat_input[0].set_value("feel good").run()  # loads the prior checkpoint
     assert not at.exception
-    assert "Blocked deserialization" not in caplog.text
+    assert "unregistered type" not in caplog.text
 
 
 def test_app_rerun_does_not_double_turn(monkeypatch):
