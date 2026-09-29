@@ -209,7 +209,7 @@ def render_chat(session: MayaSession) -> None:
         '<div class="maya-title">Maya</div>'
         '<div class="maya-subtitle">Conversational film curator for US theatrical '
         "releases, 1970\u20132026 — deterministic routing, closed-world grounding, "
-        "full trace observability. Type /admin for the Experimentation Lab."
+        "full trace observability."
         "</div></div>",
         unsafe_allow_html=True,
     )
@@ -241,9 +241,6 @@ def render_chat(session: MayaSession) -> None:
         # unconditionally painted the OLD posters above a fresh response
         # on every turn rerun (the double-draw from the visitor Report).
         render_poster_grid(session.last_movies)
-        return
-    if session.is_admin_command(query):
-        st.toast("The Experimentation Lab lives in the collapsible sidebar.")
         return
     report = parse_feedback_command(query)
     if report is not None:  # #76: Report on the last reply, never a turn

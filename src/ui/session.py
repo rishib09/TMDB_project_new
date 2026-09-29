@@ -36,8 +36,6 @@ from src.observability.tracer import DualModeObservabilityManager
 from src.retrieval.hybrid_engine import HybridRetrievalEngine
 from src.storage.database import MovieDatabase
 
-ADMIN_COMMAND = "/admin"
-
 logger = logging.getLogger(__name__)
 
 
@@ -118,7 +116,6 @@ class MayaSession:
             self.config.column_preset, self.config.embedding_profile
         )
         self.search_provider = provider_from_profile(self.config.embedding_profile)
-        self.admin_mode = False
         self.config_version = 0  # bumped on preset apply → knob widgets remount
         self.turn_log: list[dict] = []  # one row per turn for badges/trace
         self.last_movies = []  # MovieRecords from the most recent retrieval
@@ -440,10 +437,6 @@ class MayaSession:
             if ref is not None and 0 <= (ref := ref) < len(self.turn_log):
                 return self.turn_log[ref]
         return None
-
-    @staticmethod
-    def is_admin_command(query: str) -> bool:
-        return query.strip().lower() == ADMIN_COMMAND
 
 
 def get_session() -> MayaSession:

@@ -227,7 +227,7 @@ def knob_editor(
             key=f"attempts_{v}",
         )
         threshold = st.slider(
-            "Router confidence threshold (below → heuristic fallback, #12)",
+            "Router confidence threshold (below → heuristic fallback)",
             0.0, 1.0, config.confidence_threshold, 0.05,
             key=f"conf_threshold_{v}",
         )
@@ -236,17 +236,17 @@ def knob_editor(
             key=f"cwa_{v}",
         )
         retrieve_axes = st.slider(
-            "Funnel retrieve threshold (answered axes → retrieve, #53)",
+            "Funnel retrieve threshold (answered axes → retrieve)",
             1, 5, config.funnel_retrieve_axes,
             key=f"retrieve_axes_{v}",
         )
         era_old = st.number_input(
-            "'Old/classic movie' year cutoff (year_max, #42)",
+            "'Old/classic movie' year cutoff (year_max)",
             1970, 2026, config.era_old_year_max,
             key=f"era_old_{v}",
         )
         era_recent = st.number_input(
-            "'Recent/latest movie' year cutoff (year_min, #42)",
+            "'Recent/latest movie' year cutoff (year_min)",
             1970, 2026, config.era_recent_year_min,
             key=f"era_recent_{v}",
         )

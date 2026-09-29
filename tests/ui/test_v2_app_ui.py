@@ -113,6 +113,16 @@ def test_app_boots_on_v2_and_labels_routed_turns(monkeypatch):
     assert all(r["intent"] == "SEMANTIC_SEARCH" for r in rows)
 
 
+def test_admin_input_routes_as_ordinary_turn(monkeypatch):
+    """#91: /admin is dead — the Lab is public, so typing it must process
+    as an ordinary message (one turn in the log), not a swallowed branch."""
+    at = _boot_app(monkeypatch)
+    at.chat_input[0].set_value("/admin").run()
+    assert not at.exception
+    session = at.session_state["maya_session"]
+    assert len(session.turn_log) == 1  # the old admin branch swallowed the input
+
+
 def test_app_rerun_does_not_double_turn(monkeypatch):
     """chat_tab draws standing-grid replies on idle reruns only (#80)."""
     at = _boot_app(monkeypatch)
