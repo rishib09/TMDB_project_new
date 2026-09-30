@@ -14,9 +14,12 @@ from datetime import UTC, datetime
 import streamlit as st
 from langchain_core.messages import HumanMessage
 from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 
 from src.domain.config import ExperimentConfig, PresetType
-from src.domain.memory import ConversationState
+from src.domain.memory import ConversationState, UserSessionPreferences
+from src.domain.routing import IntentType, QueryRoutingDecision
+from src.domain.usage import LLMUsage
 from src.feedback.inbox import (
     REPORTS_PER_SESSION,
     WINDOW_TURNS,
@@ -32,7 +35,12 @@ from src.graph.orchestrator import build_maya_graph
 from src.indexing.embeddings import collection_name, provider_from_profile
 from src.indexing.vector_store import MovieVectorStore
 from src.maya.agent import MayaSynthesizer
-from src.maya.guardrails import SessionCostLimiter, WeeklyBudgetTracker
+from src.maya.guardrails import (
+    GuardrailResult,
+    GuardrailVerdict,
+    SessionCostLimiter,
+    WeeklyBudgetTracker,
+)
 from src.maya.probing import preference_chips
 from src.maya.router import MayaRouter
 from src.maya.v2 import MayaV2Router
@@ -41,6 +49,23 @@ from src.retrieval.hybrid_engine import HybridRetrievalEngine
 from src.storage.database import MovieDatabase
 
 logger = logging.getLogger(__name__)
+
+# #119: the checkpointer msgpack-serializes these domain types; register them
+# explicitly so the deprecation warning is gone and a future strict
+# langgraph-checkpoint cannot degrade session state to plain dicts. Pass the
+# TYPES (the lib normalizes to exact (module, qualname) keys — dotted strings
+# would silently never match). langgraph's own SAFE_MSGPACK_TYPES stay allowed
+# regardless of this list. LLMUsage joins the original five after #123.
+_CHECKPOINT_SERDE = JsonPlusSerializer(
+    allowed_msgpack_modules=[
+        GuardrailVerdict,
+        GuardrailResult,
+        IntentType,
+        QueryRoutingDecision,
+        UserSessionPreferences,
+        LLMUsage,
+    ]
+)
 
 
 # --- shared read-only resources (issue #17) ---------------------------------
@@ -114,7 +139,8 @@ class MayaSession:
         self.last_movies = []  # MovieRecords from the most recent retrieval
         # #93/D16: the graph's memory — one saver + one thread per browser
         # session; every turn sends only the new message (see turn()).
-        self._saver = InMemorySaver()
+        # #119: allowlisted serde so checkpointed domain types stay typed.
+        self._saver = InMemorySaver(serde=_CHECKPOINT_SERDE)
         self._thread_id = uuid.uuid4().hex
         self._graph_sig = ""
         self.graph = self._build_graph()

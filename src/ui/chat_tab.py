@@ -6,7 +6,6 @@ scoring + SQLite persistence land with issue #9).
 """
 
 import streamlit as st
-from streamlit.components.v1 import html as _components_html
 
 from src.feedback.inbox import (
     REPORT_MAX_CHARS,
@@ -200,9 +199,14 @@ def scroll_to_newest() -> None:
     response renders below the fold after every turn. The JS runs in a
     zero-height same-origin component and scrolls the app's main container.
     Called ONLY on the fresh-turn path — thumb-click reruns keep the user's
-    scroll position.
+    scroll position. st.html replaces the retired components-v1 html embed
+    (#119); unsafe_allow_javascript=True is required — the default (False)
+    would silently strip the script and kill the auto-scroll.
     """
-    _components_html(f"<div style='height:0px'></div>{_AUTO_SCROLL_JS}", height=0)
+    st.html(
+        f"<div style='height:0px'></div>{_AUTO_SCROLL_JS}",
+        unsafe_allow_javascript=True,
+    )
 
 
 def render_chat(session: MayaSession) -> None:
