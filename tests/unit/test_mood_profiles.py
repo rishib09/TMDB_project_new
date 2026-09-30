@@ -4,16 +4,17 @@ import pytest
 from pydantic import ValidationError
 
 from src.domain.moods import (
+    MOOD_BOOST_CALIBRATION,
     MOOD_PROFILES,
+    MoodBoostSpec,
     MoodFloorCriteria,
     MoodProfile,
-    boost_spec_of,
     expand_query_text,
     merge_profile_floors,
+    mood_boost_spec,
     resolve_mood_profile,
 )
 from src.domain.routing import MetadataFilterCriteria
-
 
 # --- registry integrity ---------------------------------------------------------
 
@@ -124,16 +125,63 @@ def test_floor_criteria_reject_out_of_range():
 
 
 @pytest.mark.unit
-def test_boost_spec_is_a_plain_dict_with_profile_id():
-    spec = boost_spec_of(MOOD_PROFILES["epic"])
-    assert spec["profile_id"] == "epic@1"
-    assert spec["genre_boosts"]["War"] == pytest.approx(0.7)
-    assert spec["runtime_boost_min"] == 120
-    assert spec["scale"] == 1.0
+def test_boost_spec_is_typed_with_profile_id():
+    spec = mood_boost_spec(MOOD_PROFILES["epic"])
+    assert isinstance(spec, MoodBoostSpec)
+    assert spec.profile_id == "epic@1"
+    assert spec.genre_boosts["War"] == pytest.approx(0.7)
+    assert spec.runtime_boost_min == 120
+    assert spec.scale == 1.0
+    assert spec.normalizer == pytest.approx(0.01)
 
 
 @pytest.mark.unit
 def test_hidden_gem_spec_carries_negative_weights():
-    spec = boost_spec_of(MOOD_PROFILES["hidden-gem"])
-    assert spec["popularity_boost"] < 0
-    assert spec["revenue_boost"] < 0
+    spec = mood_boost_spec(MOOD_PROFILES["hidden-gem"])
+    assert spec.popularity_boost < 0
+    assert spec.revenue_boost < 0
+
+
+@pytest.mark.unit
+def test_boost_spec_accepts_experiment_config_calibration():
+    spec = mood_boost_spec(
+        MOOD_PROFILES["epic"],
+        scale=0.5,
+        normalizer=0.02,
+        runtime_weight=0.75,
+        term_cap=1.5,
+        popularity_log_divisor=8.0,
+        revenue_log_divisor=20.0,
+    )
+    assert spec.scale == pytest.approx(0.5)
+    assert spec.normalizer == pytest.approx(0.02)
+    assert spec.runtime_weight == pytest.approx(0.75)
+    assert spec.term_cap == pytest.approx(1.5)
+    assert spec.popularity_log_divisor == pytest.approx(8.0)
+    assert spec.revenue_log_divisor == pytest.approx(20.0)
+
+
+@pytest.mark.unit
+def test_boost_calibration_defaults_are_single_sourced():
+    """Drift guard (ADR 0004 single source): the calibration literals live in
+    MOOD_BOOST_CALIBRATION only — ExperimentConfig field defaults and
+    MoodBoostSpec field defaults must DERIVE from it, never restate it."""
+    from src.domain.config import ExperimentConfig
+
+    cal = MOOD_BOOST_CALIBRATION
+    config_defaults = {
+        "normalizer": ExperimentConfig.model_fields["mood_boost_normalizer"].default,
+        "runtime_weight": ExperimentConfig.model_fields["mood_boost_runtime_weight"].default,
+        "term_cap": ExperimentConfig.model_fields["mood_boost_term_cap"].default,
+        "popularity_log_divisor": ExperimentConfig.model_fields["mood_boost_popularity_log_divisor"].default,
+        "revenue_log_divisor": ExperimentConfig.model_fields["mood_boost_revenue_log_divisor"].default,
+    }
+    assert config_defaults == cal
+    spec = MoodBoostSpec(profile_id="drift-check")
+    assert {
+        "normalizer": spec.normalizer,
+        "runtime_weight": spec.runtime_weight,
+        "term_cap": spec.term_cap,
+        "popularity_log_divisor": spec.popularity_log_divisor,
+        "revenue_log_divisor": spec.revenue_log_divisor,
+    } == cal

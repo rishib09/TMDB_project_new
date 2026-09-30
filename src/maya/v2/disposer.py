@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 from src.domain.config import ExperimentConfig
 from src.domain.memory import UserSessionPreferences, merge_preferences
 from src.domain.routing import IntentType
-from src.maya.probing import MAX_PROBE_TURNS
+from src.maya.probing import MAX_PROBE_TURNS, extract_probe_answers
 from src.maya.v2.models import Understanding
 from src.maya.v2.vocabularies import Axis
 
@@ -190,6 +190,21 @@ def dispose(
         year_max=f.year_max if f and f.year_max is not None else era_year_max,
         reset_requested=u.reset_context,
     )
+    # ADR 0005 backstop (live 2026-09-29): the model often parks mood/audience
+    # only in standalone_query prose while leaving preference_delta empty —
+    # known_axes stays [] and a ready turn asks forever. Deterministic vocab
+    # fills ONLY empty slots; explicit delta values win; clear_mood skips.
+    vocab = extract_probe_answers(u.standalone_query)
+    backfill: dict[str, str] = {}
+    if not incoming.preferred_mood and not d.clear_mood and vocab.preferred_mood:
+        backfill["preferred_mood"] = vocab.preferred_mood
+    if not incoming.audience and vocab.audience:
+        backfill["audience"] = vocab.audience
+    if backfill:
+        incoming = incoming.model_copy(update=backfill)
+        notes.append(
+            f"disposition: vocab backfill from standalone_query -> {backfill}"
+        )
     merged = merge_preferences(prefs, incoming)
 
     # Delta removals the reducer cannot express (prototype #85, proven).

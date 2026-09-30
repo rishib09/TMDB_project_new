@@ -37,9 +37,9 @@ from src.domain.memory import (
     merge_preferences,
 )
 from src.domain.moods import (
-    boost_spec_of,
     expand_query_text,
     merge_profile_floors,
+    mood_boost_spec,
     resolve_mood_profile,
 )
 from src.domain.routing import IntentType, MetadataFilterCriteria, QueryRoutingDecision
@@ -506,26 +506,40 @@ def build_maya_graph(
         """
         decision = state.routing_decision
         prefs = state.session_preferences
+        # #137: MoodProfile translation — the mood's concrete retrieval
+        # meaning (phrasebook, floors, boosts) is curated data applied by
+        # code, in the ONE seam both routing stacks share. Unmapped moods
+        # fail open to flavor-only behavior, recorded. Mapped moods must
+        # NOT re-append ``(mood: …)`` — that was the measured BM25 failure.
+        # The flag-off A/B arm is on the record too: the Trace must
+        # distinguish a profile-off run from a no-mood run (telemetry rule).
+        session_mood = prefs.preferred_mood or decision.mood
+        if not config.mood_profiles_enabled:
+            profile = None
+            if session_mood:
+                tracer.record_local(
+                    "retrieve", {"mood_profile": "disabled", "mood": session_mood}
+                )
+        else:
+            profile = resolve_mood_profile(session_mood)
+            if not profile and session_mood:
+                tracer.record_local("retrieve", {"mood_profile": "unmapped", "mood": session_mood})
         flavor = ", ".join(
             filter(
                 None,
                 (
-                    f"mood: {prefs.preferred_mood}" if prefs.preferred_mood else "",
+                    (
+                        f"mood: {prefs.preferred_mood}"
+                        if prefs.preferred_mood and profile is None
+                        else ""
+                    ),
                     f"audience: {prefs.audience}" if prefs.audience else "",
                 ),
             )
         )
         query = decision.standalone_query
-        # #137: MoodProfile translation — the mood's concrete retrieval
-        # meaning (phrasebook, floors, boosts) is curated data applied by
-        # code, in the ONE seam both routing stacks share. Unmapped moods
-        # fail open to flavor-only behavior, recorded.
-        session_mood = prefs.preferred_mood or decision.mood
-        profile = resolve_mood_profile(session_mood) if config.mood_profiles_enabled else None
         if profile:
             query = expand_query_text(query, profile)
-        elif config.mood_profiles_enabled and session_mood:
-            tracer.record_local("retrieve", {"mood_profile": "unmapped", "mood": session_mood})
         if flavor:
             query = f"{query} ({flavor})"
         # #78/#116: preference years (era snapshots) reach retrieval when the
@@ -573,7 +587,19 @@ def build_maya_graph(
             decision = decision.model_copy(
                 update={"filters": merge_profile_floors(decision.filters, profile)}
             )
-        boost = {**boost_spec_of(profile), "scale": config.mood_boost_scale} if profile else None
+        boost = (
+            mood_boost_spec(
+                profile,
+                scale=config.mood_boost_scale,
+                normalizer=config.mood_boost_normalizer,
+                runtime_weight=config.mood_boost_runtime_weight,
+                term_cap=config.mood_boost_term_cap,
+                popularity_log_divisor=config.mood_boost_popularity_log_divisor,
+                revenue_log_divisor=config.mood_boost_revenue_log_divisor,
+            )
+            if profile
+            else None
+        )
         results = engine.retrieve(
             query=query,
             routing=decision,
@@ -582,13 +608,26 @@ def build_maya_graph(
             boost=boost,
         )
         if profile:
-            applied = getattr(engine, "last_profile_applied", None) or {}
             tracer.record_local("retrieve", {
                 "mood_profile": profile.id,
                 "phrases_applied": len(profile.query_phrases),
                 "floors": profile.floors.model_dump(exclude_none=True),
+                # post-merge floors the engine actually enforced (not just declared)
+                "floors_enforced": (
+                    {"vote_count_min": decision.filters.vote_count_min}
+                    if decision.filters and decision.filters.vote_count_min is not None
+                    else {}
+                ),
                 "boost_scale": config.mood_boost_scale,
-                "floors_relaxed": applied.get("floors_relaxed", False),
+                # WHICH calibration ran — an A/B comparison of boost weights
+                # is meaningless without it (telemetry rule, ADR 0004).
+                "calibration": {
+                    "normalizer": config.mood_boost_normalizer,
+                    "runtime_weight": config.mood_boost_runtime_weight,
+                    "term_cap": config.mood_boost_term_cap,
+                    "popularity_log_divisor": config.mood_boost_popularity_log_divisor,
+                    "revenue_log_divisor": config.mood_boost_revenue_log_divisor,
+                },
             })
         # Intersection too narrow? (#25) retry ANY-match, relaxation on record.
         if not results and decision.filters and decision.filters.genre_match == "all":
@@ -600,6 +639,7 @@ def build_maya_graph(
                 routing=relaxed,
                 top_k=config.retrieval_top_k,
                 shown_ids=list(state.shown_movie_ids),  # #88
+                boost=boost,
             )
             decision = relaxed  # #93 Q13: filters_applied must record the FINAL
                                 # post-relaxation routing — the engine ran "any"

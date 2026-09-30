@@ -23,14 +23,27 @@ Pure domain (ADR 0006): pydantic + stdlib only. The registry is curated DATA
 — the Router classifies, this module interprets, the engine applies, the
 Trace records, the harness grades (``epic@1`` vs ``epic@2`` under Experiment
 Config). Unknown moods resolve to None and change nothing (fail-open, the
-caller records it).
+caller records it). Hard floors stay hard: an empty pool after a floor is an
+empty pool.
 """
 
-from typing import Any, ClassVar
+from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 
 from src.domain.routing import MetadataFilterCriteria
+
+#: Single source for MoodProfile boost calibration (ADR 0004): the literals
+#: live HERE only. ExperimentConfig field defaults, MoodBoostSpec field
+#: defaults, and ``mood_boost_spec`` all derive from this mapping; nothing
+#: else in the repo may restate the values.
+MOOD_BOOST_CALIBRATION: dict[str, float] = {
+    "normalizer": 0.01,
+    "runtime_weight": 0.5,
+    "term_cap": 2.0,
+    "popularity_log_divisor": 10.0,
+    "revenue_log_divisor": 25.0,
+}
 
 
 class MoodFloorCriteria(BaseModel):
@@ -90,10 +103,36 @@ class MoodProfile(BaseModel):
         return f"{self.mood}@{self.version}"
 
 
+class MoodBoostSpec(BaseModel):
+    """Soft-boost half of a Mood Profile, plus Experiment Config calibration.
+
+    Built by ``mood_boost_spec`` in the retrieve seam; the engine reads this
+    typed object mechanically (no Ranking ClassVars, no plain-dict reparse).
+    Calibration defaults DERIVE from ``MOOD_BOOST_CALIBRATION`` — the single
+    literal source shared with ExperimentConfig (ADR 0004).
+    """
+
+    profile_id: str
+    genre_boosts: dict[str, float] = Field(default_factory=dict)
+    runtime_boost_min: int | None = None
+    popularity_boost: float = 0.0
+    revenue_boost: float = 0.0
+    scale: float = Field(default=1.0, ge=0.0)
+    normalizer: float = Field(default=MOOD_BOOST_CALIBRATION["normalizer"], gt=0.0)
+    runtime_weight: float = Field(default=MOOD_BOOST_CALIBRATION["runtime_weight"], ge=0.0)
+    term_cap: float = Field(default=MOOD_BOOST_CALIBRATION["term_cap"], gt=0.0)
+    popularity_log_divisor: float = Field(
+        default=MOOD_BOOST_CALIBRATION["popularity_log_divisor"], gt=0.0
+    )
+    revenue_log_divisor: float = Field(
+        default=MOOD_BOOST_CALIBRATION["revenue_log_divisor"], gt=0.0
+    )
+
+
 #: The registry. Versioned DATA — grows by ticket, graded by the harness.
 #: Scope is deliberately minimal (proof): one standard profile and one
 #: polarity-inverted profile.
-MOOD_PROFILES: ClassVar[dict[str, MoodProfile]] = {
+MOOD_PROFILES: dict[str, MoodProfile] = {
     "epic": MoodProfile(
         mood="epic",
         version=1,
@@ -184,17 +223,36 @@ def merge_profile_floors(
     return base.model_copy(update=updates)
 
 
-def boost_spec_of(profile: MoodProfile) -> dict[str, Any]:
-    """The profile's soft-boost half as a plain dict for ``engine.retrieve``.
+def mood_boost_spec(
+    profile: MoodProfile,
+    *,
+    scale: float = 1.0,
+    normalizer: float | None = None,
+    runtime_weight: float | None = None,
+    term_cap: float | None = None,
+    popularity_log_divisor: float | None = None,
+    revenue_log_divisor: float | None = None,
+) -> MoodBoostSpec:
+    """Build the typed soft-boost payload for ``HybridRetrievalEngine.retrieve``.
 
-    Plain dict, not the model: the engine stays mechanical and the caller
-    (``retrieve_node``) injects the Experiment Config ``scale`` alongside.
+    Calibration kwargs default to ``MOOD_BOOST_CALIBRATION`` (single source);
+    the retrieve seam overrides them from the live Experiment Config (ADR 0004).
     """
-    return {
-        "profile_id": profile.id,
-        "genre_boosts": dict(profile.genre_boosts),
-        "runtime_boost_min": profile.runtime_boost_min,
-        "popularity_boost": profile.popularity_boost,
-        "revenue_boost": profile.revenue_boost,
-        "scale": 1.0,
-    }
+    cal = MOOD_BOOST_CALIBRATION
+    return MoodBoostSpec(
+        profile_id=profile.id,
+        genre_boosts=dict(profile.genre_boosts),
+        runtime_boost_min=profile.runtime_boost_min,
+        popularity_boost=profile.popularity_boost,
+        revenue_boost=profile.revenue_boost,
+        scale=scale,
+        normalizer=cal["normalizer"] if normalizer is None else normalizer,
+        runtime_weight=cal["runtime_weight"] if runtime_weight is None else runtime_weight,
+        term_cap=cal["term_cap"] if term_cap is None else term_cap,
+        popularity_log_divisor=(
+            cal["popularity_log_divisor"] if popularity_log_divisor is None else popularity_log_divisor
+        ),
+        revenue_log_divisor=(
+            cal["revenue_log_divisor"] if revenue_log_divisor is None else revenue_log_divisor
+        ),
+    )

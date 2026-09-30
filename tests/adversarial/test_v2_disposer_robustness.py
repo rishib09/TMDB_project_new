@@ -168,6 +168,36 @@ class TestDecisionLadder:
         out = dispose(u, UserSessionPreferences(), CFG)
         assert turn_decision(out.understanding, out.preferences, CFG).decision == "ask"
 
+    def test_empty_delta_backfills_mood_audience_from_standalone_query(self):
+        """Live failure (2026-09-29 UI): model sets ready_to_retrieve with an
+        empty preference_delta — 'epic … solo viewing' dies as ask forever
+        because known_axes stays []. Code must vocab-backfill (ADR 0005)."""
+        u = _u(
+            standalone_query=(
+                "epic, sweeping grand-scale movies suitable for solo viewing"
+            ),
+            ready_to_retrieve=True,
+            preference_delta=PreferenceDelta(),
+            missing_slots=[],
+            clarifying_question=None,
+        )
+        out = dispose(u, UserSessionPreferences(), CFG)
+        assert out.preferences.preferred_mood == "epic"
+        assert out.preferences.audience == "solo"
+        assert any("vocab backfill" in n for n in out.notes)
+        td = turn_decision(out.understanding, out.preferences, CFG)
+        assert td.decision == "retrieve"
+
+    def test_vocab_backfill_does_not_override_explicit_delta(self):
+        """Model-authored set_mood wins; prose in standalone must not clobber."""
+        u = _u(
+            standalone_query="epic movies for solo viewing",
+            preference_delta=PreferenceDelta(set_mood="funny", set_audience="family"),
+        )
+        out = dispose(u, UserSessionPreferences(), CFG)
+        assert out.preferences.preferred_mood == "funny"
+        assert out.preferences.audience == "family"
+
 
 class TestSchemaHostility:
     """The model cannot smuggle values past the schema."""
