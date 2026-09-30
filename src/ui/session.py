@@ -56,15 +56,18 @@ logger = logging.getLogger(__name__)
 # TYPES (the lib normalizes to exact (module, qualname) keys — dotted strings
 # would silently never match). langgraph's own SAFE_MSGPACK_TYPES stay allowed
 # regardless of this list. LLMUsage joins the original five after #123.
+# Review: exported as a tuple — the serde registration AND every coverage test
+# derive from this one list, so a newly checkpointed type is a single edit.
+_CHECKPOINT_ALLOWLIST: tuple[type, ...] = (
+    GuardrailVerdict,
+    GuardrailResult,
+    IntentType,
+    QueryRoutingDecision,
+    UserSessionPreferences,
+    LLMUsage,
+)
 _CHECKPOINT_SERDE = JsonPlusSerializer(
-    allowed_msgpack_modules=[
-        GuardrailVerdict,
-        GuardrailResult,
-        IntentType,
-        QueryRoutingDecision,
-        UserSessionPreferences,
-        LLMUsage,
-    ]
+    allowed_msgpack_modules=list(_CHECKPOINT_ALLOWLIST)
 )
 
 
