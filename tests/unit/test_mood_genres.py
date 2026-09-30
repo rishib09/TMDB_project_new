@@ -18,11 +18,26 @@ pytestmark = pytest.mark.unit
 # --- mood → genre mapping data (#25) ---------------------------------------
 
 def test_mood_genre_map_covers_all_vocab_moods():
-    """Every vocab-produced mood with an obvious genre mapping is mapped."""
+    """Every vocab-produced mood with an obvious genre mapping is mapped.
+
+    #137 exception: 'hidden-gem' is deliberately genre-agnostic — its
+    profile meaning is popularity inversion (under-seen wins), not genre
+    shape, so a confirmed hard genre filter would be wrong. It skips the
+    confirmation stage by design and never dead-ends the funnel.
+    """
     from src.maya.probing import _MOOD_VOCAB
 
+    genre_agnostic = {"hidden-gem"}
     for mood_value in set(_MOOD_VOCAB.values()):
+        if mood_value in genre_agnostic:
+            continue
         assert mood_value in MOOD_GENRE_MAP, f"{mood_value} unmapped"
+
+
+def test_genre_agnostic_mood_skips_confirmation():
+    """'hidden-gem' must skip genre confirmation, not dead-end the funnel."""
+    outcome = next_funnel_step(UserSessionPreferences(preferred_mood="hidden-gem"), 0)
+    assert outcome.action != "confirm_genres"
 
 
 def test_mood_genre_map_values_are_real_genres():

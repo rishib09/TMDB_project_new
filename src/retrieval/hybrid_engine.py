@@ -6,11 +6,13 @@ movies with posters out. All libraries are from requirements.txt — no
 custom ML code: rank fusion is arithmetic, reranking is flashrank.
 """
 
+import math
 from collections.abc import Sequence
 from typing import Any, ClassVar
 
 from pydantic import BaseModel, Field
 
+from src.domain.moods import MoodBoostSpec
 from src.domain.movie import MovieRecord
 from src.domain.routing import IntentType, MetadataFilterCriteria, QueryRoutingDecision
 from src.indexing.vector_store import MovieVectorStore, SearchResult
@@ -95,6 +97,9 @@ class HybridRetrievalEngine:
         #: the trace can record ``where_applied`` / ``excluded_shown``.
         self.last_where_applied: dict[str, Any] | None = None
         self.last_excluded_ids: list[int] = []
+        #: #137: what the last retrieve() applied from a MoodProfile — the
+        #: profile id only. Hard floors stay hard (no silent relaxation).
+        self.last_profile_applied: dict[str, Any] | None = None
         self.hybrid_alpha = hybrid_alpha
         self.reranker_enabled = reranker_enabled
         self.reranker_model = reranker_model
@@ -109,6 +114,7 @@ class HybridRetrievalEngine:
         top_k: int = 8,
         candidate_pool: int = 50,
         shown_ids: Sequence[int] | None = None,
+        boost: MoodBoostSpec | None = None,
     ) -> list[RetrievalResult]:
         """Returns the final ranked movies for one router decision.
 
@@ -116,8 +122,16 @@ class HybridRetrievalEngine:
         stores — a Chroma where clause on the dense leg, ``NOT IN`` on the
         SQL legs — so the fetched pool is already fresh and constrained;
         genre/actor/exclusion matching stays in the post-filter safety net.
+
+        #137: ``boost`` is a MoodBoostSpec — RRF fusion tilts by genre/
+        runtime/popularity/revenue weight; the profile's FLOORS ride in
+        ``routing.filters`` (``vote_count_min``) and post-filter every path.
+        Hard floors stay hard: an empty post-filter pool stays empty.
         """
         self.last_dense_failure = None
+        self.last_profile_applied = (
+            {"profile_id": boost.profile_id} if boost is not None else None
+        )
         where = build_where_clause(routing.filters, shown_ids)
         self.last_where_applied = where
         self.last_excluded_ids = list(shown_ids or [])
@@ -133,7 +147,7 @@ class HybridRetrievalEngine:
 
         dense = self._retrieve_dense(query, candidate_pool, where)
         sparse = self._retrieve_bm25(self.sparse_query(query, routing.filters), candidate_pool)
-        fused = self._rrf_fuse(dense, sparse)
+        fused = self._rrf_fuse(dense, sparse, boost=boost)
         if self.last_dense_failure is not None:
             fused = [r.model_copy(update={"dense_failed": True}) for r in fused]
 
@@ -259,10 +273,19 @@ class HybridRetrievalEngine:
         self,
         dense: list[SearchResult],
         sparse: list[MovieRecord],
+        boost: MoodBoostSpec | None = None,
     ) -> list[RetrievalResult]:
         """Reciprocal Rank Fusion: score(d) = sum(w_i / (k + rank_i)).
 
         hybrid_alpha weights the dense list (1.0 = dense only, 0.0 = BM25 only).
+
+        #137: with a MoodBoostSpec, each fused candidate gains
+        ``scale * normalizer * term`` where term = genre affinity (sum of
+        matching weights) + popularity/revenue log-normalized weights + a
+        fixed runtime-band term. NEGATIVE weights demote (hidden gem).
+        Pool membership never changes — boosts only reorder pool members.
+        Calibration (normalizer, divisors, cap) rides on the spec from
+        Experiment Config (ADR 0004).
         """
         w_dense, w_sparse = self.hybrid_alpha, 1.0 - self.hybrid_alpha
         entries: dict[int, dict[str, Any]] = {}
@@ -289,6 +312,23 @@ class HybridRetrievalEngine:
                 score += w_dense / (self.RRF_K + entry["dense_rank"])
             if entry["sparse_rank"] is not None:
                 score += w_sparse / (self.RRF_K + entry["sparse_rank"])
+            if boost is not None:
+                movie: MovieRecord = entry["movie"]
+                term = 0.0
+                have = {g.lower() for g in movie.genres}
+                term += sum(w for g, w in boost.genre_boosts.items() if g.lower() in have)
+                if boost.popularity_boost:
+                    term += boost.popularity_boost * min(
+                        math.log1p(movie.popularity) / boost.popularity_log_divisor, 1.0
+                    )
+                if boost.revenue_boost:
+                    term += boost.revenue_boost * min(
+                        math.log1p(movie.revenue) / boost.revenue_log_divisor, 1.0
+                    )
+                if boost.runtime_boost_min is not None and movie.runtime >= boost.runtime_boost_min:
+                    term += boost.runtime_weight
+                clamped = max(-boost.term_cap, min(boost.term_cap, term))
+                score += boost.scale * boost.normalizer * clamped
             results.append(RetrievalResult(
                 movie=entry["movie"],
                 score=round(score, 6),
@@ -374,6 +414,8 @@ class HybridRetrievalEngine:
                     return False
             elif not wanted & have:
                 return False
+        if filters.vote_count_min is not None and movie.vote_count < filters.vote_count_min:
+            return False
         if filters.person:
             name = filters.person.lower()
             in_cast = any(name in c.name.lower() for c in movie.cast)

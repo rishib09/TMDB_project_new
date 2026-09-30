@@ -34,7 +34,7 @@ class ScriptedEngine:
     def __init__(self, movies=None):
         self.movies = movies or []
 
-    def retrieve(self, query, routing, top_k=8, candidate_pool=50, shown_ids=None):
+    def retrieve(self, query, routing, top_k=8, candidate_pool=50, shown_ids=None, boost=None):
         return [
             RetrievalResultShim(m) for m in self.movies[:top_k]
         ]

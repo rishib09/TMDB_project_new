@@ -58,6 +58,10 @@ class MetadataFilterCriteria(BaseModel):
     #: pushdown for both lands with the v2 stack (#106).
     runtime_max: int | None = None
     rating_min: float | None = None
+    #: #137: mood-profile floors land here the same additive way — matched in
+    #: the uniform post-filter (``matches_filters``) on every path; never set
+    #: by the Router, only by ``merge_profile_floors``.
+    vote_count_min: int | None = None
 
 
 class QueryRoutingDecision(BaseModel):

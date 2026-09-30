@@ -39,7 +39,7 @@ class _UsageSynth:
 
 
 class _EmptyEngine:
-    def retrieve(self, query, routing, top_k=8, candidate_pool=50, shown_ids=None):
+    def retrieve(self, query, routing, top_k=8, candidate_pool=50, shown_ids=None, boost=None):
         return []
 
 

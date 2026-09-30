@@ -6,6 +6,7 @@ from typing import Literal
 from pydantic import BaseModel, Field, model_validator
 
 from src.domain.memory import MESSAGE_WINDOW  # window default lives in domain memory
+from src.domain.moods import MOOD_BOOST_CALIBRATION  # boost calibration single source
 
 
 class PresetType(StrEnum):
@@ -95,6 +96,40 @@ class ExperimentConfig(BaseModel):
         description="FlashRank model when enabled (best of 4 measured: 71% vs RRF 86%)"
     )
     retrieval_top_k: int = Field(default=5, ge=1, le=20, description="Number of final context movies")
+    #: #137: MoodProfile translation (canonical mood -> floors + boosts +
+    #: phrasebook). Off = pre-#137 flavor-only behavior for A/B runs.
+    mood_profiles_enabled: bool = Field(
+        default=True,
+        description="Apply MoodProfile floors/boosts/phrasebook at retrieval (#137)",
+    )
+    mood_boost_scale: float = Field(
+        default=1.0, ge=0.0, le=3.0,
+        description="Global multiplier on MoodProfile boost terms (#137; 0 = floors only)",
+    )
+    #: #137: RRF boost calibration (ADR 0004). One full boost term ≈ NORMALIZER
+    #: * term_cap in score units — a real tilt inside the candidate pool that
+    #: never manufactures candidates (pool membership is unchanged). Defaults
+    #: derive from MOOD_BOOST_CALIBRATION (single literal source).
+    mood_boost_normalizer: float = Field(
+        default=MOOD_BOOST_CALIBRATION["normalizer"], gt=0.0,
+        description="Scales MoodBoostSpec terms into RRF score units (#137)",
+    )
+    mood_boost_runtime_weight: float = Field(
+        default=MOOD_BOOST_CALIBRATION["runtime_weight"], ge=0.0,
+        description="Fixed boost term when runtime >= profile runtime_boost_min (#137)",
+    )
+    mood_boost_term_cap: float = Field(
+        default=MOOD_BOOST_CALIBRATION["term_cap"], gt=0.0,
+        description="Absolute cap on the pre-normalizer boost term (#137)",
+    )
+    mood_boost_popularity_log_divisor: float = Field(
+        default=MOOD_BOOST_CALIBRATION["popularity_log_divisor"], gt=0.0,
+        description="log1p(popularity) divisor before clamping to [0, 1] (#137)",
+    )
+    mood_boost_revenue_log_divisor: float = Field(
+        default=MOOD_BOOST_CALIBRATION["revenue_log_divisor"], gt=0.0,
+        description="log1p(revenue) divisor before clamping to [0, 1] (#137)",
+    )
 
     # Memory & Guardrails
     multi_turn_mode: str = Field(default="fused_single_pass", description="fused_single_pass | dedicated_2step_llm")

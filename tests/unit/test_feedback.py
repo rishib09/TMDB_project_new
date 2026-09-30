@@ -119,7 +119,7 @@ def test_turn_log_carries_trace_id_and_rag_version(monkeypatch):
             )
 
     class FakeEngine:
-        def retrieve(self, query, routing, top_k=8, candidate_pool=50, shown_ids=None):
+        def retrieve(self, query, routing, top_k=8, candidate_pool=50, shown_ids=None, boost=None):
             m = MovieRecord(id=1, title="X", release_year=2020, genres=["Drama"])
             return [RetrievalResult(movie=m, score=1.0, source="sql")]
 

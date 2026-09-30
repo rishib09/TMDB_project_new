@@ -158,6 +158,10 @@ _MOOD_VOCAB: ClassVar[dict[str, str]] = {
     "sad": "tearjerker",
     "cry": "tearjerker",
     "epic": "epic",
+    "hidden gem": "hidden-gem",  # #137: profile-backed mood (inverted polarity)
+    "underrated": "hidden-gem",
+    "underappreciated": "hidden-gem",
+    "overlooked": "hidden-gem",
 }
 
 _AUDIENCE_VOCAB: ClassVar[dict[str, str]] = {

@@ -32,6 +32,14 @@ _Avoid_: Chat history, session memory, context buffer.
 A user-specified negative preference (e.g. `excluded_genres: ["Horror"]`, `excluded_actors: ["Tom Cruise"]`) that remains active across all subsequent retrieval queries within a session until explicitly revoked.
 _Avoid_: Permanent filter, blacklist, negative prompt.
 
+**Mood Profile**:
+A versioned, curated translation of one canonical mood into deterministic retrieval signals — phrasebook anchors for the semantic query, hard floors, and soft boosts — applied by code at the shared retrieve seam. Unknown moods resolve to none and change nothing.
+_Avoid_: Mood embedding, vibe prompt, genre map (the hard genre filter is not a Mood Profile), text flavor.
+
+**Mood Floor Criteria**:
+Hard minimums a Mood Profile imposes on candidates (typically a vote-count floor). Tightening only — never loosens an explicit user filter; an empty pool after a floor stays empty.
+_Avoid_: Quality gate, soft boost, fail-open floor.
+
 **Evaluation Harness**:
 The benchmarking subsystem that executes standardized test sets across parameterized RAG pipeline versions to compute retrieval IR metrics (Hit Rate@K, MRR@K, Context Precision) and generation metrics (Faithfulness, Relevancy).
 _Avoid_: Test runner, benchmark script, tester.
