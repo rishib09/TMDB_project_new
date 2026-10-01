@@ -78,13 +78,8 @@ def slim_collections(source_dir: Path, dest_dir: Path, names: tuple[str, ...]) -
                 documents=_chunk(page["documents"], 0, len(ids)),
                 metadatas=metadatas,
             )
-        offset = end
+            offset = end
         print(f"{name}: {offset}/{origin.count()}", flush=True)
-    for client in (source, dest):
-        system = getattr(client, "_system", None)
-        stop = getattr(system, "stop", None)
-        if stop is not None:
-            stop()
 
 
 def _export_tracked(dest: Path) -> None:
@@ -93,9 +88,7 @@ def _export_tracked(dest: Path) -> None:
     The Space must receive this working tree, including the Dockerfile, which
     is not committed yet. The catalog and the vector index stay in the dataset.
     """
-    listing = subprocess.check_output(
-        ["git", "ls-files", "-z", "-c", "-o", "--exclude-standard"]
-    )
+    listing = subprocess.check_output(["git", "ls-files", "-z", "-c", "-o", "--exclude-standard"])
     skip = (".claude/", ".scratch/", "data/")
     for rel in listing.decode().split("\0"):
         if not rel or rel.startswith(skip):

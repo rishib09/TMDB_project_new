@@ -8,6 +8,8 @@ Pure logic lives here so it is testable without a Streamlit runtime.
 
 import logging
 import os
+import sqlite3
+import tempfile
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
@@ -81,6 +83,41 @@ _CHECKPOINT_SERDE = JsonPlusSerializer(allowed_msgpack_modules=list(_CHECKPOINT_
 DATA_REPO = "rishib09/maya-data"
 
 
+def catalog_movie_count(db_path: Path) -> int:
+    """Rows in ``movies``, or 0 when the file is missing or not a catalog."""
+    if not db_path.is_file() or db_path.stat().st_size == 0:
+        return 0
+    try:
+        conn = sqlite3.connect(f"file:{db_path.as_posix()}?mode=ro", uri=True)
+        try:
+            row = conn.execute("SELECT COUNT(*) FROM movies").fetchone()
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return 0
+    return int(row[0]) if row else 0
+
+
+def resolve_runtime_data_dir(
+    local: Path = Path("data"),
+    fallback: Path | None = None,
+) -> Path:
+    """Where the catalog and the vector index live for this process.
+
+    A populated local ``data/`` wins, so a laptop that already has the catalog
+    does not download. ``MAYA_DATA_DIR`` overrides both. Otherwise the files
+    go under the system temp directory, outside the app folder: writing the
+    dataset into the app folder makes Streamlit restart mid-download and then
+    search the empty catalog ``MovieDatabase`` creates.
+    """
+    configured = os.getenv("MAYA_DATA_DIR")
+    if configured:
+        return Path(configured)
+    if catalog_movie_count(local / "tmdb_movies.db") > 0:
+        return local
+    return fallback or (Path(tempfile.gettempdir()) / "maya-data")
+
+
 def _chroma_client(persist_dir: Path):
     import chromadb
     from chromadb.config import Settings
@@ -93,8 +130,7 @@ def _chroma_client(persist_dir: Path):
 
 def runtime_files_missing(data_dir: Path = Path("data")) -> bool:
     """True when the catalog or any Lab collection is absent or empty."""
-    catalog = data_dir / "tmdb_movies.db"
-    if not catalog.is_file() or catalog.stat().st_size == 0:
+    if catalog_movie_count(data_dir / "tmdb_movies.db") <= 0:
         return True
     sqlite_path = data_dir / "chroma_db" / "chroma.sqlite3"
     if not sqlite_path.is_file():
@@ -105,16 +141,19 @@ def runtime_files_missing(data_dir: Path = Path("data")) -> bool:
 
 
 def ensure_runtime_files(
-    data_dir: Path = Path("data"),
+    data_dir: Path | None = None,
     repo_id: str | None = None,
     download=None,
 ) -> None:
     """Download the catalog and the six Lab collections when either is missing.
 
     Calls ``huggingface_hub.snapshot_download`` unless ``download`` is passed.
-    No-op when the catalog and every Lab collection are already on disk.
+    No-op when the catalog has movies and every Lab collection is already on disk.
     ``repo_id`` defaults to ``MAYA_DATA_REPO`` or ``rishib09/maya-data``.
+    With ``data_dir`` omitted, a populated local catalog stays put and an empty
+    one is fetched outside the app folder.
     """
+    data_dir = data_dir or resolve_runtime_data_dir()
     if not runtime_files_missing(data_dir):
         return
     repo_id = repo_id or os.getenv("MAYA_DATA_REPO", DATA_REPO)
@@ -123,22 +162,28 @@ def ensure_runtime_files(
         from huggingface_hub import snapshot_download
 
         snapshot_download(repo_id=repo_id, repo_type="dataset", local_dir=str(data_dir))
+        if runtime_files_missing(data_dir):
+            raise RuntimeError(
+                f"The movie catalog at {data_dir} is still empty after downloading {repo_id}."
+            )
         return
     download(repo_id, data_dir)
 
 
 @st.cache_resource(show_spinner=False)
-def shared_database(db_path: str = "data/tmdb_movies.db") -> MovieDatabase:
+def shared_database(db_path: str | None = None) -> MovieDatabase:
     """Process-wide SQLite handle (also the budget sink)."""
-    logger.info("building shared MovieDatabase path=%s", db_path)
-    return MovieDatabase(db_path)
+    path = db_path or str(resolve_runtime_data_dir() / "tmdb_movies.db")
+    logger.info("building shared MovieDatabase path=%s", path)
+    return MovieDatabase(path)
 
 
 @st.cache_resource(show_spinner=False)
-def shared_vector_store(persist_dir: str = "data/chroma_db") -> MovieVectorStore:
+def shared_vector_store(persist_dir: str | None = None) -> MovieVectorStore:
     """Process-wide ChromaDB client + embedder caches."""
-    logger.info("building shared MovieVectorStore path=%s", persist_dir)
-    return MovieVectorStore(persist_dir)
+    path = persist_dir or str(resolve_runtime_data_dir() / "chroma_db")
+    logger.info("building shared MovieVectorStore path=%s", path)
+    return MovieVectorStore(path)
 
 
 def slice_new_traces(ring_before: int, traces: list[dict]) -> list[dict]:
