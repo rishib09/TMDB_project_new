@@ -12,7 +12,7 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 
-from src.domain.config import ExperimentConfig, PresetType
+from src.domain.config import ExperimentConfig
 from src.evals.runner import sweep_configs
 
 RESULTS_DIR = Path("evals/results")
@@ -23,11 +23,6 @@ _METRIC_LABELS = {
     "context_precision": "Context Precision@5",
     "faithfulness": "Faithfulness (judge)",
     "relevancy": "Relevancy (judge)",
-}
-_PRESET_TITLES = {
-    "production": "Production",
-    "fast_budget": "Fast Budget",
-    "naive_baseline": "Naive Baseline",
 }
 #: #141: closed. `router_model` is a v1 routing sweep and is not a section.
 REPORT_DECISIONS: tuple[str, ...] = (
@@ -90,10 +85,16 @@ _POINT_LABELS: dict[str, dict[str, str]] = {
         "minimal_gemini_embedding_2": "Gemini · minimal",
     },
 }
-_CONVO_LINES = (
-    ("intent_accuracy", "Understood the request"),
-    ("path_accuracy", "Took the expected step"),
-    ("fidelity", "Kept the expected filters"),
+_UNDERSTOOD = "Understood the request"
+_STEP = "Took the expected step"
+_FILTERS = "Kept the expected filters"
+_REPLY = "Reply stayed on the movies"
+#: Run-level key, per-conversation key, label. Reply score has no per-conversation line.
+_SCORE_LINES = (
+    ("intent_accuracy", "intent_accuracy", _UNDERSTOOD),
+    ("path_accuracy", "path_accuracy", _STEP),
+    ("constraint_fidelity", "fidelity", _FILTERS),
+    ("faithfulness", None, _REPLY),
 )
 
 
@@ -101,28 +102,14 @@ def _load_run(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def run_display_name(run: dict) -> str:
-    """Preset bookmark, `custom @ hash` for off-preset runs, legacy marked."""
-    if not run.get("config_hash"):
-        return f"{run.get('label', '?')} (legacy)"
-    preset = run.get("preset", "custom")
-    if preset in _PRESET_TITLES:
-        return _PRESET_TITLES[preset]
-    return f"custom @ {run['config_hash']}"
-
-
-def staleness_flags(
-    run: dict, collection_exists=None, current_dataset_version: str = ""
-) -> list[str]:
-    """#54 grill D7: flag stale runs, never auto-delete. Pure, unit-tested."""
-    flags = []
-    collection = run.get("collection", "")
-    if collection and collection_exists is not None and not collection_exists(collection):
-        flags.append(f"collection `{collection}` no longer exists")
-    stamped = run.get("dataset_version", "")
-    if stamped and current_dataset_version and stamped != current_dataset_version:
-        flags.append(f"dataset {stamped} predates the current set ({current_dataset_version})")
-    return flags
+def _newest_by_sweep_value(runs: list[dict], knob: str) -> dict[str, dict]:
+    """Newest run for each value of one sweep knob."""
+    newest: dict[str, dict] = {}
+    for run in sorted(runs, key=lambda item: item.get("timestamp", "")):
+        sweep = run.get("sweep") or {}
+        if sweep.get("knob") == knob:
+            newest[str(sweep.get("value"))] = run
+    return newest
 
 
 def sweep_rows(runs: list[dict], knob: str) -> tuple[list[dict], list[str]]:
@@ -131,11 +118,7 @@ def sweep_rows(runs: list[dict], knob: str) -> tuple[list[dict], list[str]]:
     Rows come from runs stamped `sweep.knob == knob` (newest per value);
     missing values power the "run this sweep" hint (#54 grill D9).
     """
-    newest_by_value: dict[str, dict] = {}
-    for run in sorted(runs, key=lambda r: r.get("timestamp", "")):
-        sweep = run.get("sweep") or {}
-        if sweep.get("knob") == knob:
-            newest_by_value[str(sweep.get("value"))] = run
+    newest_by_value = _newest_by_sweep_value(runs, knob)
     rows = []
     for value, run in newest_by_value.items():
         for metric in _METRICS:
@@ -148,20 +131,13 @@ def sweep_rows(runs: list[dict], knob: str) -> tuple[list[dict], list[str]]:
     return rows, missing
 
 
-def sweep_baseline_label(knob: str) -> str | None:
-    """The sweep value that IS the pristine Production baseline. Pure."""
-    production = ExperimentConfig().apply_preset(PresetType.PRODUCTION_HYBRID)
-    for label, config in sweep_configs(knob):
-        if config == production:
-            return label
-    return None
+def newest_full_v2_by_model(
+    runs: list[dict], n_conversations: int, n_turns: int
+) -> dict[str, dict]:
+    """Newest Routing Stack v2 conversation run per understand-model.
 
-
-def v2_fleet_by_model(runs: list[dict], n_conversations: int, n_turns: int) -> dict[str, dict]:
-    """Newest full-set Routing Stack v2 conversation run per understand-model.
-
-    A run counts only when it covered the golden conversations
-    (``n_conversations`` and ``n_turns``). A shorter pilot cannot replace it.
+    A run counts only when ``n_conversations`` and ``n_turns`` match the
+    golden conversations. A shorter pilot cannot replace a full run.
     """
     newest: dict[str, dict] = {}
     for run in runs:
@@ -176,11 +152,6 @@ def v2_fleet_by_model(runs: list[dict], n_conversations: int, n_turns: int) -> d
         if previous is None or run.get("timestamp", "") > previous.get("timestamp", ""):
             newest[model] = run
     return newest
-
-
-def headline_run(by_model: dict[str, dict], model_id: str) -> dict | None:
-    """Fleet run for the Experiment Config understand-model default, or None."""
-    return by_model.get(model_id)
 
 
 def hit_rate_points(runs: list[dict], knob: str) -> list[tuple[str, float]]:
@@ -244,23 +215,19 @@ def percent_label(score: float) -> str:
     return f"{score * 100:.1f}%"
 
 
-def lead_sentence(entries: list[tuple[str, str, list[tuple[str, float]]]]) -> str | None:
-    """The opening sentence. ``entries`` are (title, metric phrase, percent points).
+def lead_sentence(
+    entries: list[tuple[str, str, list[tuple[str, float]], float]],
+) -> str | None:
+    """The opening sentence. ``entries`` are (title, metric phrase, percent points, swing).
 
     Names every decision that shares the largest swing. None when no decision
     has two options.
     """
-    swings: dict[str, float] = {}
-    packed: dict[str, tuple[str, list[tuple[str, float]]]] = {}
-    for title, metric, points in entries:
-        gap = score_swing([point[1] for point in points])
-        if gap is None:
-            continue
-        swings[title] = round(gap, 1)
-        packed[title] = (metric, points)
-    names = widest_decision(swings)
-    if not names:
+    if not entries:
         return None
+    swings = {title: gap for title, _metric, _points, gap in entries}
+    packed = {title: (metric, points) for title, metric, points, _gap in entries}
+    names = widest_decision(swings)
     clauses = []
     for title in names:
         metric, points = packed[title]
@@ -276,14 +243,6 @@ def lead_sentence(entries: list[tuple[str, str, list[tuple[str, float]]]]) -> st
     return "These decisions are tied for the largest swing. " + " ".join(
         clause + "." for clause in clauses
     )
-
-
-def metric_span(runs: list[dict], key: str) -> tuple[float, float] | None:
-    """Min and max of one 0–1 metric across runs, ignoring missing values."""
-    values = [run[key] for run in runs if run.get(key) is not None]
-    if not values:
-        return None
-    return min(values), max(values)
 
 
 def _percent_points(
@@ -320,8 +279,10 @@ def _conversation_chart(run: dict) -> None:
     ids = []
     for convo in run.get("per_conversation") or []:
         ids.append(convo.get("id", ""))
-        for key, label in _CONVO_LINES:
-            score = convo.get(key)
+        for _run_key, convo_key, label in _SCORE_LINES:
+            if convo_key is None:
+                continue
+            score = convo.get(convo_key)
             rows.append(
                 {
                     "conversation": convo.get("id", ""),
@@ -344,16 +305,6 @@ def _conversation_chart(run: dict) -> None:
     st.plotly_chart(fig, width="stretch", config={"staticPlot": True})
 
 
-def _span_text(runs: list[dict], key: str) -> str:
-    span = metric_span(runs, key)
-    if span is None:
-        return "n/a"
-    lo, hi = round(span[0] * 100, 1), round(span[1] * 100, 1)
-    if lo == hi:
-        return f"{lo:.1f}%"
-    return f"{lo:.1f}–{hi:.1f}%"
-
-
 def _golden_sizes() -> tuple[int | None, int | None, int | None]:
     n_conversations = n_turns = n_queries = None
     try:
@@ -373,41 +324,48 @@ def _golden_sizes() -> tuple[int | None, int | None, int | None]:
     return n_conversations, n_turns, n_queries
 
 
-def _load_runs(results_dir: Path) -> tuple[list[dict], int]:
+def _load_runs(results_dir: Path) -> list[dict]:
     if not results_dir.exists():
-        return [], 0
+        return []
     runs = []
-    failed = 0
     for path in sorted(results_dir.glob("*.json")):
         try:
             runs.append(_load_run(path))
         except (OSError, json.JSONDecodeError):
-            failed += 1
-    return runs, failed
+            continue
+    return runs
 
 
 def _newest_sweep_runs(runs: list[dict], knob: str) -> list[dict]:
     """Newest run per sweep value, in sweep order. Caption facts, not scores."""
-    newest: dict[str, dict] = {}
-    for run in sorted(runs, key=lambda item: item.get("timestamp", "")):
-        sweep = run.get("sweep") or {}
-        if sweep.get("knob") == knob:
-            newest[str(sweep.get("value"))] = run
+    newest = _newest_by_sweep_value(runs, knob)
     order = [label for label, _ in sweep_configs(knob)]
     return [newest[label] for label in order if label in newest]
 
 
+def _query_count_clause(saved_counts: set[int], current: int | None) -> str:
+    counts = sorted(saved_counts)
+    if len(counts) == 1:
+        saved = counts[0]
+        if current is None:
+            return f"{saved} queries."
+        note = saved_count_note(saved, current, "queries")
+        return note if note else f"{saved} queries."
+    listed = ", ".join(str(count) for count in counts)
+    if current is None:
+        return f"Scored {listed} queries across the options."
+    return f"Scored {listed} queries across the options. The golden file now has {current}."
+
+
 def _retrieval_caption(runs: list[dict], knob: str, n_queries: int | None) -> str:
-    winners = _newest_sweep_runs(runs, knob)
-    saved_counts = {run.get("n_queries") for run in winners if run.get("n_queries") is not None}
+    newest_runs = _newest_sweep_runs(runs, knob)
+    saved_counts = {
+        int(run["n_queries"]) for run in newest_runs if run.get("n_queries") is not None
+    }
     parts = []
-    if len(saved_counts) == 1:
-        saved = int(next(iter(saved_counts)))
-        note = saved_count_note(saved, n_queries, "queries") if n_queries is not None else None
-        parts.append(note if note else f"{saved} queries.")
-    elif saved_counts:
-        parts.append("Query counts differ across the options.")
-    saved_on = _saved_on(winners)
+    if saved_counts:
+        parts.append(_query_count_clause(saved_counts, n_queries))
+    saved_on = _saved_on(newest_runs)
     if saved_on:
         parts.append(f"Saved {saved_on}.")
     if knob == "embedding_combo":
@@ -415,24 +373,16 @@ def _retrieval_caption(runs: list[dict], knob: str, n_queries: int | None) -> st
     return " ".join(parts)
 
 
-def _model_caption(fleet: list[dict]) -> str:
-    understood = _span_text(fleet, "intent_accuracy")
-    step = _span_text(fleet, "path_accuracy")
-    filters = _span_text(fleet, "constraint_fidelity")
-    parts = [
-        f"Understood the request {understood}",
-        f"Took the expected step {step}",
-        f"Kept the expected filters {filters}",
-        "This line is a judge score on the turns that wrote a reply",
-    ]
-    if fleet:
-        run = fleet[0]
+def _model_caption(runs: list[dict]) -> str:
+    parts = ["This line is a judge score on the turns that wrote a reply."]
+    if runs:
+        run = runs[0]
         tail = f"{run.get('n_conversations', 0)} conversations, {run.get('n_turns', 0)} turns"
-        saved_on = _saved_on(fleet)
+        saved_on = _saved_on(runs)
         if saved_on:
             tail += f", saved {saved_on}"
-        parts.append(tail)
-    return ". ".join(parts) + "."
+        parts.append(tail + ".")
+    return " ".join(parts)
 
 
 def render_evals(session=None, results_dir: Path = RESULTS_DIR) -> None:
@@ -444,45 +394,61 @@ def render_evals(session=None, results_dir: Path = RESULTS_DIR) -> None:
     del session
     st.header("Evals")
     st.caption("Static report. Routing Stack v2. Saved measurements only.")
-    runs, failed = _load_runs(results_dir)
-    if failed:
-        st.caption(f"{failed} saved file(s) could not be read.")
+    runs = _load_runs(results_dir)
     n_conversations, n_turns, n_queries = _golden_sizes()
     if n_conversations is None or n_turns is None:
         by_model: dict[str, dict] = {}
     else:
-        by_model = v2_fleet_by_model(runs, n_conversations, n_turns)
-    fleet = list(by_model.values())
-    model_raw = reply_points(by_model)
-    model_points = _percent_points(model_raw, _MODEL_LABELS)
+        by_model = newest_full_v2_by_model(runs, n_conversations, n_turns)
+    model_points = _percent_points(reply_points(by_model), _MODEL_LABELS)
 
-    entries: list[tuple[str, str, list[tuple[str, float]]]] = []
-    sections: list[tuple[str, list[tuple[str, float]], str]] = []
+    sections: list[tuple[str, str, str, list[tuple[str, float]], str, float | None]] = []
     title, metric = _DECISION_COPY["models"]
-    entries.append((title, metric, model_points))
-    sections.append(("models", model_points, _model_caption(fleet) if model_points else ""))
+    model_gap = score_swing([point[1] for point in model_points])
+    sections.append(
+        (
+            "models",
+            title,
+            metric,
+            model_points,
+            _model_caption(list(by_model.values())) if model_points else "",
+            None if model_gap is None else round(model_gap, 1),
+        )
+    )
     for knob in REPORT_DECISIONS:
         if knob == "models":
             continue
         title, metric = _DECISION_COPY[knob]
         points = _percent_points(hit_rate_points(runs, knob), _POINT_LABELS.get(knob, {}))
-        entries.append((title, metric, points))
-        sections.append((knob, points, _retrieval_caption(runs, knob, n_queries) if points else ""))
-
-    swings: dict[str, float] = {}
-    for decision_id, points, _caption in sections:
         gap = score_swing([point[1] for point in points])
-        if gap is not None:
-            swings[decision_id] = round(gap, 1)
+        sections.append(
+            (
+                knob,
+                title,
+                metric,
+                points,
+                _retrieval_caption(runs, knob, n_queries) if points else "",
+                None if gap is None else round(gap, 1),
+            )
+        )
+
+    swings = {
+        decision_id: gap
+        for decision_id, _title, _metric, _points, _caption, gap in sections
+        if gap is not None
+    }
     marked = set(widest_decision(swings))
-    lead = lead_sentence(entries)
+    lead = lead_sentence(
+        [
+            (title, metric, points, gap)
+            for _decision_id, title, metric, points, _caption, gap in sections
+            if gap is not None
+        ]
+    )
     if lead:
         st.markdown(lead)
-    else:
-        st.caption(_MISSING)
 
-    for decision_id, points, caption in sections:
-        title = _DECISION_COPY[decision_id][0]
+    for decision_id, title, _metric, points, caption, _gap in sections:
         with st.container(border=True):
             if decision_id in marked:
                 st.markdown("**Largest swing**")
@@ -499,7 +465,7 @@ def render_evals(session=None, results_dir: Path = RESULTS_DIR) -> None:
         st.caption(_GUARDRAIL)
 
     headline_model = ExperimentConfig().v2_router_model
-    headline = headline_run(by_model, headline_model)
+    headline = by_model.get(headline_model)
     st.subheader("Golden conversations")
     if headline is None:
         st.caption(_MISSING)
@@ -511,20 +477,13 @@ def render_evals(session=None, results_dir: Path = RESULTS_DIR) -> None:
             f"{headline.get('n_turns', 0)} turns, saved {_saved_on([headline])}."
         )
         with st.container(horizontal=True):
-            for key, label in (
-                ("intent_accuracy", "Understood the request"),
-                ("path_accuracy", "Took the expected step"),
-                ("constraint_fidelity", "Kept the expected filters"),
-                ("faithfulness", "Reply stayed on the movies"),
-            ):
-                score = headline.get(key)
+            for run_key, _convo_key, label in _SCORE_LINES:
+                score = headline.get(run_key)
                 st.metric(
                     label,
                     percent_label(score) if score is not None else "n/a",
                     border=True,
                 )
-        st.caption(
-            "The chart is one point per conversation. A missing score leaves a gap in that line."
-        )
+        st.caption("This chart is one point per conversation.")
         _conversation_chart(headline)
     st.caption(_FOOTER)

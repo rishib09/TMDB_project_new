@@ -1,32 +1,6 @@
-"""#60 Evals tab pure helpers (#54 grill D1/D7/D9)."""
+"""Pure helpers for the static Evals report."""
 
-from src.ui.evals_tab import (
-    run_display_name,
-    staleness_flags,
-    sweep_baseline_label,
-    sweep_rows,
-)
-
-
-def test_display_name_preset_custom_and_legacy():
-    assert run_display_name({"config_hash": "ab12cd34", "preset": "production"}) == "Production"
-    assert run_display_name({"config_hash": "ab12cd34", "preset": "custom"}) == "custom @ ab12cd34"
-    assert run_display_name({"label": "v1_1_enriched"}) == "v1_1_enriched (legacy)"
-
-
-def test_staleness_missing_collection_and_old_dataset():
-    run = {"collection": "full_gemini_embedding_2", "dataset_version": "2026-08-01"}
-    flags = staleness_flags(
-        run, collection_exists=lambda name: False, current_dataset_version="2026-09-01"
-    )
-    assert len(flags) == 2
-    assert "no longer exists" in flags[0]
-    assert "predates" in flags[1]
-
-
-def test_staleness_clean_run_has_no_flags():
-    run = {"collection": "full_gemini_embedding_2", "dataset_version": "2026-09-01"}
-    assert staleness_flags(run, lambda name: True, "2026-09-01") == []
+from src.ui.evals_tab import sweep_rows
 
 
 def test_sweep_rows_newest_per_value_and_missing_hint():
@@ -57,14 +31,6 @@ def test_sweep_rows_newest_per_value_and_missing_hint():
     assert missing == ["5", "10"]
 
 
-def test_sweep_baseline_labels_match_production():
-    assert sweep_baseline_label("hybrid_alpha") == "0.5"
-    assert sweep_baseline_label("retrieval_top_k") == "5"
-    assert sweep_baseline_label("reranker") == "off"
-    assert sweep_baseline_label("embedding_combo") == "full_gemini_embedding_2"
-    assert sweep_baseline_label("router_model") == "google/gemini-3.5-flash-lite"
-
-
 def _fleet(model: str, stamp: str, n_turns: int = 200, stack: str = "v2", **scores) -> dict:
     return {
         "mode": "conversation",
@@ -77,8 +43,8 @@ def _fleet(model: str, stamp: str, n_turns: int = 200, stack: str = "v2", **scor
     }
 
 
-def test_v2_fleet_ignores_pilots_and_v1_and_keeps_the_newest():
-    from src.ui.evals_tab import headline_run, reply_points, v2_fleet_by_model
+def test_newest_full_v2_ignores_pilots_and_v1_and_keeps_the_newest():
+    from src.ui.evals_tab import newest_full_v2_by_model, reply_points
 
     runs = [
         _fleet("glm-5.3-flash", "2026-09-27T01:00:00", faithfulness=0.9),
@@ -88,11 +54,11 @@ def test_v2_fleet_ignores_pilots_and_v1_and_keeps_the_newest():
         _fleet("google/gemma-4-31b-it", "2026-09-27T02:00:00", faithfulness=None),
         _fleet("other/model", "2026-09-27T02:00:00", faithfulness=0.5),
     ]
-    by_model = v2_fleet_by_model(runs, n_conversations=23, n_turns=200)
+    by_model = newest_full_v2_by_model(runs, n_conversations=23, n_turns=200)
     assert set(by_model) == {"glm-5.3-flash", "google/gemma-4-31b-it", "other/model"}
     assert by_model["glm-5.3-flash"]["faithfulness"] == 0.6
-    assert headline_run(by_model, "glm-5.3-flash")["timestamp"] == "2026-09-27T02:00:00"
-    assert headline_run(by_model, "missing") is None
+    assert by_model.get("glm-5.3-flash")["timestamp"] == "2026-09-27T02:00:00"
+    assert by_model.get("missing") is None
     assert reply_points(by_model) == [
         ("glm-5.3-flash", 0.6),
         ("other/model", 0.5),
@@ -150,6 +116,7 @@ def test_swing_tie_count_note_and_percent():
                 "Whether a reranker reorders them",
                 "hit rate",
                 [("Off", 89.7), ("ESCI MiniLM", 55.2)],
+                34.5,
             ),
         ]
     )
@@ -157,3 +124,24 @@ def test_swing_tie_count_note_and_percent():
         "Whether a reranker reorders them moved hit rate the furthest: "
         "89.7% on Off, 55.2% on ESCI MiniLM, 34.5 points."
     )
+
+
+def test_retrieval_caption_states_every_saved_count_against_the_golden_file():
+    from src.ui.evals_tab import _retrieval_caption
+
+    runs = [
+        {
+            "sweep": {"knob": "hybrid_alpha", "value": "0.0"},
+            "timestamp": "2026-09-10T00:00:00+00:00",
+            "n_queries": 29,
+            "hit_rate": 0.7,
+        },
+        {
+            "sweep": {"knob": "hybrid_alpha", "value": "1.0"},
+            "timestamp": "2026-09-10T00:00:00+00:00",
+            "n_queries": 35,
+            "hit_rate": 0.9,
+        },
+    ]
+    text = _retrieval_caption(runs, "hybrid_alpha", 35)
+    assert text.startswith("Scored 29, 35 queries across the options. The golden file now has 35.")
