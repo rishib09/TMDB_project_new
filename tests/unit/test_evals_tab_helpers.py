@@ -92,6 +92,49 @@ def test_hit_rate_points_follow_sweep_order_and_ignore_mrr():
     assert "router_model" not in REPORT_DECISIONS
 
 
+def test_retrieval_chart_rows_keep_hit_rate_mrr_and_precision_on_one_chart():
+    from src.ui.evals_tab import retrieval_chart_rows
+
+    runs = [
+        {
+            "sweep": {"knob": "retrieval_top_k", "value": "10"},
+            "timestamp": "2026-09-02",
+            "hit_rate": 0.9,
+            "mrr": 0.4,
+            "context_precision": 0.3,
+            "faithfulness": 0.2,
+        },
+        {
+            "sweep": {"knob": "retrieval_top_k", "value": "3"},
+            "timestamp": "2026-09-02",
+            "hit_rate": 0.5,
+            "mrr": 0.2,
+        },
+    ]
+    assert retrieval_chart_rows(runs, "retrieval_top_k") == [
+        {"option": "Keep 3", "line": "Hit Rate@5", "score": 50.0},
+        {"option": "Keep 3", "line": "MRR@5", "score": 20.0},
+        {"option": "Keep 10", "line": "Hit Rate@5", "score": 90.0},
+        {"option": "Keep 10", "line": "MRR@5", "score": 40.0},
+        {"option": "Keep 10", "line": "Context Precision@5", "score": 30.0},
+    ]
+
+
+def test_mrr_matches_precision_only_when_every_shared_point_is_equal():
+    from src.ui.evals_tab import mrr_matches_precision
+
+    same = [
+        {"option": "Keep 5", "line": "MRR@5", "score": 72.1},
+        {"option": "Keep 5", "line": "Context Precision@5", "score": 72.1},
+    ]
+    different = [
+        {"option": "Keep 5", "line": "MRR@5", "score": 72.1},
+        {"option": "Keep 5", "line": "Context Precision@5", "score": 40.0},
+    ]
+    assert mrr_matches_precision(same)
+    assert not mrr_matches_precision(different)
+
+
 def test_swing_tie_count_note_and_percent():
     from src.ui.evals_tab import (
         lead_sentence,
@@ -145,3 +188,57 @@ def test_retrieval_caption_states_every_saved_count_against_the_golden_file():
     ]
     text = _retrieval_caption(runs, "hybrid_alpha", 35)
     assert text.startswith("Scored 29, 35 queries across the options. The golden file now has 35.")
+
+
+def test_single_turn_score_rows_keep_precision_and_mrr():
+    from src.ui.evals_tab import single_turn_score_rows
+
+    runs = [
+        {
+            "sweep": {"knob": "retrieval_top_k", "value": "5"},
+            "timestamp": "2026-09-10",
+            "hit_rate": 0.897,
+            "mrr": 0.7,
+            "context_precision": 0.6,
+            "faithfulness": 0.5,
+            "relevancy": 0.4,
+        }
+    ]
+    rows = single_turn_score_rows(runs)
+    assert rows == [
+        {
+            "decision": "How many movies are kept",
+            "option": "Keep 5",
+            "Hit Rate@5": 89.7,
+            "MRR@5": 70.0,
+            "Context Precision@5": 60.0,
+            "Faithfulness (judge)": 50.0,
+            "Relevancy (judge)": 40.0,
+        }
+    ]
+
+
+def test_conversation_score_notes_name_the_understand_model_and_the_reply_writer():
+    from src.ui.evals_tab import conversation_score_notes
+
+    notes = dict(conversation_score_notes("GLM 5.3 Flash", "Gemini 3.5 Flash Lite"))
+    assert "GLM 5.3 Flash" in notes["Understood the request"]
+    assert "Intent" in notes["Understood the request"]
+    assert "ask, retrieve, converse, pivot, or refuse" in notes["Took the expected step"]
+    assert "filters that reached retrieval" in notes["Kept the expected filters"]
+    assert "Gemini 3.5 Flash Lite" in notes["Reply stayed on the movies"]
+
+
+def test_golden_index_names_c01_and_lists_its_turns():
+    from src.evals.conversations import load_conversations
+    from src.ui.evals_tab import golden_conversation_index, golden_turn_rows
+
+    conversations = load_conversations()
+    index = golden_conversation_index(conversations)
+    c01 = next(row for row in index if row["id"] == "C01")
+    assert c01["title"] == "Date Night Movies Refined Backwards"
+    assert c01["kind"] == "Recorded session"
+    turns = [row for row in golden_turn_rows(conversations) if row["conversation"] == "C01"]
+    assert turns[0]["turn"] == 1
+    assert turns[0]["user says"]
+    assert turns[0]["expected intent"]

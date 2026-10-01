@@ -17,6 +17,8 @@ from src.evals.runner import sweep_configs
 
 RESULTS_DIR = Path("evals/results")
 _METRICS = ["hit_rate", "mrr", "context_precision", "faithfulness", "relevancy"]
+#: The three retrieval scores drawn together on one chart per decision.
+_CHART_METRICS = ("hit_rate", "mrr", "context_precision")
 _METRIC_LABELS = {
     "hit_rate": "Hit Rate@5",
     "mrr": "MRR@5",
@@ -96,6 +98,18 @@ _SCORE_LINES = (
     ("constraint_fidelity", "fidelity", _FILTERS),
     ("faithfulness", None, _REPLY),
 )
+_TIER_LABELS = {
+    "C_records": "Recorded session",
+    "C_memory": "Memory across turns",
+    "C_narrowing": "Narrowing before a search",
+    "C_refinement": "Changing an earlier search",
+    "C_reference": "Pointing at a movie already shown",
+    "C_plot": "Describing a plot",
+}
+_QUERY_TIER_LABELS = {
+    "A_guardrails": "Guardrail",
+    "B_retrieval": "Retrieval",
+}
 
 
 def _load_run(path: Path) -> dict:
@@ -154,10 +168,38 @@ def newest_full_v2_by_model(
     return newest
 
 
+def retrieval_chart_rows(runs: list[dict], knob: str) -> list[dict]:
+    """One chart's rows: hit rate, MRR, and context precision, in sweep order.
+
+    Faithfulness and relevancy stay off this chart. A missing score is omitted,
+    not drawn as zero.
+    """
+    raw, _missing = sweep_rows(runs, knob)
+    labels = _POINT_LABELS.get(knob, {})
+    line_order = [_METRIC_LABELS[key] for key in _CHART_METRICS]
+    by_value: dict[str, dict[str, float]] = {}
+    for row in raw:
+        if row["metric"] in line_order:
+            by_value.setdefault(row["value"], {})[row["metric"]] = row["score"]
+    rows = []
+    for value, _config in sweep_configs(knob):
+        scores = by_value.get(value)
+        if not scores:
+            continue
+        option = labels.get(value, value)
+        for line in line_order:
+            score = scores.get(line)
+            if score is None:
+                continue
+            rows.append({"option": option, "line": line, "score": round(score * 100, 1)})
+    return rows
+
+
 def hit_rate_points(runs: list[dict], knob: str) -> list[tuple[str, float]]:
     """Newest sweep point per value, hit rate only, in sweep order.
 
-    Calls ``sweep_rows``. MRR and the other metrics on the same run are ignored.
+    Calls ``sweep_rows``. The chart draws MRR and context precision too;
+    the swing sentence still uses hit rate alone.
     """
     rows, _missing = sweep_rows(runs, knob)
     scores = {
@@ -274,6 +316,79 @@ def _line_chart(points: list[tuple[str, float]]) -> None:
     st.plotly_chart(fig, width="stretch", config={"staticPlot": True})
 
 
+_LINE_STYLE = {
+    "Hit Rate@5": {"color": "#1f4e79", "dash": "solid", "symbol": "circle", "rank": 1},
+    "MRR@5": {"color": "#e07a00", "dash": "dash", "symbol": "diamond", "rank": 2},
+    "Context Precision@5": {"color": "#c0392b", "dash": "solid", "symbol": "square", "rank": 3},
+}
+_MRR_ON_PRECISION = (
+    "MRR is the dashed line. It lands on context precision here: "
+    "each scored query names one relevant movie, so the two scores are equal."
+)
+
+
+def mrr_matches_precision(rows: list[dict]) -> bool:
+    """True when every option that has both scores has the same number for both."""
+    by_option: dict[str, dict[str, float]] = {}
+    for row in rows:
+        by_option.setdefault(row["option"], {})[row["line"]] = row["score"]
+    pairs = [
+        scores
+        for scores in by_option.values()
+        if "MRR@5" in scores and "Context Precision@5" in scores
+    ]
+    return bool(pairs) and all(scores["MRR@5"] == scores["Context Precision@5"] for scores in pairs)
+
+
+def _metric_chart(rows: list[dict]) -> None:
+    """One chart, three lines: hit rate, MRR, context precision.
+
+    MRR is drawn last, dashed, so it stays visible when it shares a point
+    with context precision.
+    """
+    shared = {
+        row["option"]
+        for row in rows
+        if row["line"] == "MRR@5"
+        and any(
+            other["option"] == row["option"]
+            and other["line"] == "Context Precision@5"
+            and other["score"] == row["score"]
+            for other in rows
+        )
+    }
+    labeled = []
+    for row in rows:
+        text = "" if row["line"] == "MRR@5" and row["option"] in shared else f"{row['score']:.1f}"
+        labeled.append({**row, "text": text})
+    draw_order = {"Hit Rate@5": 0, "Context Precision@5": 1, "MRR@5": 2}
+    frame = pd.DataFrame(labeled)
+    frame["_draw"] = frame["line"].map(draw_order)
+    frame = frame.sort_values("_draw").drop(columns="_draw")
+    fig = px.line(
+        frame,
+        x="option",
+        y="score",
+        color="line",
+        markers=True,
+        text="text",
+        category_orders={"line": list(_LINE_STYLE)},
+    )
+    fig.update_traces(textposition="top center", texttemplate="%{text}")
+    for trace in fig.data:
+        style = _LINE_STYLE[trace.name]
+        trace.update(
+            line=dict(color=style["color"], dash=style["dash"], width=2.5),
+            marker=dict(color=style["color"], symbol=style["symbol"], size=9),
+            legendrank=style["rank"],
+        )
+    options = list(dict.fromkeys(row["option"] for row in rows))
+    fig.update_xaxes(categoryorder="array", categoryarray=options, title="")
+    fig.update_yaxes(range=[0, 100], title="")
+    fig.update_layout(height=360, margin=dict(l=10, r=10, t=28, b=10), legend_title="")
+    st.plotly_chart(fig, width="stretch", config={"staticPlot": True})
+
+
 def _conversation_chart(run: dict) -> None:
     rows = []
     ids = []
@@ -305,23 +420,22 @@ def _conversation_chart(run: dict) -> None:
     st.plotly_chart(fig, width="stretch", config={"staticPlot": True})
 
 
-def _golden_sizes() -> tuple[int | None, int | None, int | None]:
-    n_conversations = n_turns = n_queries = None
+def _load_golden_sources():
+    """Golden conversations and single-turn queries. None when a file will not load."""
+    conversations = queries = None
     try:
         from src.evals.conversations import load_conversations
 
         conversations = load_conversations()
-        n_conversations = len(conversations.conversations)
-        n_turns = sum(len(convo.turns) for convo in conversations.conversations)
     except (OSError, ValueError):
         pass
     try:
         from src.evals.runner import load_dataset
 
-        n_queries = len(load_dataset())
+        queries = load_dataset()
     except (OSError, ValueError):
         pass
-    return n_conversations, n_turns, n_queries
+    return conversations, queries
 
 
 def _load_runs(results_dir: Path) -> list[dict]:
@@ -373,6 +487,131 @@ def _retrieval_caption(runs: list[dict], knob: str, n_queries: int | None) -> st
     return " ".join(parts)
 
 
+def conversation_score_notes(understand_label: str, synthesis_label: str) -> list[tuple[str, str]]:
+    """What each golden-conversation score is, and which part of Maya produced it."""
+    return [
+        (
+            _UNDERSTOOD,
+            f"The Understand model ({understand_label}) named the Intent on each turn. "
+            "A turn counts when that Intent matches the golden conversation.",
+        ),
+        (
+            _STEP,
+            "Code then chose the step: ask, retrieve, converse, pivot, or refuse. "
+            "A turn counts when that step matches the golden conversation.",
+        ),
+        (
+            _FILTERS,
+            "On ask and retrieve turns, the filters that reached retrieval are compared "
+            "with the filters the golden conversation required. A turn counts when they match.",
+        ),
+        (
+            _REPLY,
+            "A judge scored the written reply against the movies retrieval returned. "
+            f"The reply is written by {synthesis_label}. "
+            "This score is for the whole run, so the chart has no line for it.",
+        ),
+    ]
+
+
+def single_turn_score_rows(runs: list[dict]) -> list[dict]:
+    """One row per retrieval option, with every single-turn score on that saved run.
+
+    Hit rate, MRR, and context precision are the lines on the retrieval chart.
+    The two judge scores stay in this table.
+    """
+    rows = []
+    for knob in REPORT_DECISIONS:
+        if knob == "models":
+            continue
+        title, _metric = _DECISION_COPY[knob]
+        labels = _POINT_LABELS.get(knob, {})
+        raw, _missing = sweep_rows(runs, knob)
+        by_value: dict[str, dict[str, float]] = {}
+        for row in raw:
+            by_value.setdefault(row["value"], {})[row["metric"]] = row["score"]
+        for value, _config in sweep_configs(knob):
+            scores = by_value.get(value)
+            if not scores:
+                continue
+            record: dict[str, str | float] = {
+                "decision": title,
+                "option": labels.get(value, value),
+            }
+            for metric, label in _METRIC_LABELS.items():
+                score = scores.get(label)
+                if score is not None:
+                    record[label] = round(score * 100, 1)
+            rows.append(record)
+    return rows
+
+
+def golden_query_rows(queries: list[dict]) -> list[dict]:
+    """One row per single-turn golden query."""
+    rows = []
+    for query in queries:
+        ids = query.get("relevant_movie_ids") or []
+        rows.append(
+            {
+                "id": query.get("id", ""),
+                "kind": _QUERY_TIER_LABELS.get(query.get("tier", ""), query.get("tier", "")),
+                "query": query.get("query", ""),
+                "expected intent": query.get("expected_intent", ""),
+                "expected step": query.get("expected_path", ""),
+                "relevant movie ids": ", ".join(str(movie_id) for movie_id in ids),
+                "notes": query.get("notes") or "",
+            }
+        )
+    return rows
+
+
+def golden_conversation_index(conversations) -> list[dict]:
+    """One row per golden conversation: the id on the chart, and what it is."""
+    return [
+        {
+            "id": convo.id,
+            "title": convo.title,
+            "kind": _TIER_LABELS.get(convo.tier, convo.tier),
+            "turns": len(convo.turns),
+        }
+        for convo in conversations.conversations
+    ]
+
+
+def golden_turn_rows(conversations) -> list[dict]:
+    """Every turn of the golden conversations."""
+    rows = []
+    for convo in conversations.conversations:
+        for turn in convo.turns:
+            expect = turn.expect
+            rows.append(
+                {
+                    "conversation": convo.id,
+                    "title": convo.title,
+                    "turn": turn.n,
+                    "user says": turn.user,
+                    "expected intent": expect.intent.value,
+                    "expected step": expect.path,
+                    "expected filters": expect.constraints.summary(),
+                    "notes": expect.notes,
+                }
+            )
+    return rows
+
+
+def _model_label(model_id: str | None) -> str:
+    if not model_id:
+        return "the model on the saved run"
+    return _MODEL_LABELS.get(model_id, model_id)
+
+
+def _show_table(rows: list[dict]) -> None:
+    if not rows:
+        st.caption(_MISSING)
+        return
+    st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
+
+
 def _model_caption(runs: list[dict]) -> str:
     parts = ["This line is a judge score on the turns that wrote a reply."]
     if runs:
@@ -395,7 +634,14 @@ def render_evals(session=None, results_dir: Path = RESULTS_DIR) -> None:
     st.header("Evals")
     st.caption("Static report. Routing Stack v2. Saved measurements only.")
     runs = _load_runs(results_dir)
-    n_conversations, n_turns, n_queries = _golden_sizes()
+    conversations, queries = _load_golden_sources()
+    n_conversations = len(conversations.conversations) if conversations is not None else None
+    n_turns = (
+        sum(len(convo.turns) for convo in conversations.conversations)
+        if conversations is not None
+        else None
+    )
+    n_queries = len(queries) if queries is not None else None
     if n_conversations is None or n_turns is None:
         by_model: dict[str, dict] = {}
     else:
@@ -456,7 +702,13 @@ def render_evals(session=None, results_dir: Path = RESULTS_DIR) -> None:
             if not points:
                 st.caption(_MISSING)
                 continue
-            _line_chart(points)
+            if decision_id == "models":
+                _line_chart(points)
+            else:
+                chart_rows = retrieval_chart_rows(runs, decision_id)
+                _metric_chart(chart_rows)
+                if mrr_matches_precision(chart_rows):
+                    st.caption(_MRR_ON_PRECISION)
             if caption:
                 st.caption(caption)
 
@@ -484,6 +736,31 @@ def render_evals(session=None, results_dir: Path = RESULTS_DIR) -> None:
                     percent_label(score) if score is not None else "n/a",
                     border=True,
                 )
-        st.caption("This chart is one point per conversation.")
+        synthesis = _model_label((headline.get("config_snapshot") or {}).get("synthesis_model"))
+        for label, note in conversation_score_notes(model_label, synthesis):
+            st.caption(f"{label}. {note}")
+    with st.expander("What C01, C02, and the rest are"):
+        st.caption(
+            "Each id on the chart is one scripted conversation. "
+            "The first table is the title. The second is every turn."
+        )
+        if conversations is None:
+            st.caption(_MISSING)
+        else:
+            _show_table(golden_conversation_index(conversations))
+            _show_table(golden_turn_rows(conversations))
+    with st.expander("Single-turn scores and golden queries"):
+        st.caption(
+            "Hit rate, MRR, and context precision are the three lines on each retrieval chart. "
+            "These rows also keep the two judge scores from those same saved runs."
+        )
+        _show_table(single_turn_score_rows(runs))
+        st.caption("The single-turn golden queries those runs are scored against.")
+        _show_table(golden_query_rows(queries or []))
+    if headline is not None:
+        st.caption(
+            "Each point is one conversation. A line is that conversation's share of turns "
+            "for understood the request, took the expected step, or kept the expected filters."
+        )
         _conversation_chart(headline)
     st.caption(_FOOTER)
