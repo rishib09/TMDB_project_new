@@ -12,7 +12,7 @@ import streamlit as st
 from src.ui.chat_tab import render_chat
 from src.ui.evals_tab import render_evals
 from src.ui.feedback_tab import render_feedback_view
-from src.ui.session import get_session
+from src.ui.session import ensure_runtime_files, get_session
 from src.ui.sidebar_lab import render_lab
 from src.ui.trace_tab import render_traces
 
@@ -23,13 +23,18 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+with st.spinner("Loading the movie catalog…"):
+    ensure_runtime_files()
+
 session = get_session()
 
 with st.sidebar:
     views = ["Chat", "Evals", "Traces", "Feedback"]
     view_icons = {
-        "Chat": ":material/chat:", "Evals": ":material/monitoring:",
-        "Traces": ":material/timeline:", "Feedback": ":material/forum:",
+        "Chat": ":material/chat:",
+        "Evals": ":material/monitoring:",
+        "Traces": ":material/timeline:",
+        "Feedback": ":material/forum:",
     }
     selection = st.segmented_control(
         "Pages",

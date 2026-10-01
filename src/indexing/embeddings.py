@@ -24,9 +24,9 @@ from src.domain.movie import TokenCounter
 class EmbeddingProvider(Protocol):
     """Structural interface: any duck-typed provider works, no inheritance."""
 
-    name: str          # model id as recorded in collection metadata
-    dimensions: int    # output vector width (informational; chroma infers)
-    max_tokens: int    # packing window — documents never exceed this
+    name: str  # model id as recorded in collection metadata
+    dimensions: int  # output vector width (informational; chroma infers)
+    max_tokens: int  # packing window — documents never exceed this
 
     def embed(self, texts: list[str]) -> list[list[float]]:
         """Embed a batch of texts; order-preserving."""
@@ -91,9 +91,7 @@ class FastembedProvider:
             _FASTEMBED_CACHE[model_name] = TextEmbedding(model_name=model_name)
         self._model = _FASTEMBED_CACHE[model_name]
         if model_name not in _COUNTER_CACHE:
-            _COUNTER_CACHE[model_name] = FastembedTokenCounter(
-                self._model.model.tokenizer
-            )
+            _COUNTER_CACHE[model_name] = FastembedTokenCounter(self._model.model.tokenizer)
         self._counter: FastembedTokenCounter = _COUNTER_CACHE[model_name]
         self._dimensions: int | None = None
 
@@ -155,16 +153,36 @@ MODEL_PROFILES: dict[str, dict[str, str | int]] = {
     "jina_v2_local": {"backend": "fastembed", "model": "jinaai/jina-embeddings-v2-base-en"},
     # cloud via OpenRouter (verified live 2026-09-04; free tiers first)
     # cloud via OpenRouter (windows verified against the live catalog 2026-09-04)
-    "lfm_free": {"backend": "openrouter", "model": "liquid/lfm-2.5-embedding-350m:free", "max_tokens": 512},
-    "nemotron_free": {"backend": "openrouter", "model": "nvidia/nemotron-3-embed-1b:free", "max_tokens": 32768},
-    "gemini_embedding_2": {"backend": "openrouter", "model": "google/gemini-embedding-2", "max_tokens": 8192},
+    "lfm_free": {
+        "backend": "openrouter",
+        "model": "liquid/lfm-2.5-embedding-350m:free",
+        "max_tokens": 512,
+    },
+    "nemotron_free": {
+        "backend": "openrouter",
+        "model": "nvidia/nemotron-3-embed-1b:free",
+        "max_tokens": 32768,
+    },
+    "gemini_embedding_2": {
+        "backend": "openrouter",
+        "model": "google/gemini-embedding-2",
+        "max_tokens": 8192,
+    },
     "bge_m3": {"backend": "openrouter", "model": "baai/bge-m3", "max_tokens": 8194},
-    "voyage_4_lite": {"backend": "openrouter", "model": "voyageai/voyage-4-lite", "max_tokens": 32000},
+    "voyage_4_lite": {
+        "backend": "openrouter",
+        "model": "voyageai/voyage-4-lite",
+        "max_tokens": 32000,
+    },
 }
 
 #: Benchmark default = cloud-only (user direction: no local model runs).
 BENCHMARK_PROFILES: list[str] = [
-    "lfm_free", "nemotron_free", "gemini_embedding_2", "bge_m3", "voyage_4_lite",
+    "lfm_free",
+    "nemotron_free",
+    "gemini_embedding_2",
+    "bge_m3",
+    "voyage_4_lite",
 ]
 
 
@@ -182,13 +200,20 @@ def collection_name(preset: str, profile: str) -> str:
     return f"{preset}_{profile}"
 
 
+def lab_collection_names() -> tuple[str, ...]:
+    """The six collections the Lab can select: each UI profile, full and minimal."""
+    return tuple(
+        collection_name(preset, profile)
+        for profile in UI_PROFILES
+        for preset in ("full", "minimal")
+    )
+
+
 def provider_from_profile(profile_name: str) -> EmbeddingProvider:
     """Builds a provider from MODEL_PROFILES — the benchmark matrix's factory."""
     profile = MODEL_PROFILES.get(profile_name)
     if profile is None:
-        raise ValueError(
-            f"Unknown model profile '{profile_name}'. Valid: {sorted(MODEL_PROFILES)}"
-        )
+        raise ValueError(f"Unknown model profile '{profile_name}'. Valid: {sorted(MODEL_PROFILES)}")
     if profile["backend"] == "fastembed":
         return FastembedProvider(model_name=str(profile["model"]))
     return OpenRouterEmbeddingProvider(
@@ -222,9 +247,7 @@ class OpenRouterEmbeddingProvider:
                 "OPENROUTER_API_KEY is not set — refusing to construct a cloud "
                 "embedding provider that cannot work (fail-closed)."
             )
-        self._client = OpenAI(
-            base_url=base_url or self.DEFAULT_BASE_URL, api_key=key
-        )
+        self._client = OpenAI(base_url=base_url or self.DEFAULT_BASE_URL, api_key=key)
         self.name = model
         self.max_tokens = max_tokens
         self.max_retries = max_retries
@@ -262,8 +285,11 @@ class OpenRouterEmbeddingProvider:
         except Exception as exc:
             if self._parse_window_error(exc) is None:
                 raise
-            print(f"  [window] batch exceeds the model window ({self.max_tokens} tok) "
-                  f"— per-document adaptive embedding for this batch", flush=True)
+            print(
+                f"  [window] batch exceeds the model window ({self.max_tokens} tok) "
+                f"— per-document adaptive embedding for this batch",
+                flush=True,
+            )
             return [self._embed_one_adaptive(text) for text in texts]
 
     def _embed_one_adaptive(self, text: str) -> list[float]:
@@ -284,9 +310,11 @@ class OpenRouterEmbeddingProvider:
                 keep_chars = int(len(text) * (model_max * 0.98) / real_tokens)
                 self.truncation_events += 1
                 self.max_truncated_tokens = max(self.max_truncated_tokens, real_tokens)
-                print(f"  [truncate] doc {real_tokens} tok > {model_max} window "
-                      f"(density {density:.2f}x) — cut to {model_max * 0.98:.0f} tok",
-                      flush=True)
+                print(
+                    f"  [truncate] doc {real_tokens} tok > {model_max} window "
+                    f"(density {density:.2f}x) — cut to {model_max * 0.98:.0f} tok",
+                    flush=True,
+                )
                 text = text[:keep_chars]
         raise RuntimeError(
             f"document could not be packed inside the {self.max_tokens}-token "
@@ -301,8 +329,7 @@ class OpenRouterEmbeddingProvider:
         status = getattr(exc, "status_code", None)
         if status is not None and status != 400:
             return None
-        match = re.search(r"has (\d+) tokens, exceeding the model maximum of (\d+)",
-                          str(exc))
+        match = re.search(r"has (\d+) tokens, exceeding the model maximum of (\d+)", str(exc))
         if not match:
             return None
         return int(match.group(1)), int(match.group(2))
@@ -338,8 +365,10 @@ class OpenRouterEmbeddingProvider:
                 if not retryable or attempt == self.max_retries:
                     raise
                 wait_s = self._backoff_s(attempt)
-                print(f"  [rate-limited] retry {attempt + 1}/{self.max_retries} "
-                      f"in {wait_s:.0f}s", flush=True)
+                print(
+                    f"  [rate-limited] retry {attempt + 1}/{self.max_retries} in {wait_s:.0f}s",
+                    flush=True,
+                )
                 time.sleep(wait_s)
         raise last_error  # unreachable; satisfies type checkers
 
