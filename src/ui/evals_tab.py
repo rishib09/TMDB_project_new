@@ -1,65 +1,115 @@
-"""Evals dashboard tab (issue #7, modernized by #60 / #54 grill verdict).
+"""Evals view: a static Routing Stack v2 report (#142, verdict #141).
 
-Reads the identity-keyed JSON files produced by `src/evals/runner.py` (#59)
-— the UI never computes metrics itself; it visualizes what the harness
-measured. Runs group under preset bookmarks; sweeps render via a knob
-picker; the current Lab config can be evaluated in place.
+Reads the JSON files produced by `src/evals/runner.py`. The view does not
+compute metrics and does not run an evaluation. The decision list is closed.
 """
 
 import json
+from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
 import plotly.express as px
 import streamlit as st
 
-from src.domain.config import ExperimentConfig, PresetType
-from src.evals.runner import SWEEPS, sweep_configs
-from src.feedback.store import FeedbackStore
+from src.domain.config import ExperimentConfig
+from src.evals.runner import sweep_configs
 
 RESULTS_DIR = Path("evals/results")
 _METRICS = ["hit_rate", "mrr", "context_precision", "faithfulness", "relevancy"]
 _METRIC_LABELS = {
-    "hit_rate": "Hit Rate@5", "mrr": "MRR@5", "context_precision": "Context Precision@5",
-    "faithfulness": "Faithfulness (judge)", "relevancy": "Relevancy (judge)",
+    "hit_rate": "Hit Rate@5",
+    "mrr": "MRR@5",
+    "context_precision": "Context Precision@5",
+    "faithfulness": "Faithfulness (judge)",
+    "relevancy": "Relevancy (judge)",
 }
-_PRESET_TITLES = {
-    "production": "Production", "fast_budget": "Fast Budget",
-    "naive_baseline": "Naive Baseline",
+#: #141: closed. `router_model` is a v1 routing sweep and is not a section.
+REPORT_DECISIONS: tuple[str, ...] = (
+    "models",
+    "embedding_combo",
+    "hybrid_alpha",
+    "retrieval_top_k",
+    "reranker",
+)
+_MISSING = "No saved run for this decision yet."
+_GUARDRAIL = (
+    "Closed-world grounding is on in every saved run on this page. "
+    "The result files have no on/off comparison, so this decision has no line."
+)
+_FOOTER = "A second routing stack still exists and is left off this page."
+_ADR_NOTE = (
+    "The Lab sidebar quotes a separate ADR 0008 figure for this decision. "
+    "That figure is not drawn here."
+)
+_MODEL_ORDER = (
+    "google/gemma-4-31b-it",
+    "google/gemini-3.5-flash-lite",
+    "google/gemini-3.8-flash",
+    "glm-5.3-flash",
+)
+_MODEL_LABELS = {
+    "google/gemma-4-31b-it": "Gemma 4 31B",
+    "google/gemini-3.5-flash-lite": "Gemini 3.5 Flash Lite",
+    "google/gemini-3.8-flash": "Gemini 3.8 Flash",
+    "glm-5.3-flash": "GLM 5.3 Flash",
 }
-_MODE_COSTS = {  # live LLM calls per golden query (#54 grill D8)
-    "retrieval": 0, "routing": 1, "full": 3,
+_DECISION_COPY = {
+    "models": ("Which model wrote the reply", "how often the reply stayed on the retrieved movies"),
+    "embedding_combo": ("Which embedding describes each movie", "hit rate"),
+    "hybrid_alpha": ("How lexical and vector search are mixed", "hit rate"),
+    "retrieval_top_k": ("How many movies are kept", "hit rate"),
+    "reranker": ("Whether a reranker reorders them", "hit rate"),
 }
+_POINT_LABELS: dict[str, dict[str, str]] = {
+    "hybrid_alpha": {
+        "0.0": "Lexical only",
+        "0.25": "25% dense",
+        "0.5": "Half and half",
+        "0.75": "75% dense",
+        "1.0": "Dense only",
+    },
+    "retrieval_top_k": {"3": "Keep 3", "5": "Keep 5", "10": "Keep 10"},
+    "reranker": {
+        "off": "Off",
+        "ms-marco-TinyBERT-L-2-v2": "TinyBERT",
+        "ms-marco-MiniLM-L-12-v2": "MiniLM",
+        "ce-esci-MiniLM-L12-v2": "ESCI MiniLM",
+    },
+    "embedding_combo": {
+        "full_lfm_free": "LFM · full",
+        "minimal_lfm_free": "LFM · minimal",
+        "full_nemotron_free": "Nemotron · full",
+        "minimal_nemotron_free": "Nemotron · minimal",
+        "full_gemini_embedding_2": "Gemini · full",
+        "minimal_gemini_embedding_2": "Gemini · minimal",
+    },
+}
+_UNDERSTOOD = "Understood the request"
+_STEP = "Took the expected step"
+_FILTERS = "Kept the expected filters"
+_REPLY = "Reply stayed on the movies"
+#: Run-level key, per-conversation key, label. Reply score has no per-conversation line.
+_SCORE_LINES = (
+    ("intent_accuracy", "intent_accuracy", _UNDERSTOOD),
+    ("path_accuracy", "path_accuracy", _STEP),
+    ("constraint_fidelity", "fidelity", _FILTERS),
+    ("faithfulness", None, _REPLY),
+)
 
 
 def _load_run(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def run_display_name(run: dict) -> str:
-    """Preset bookmark, `custom @ hash` for off-preset runs, legacy marked."""
-    if not run.get("config_hash"):
-        return f"{run.get('label', '?')} (legacy)"
-    preset = run.get("preset", "custom")
-    if preset in _PRESET_TITLES:
-        return _PRESET_TITLES[preset]
-    return f"custom @ {run['config_hash']}"
-
-
-def staleness_flags(
-    run: dict, collection_exists=None, current_dataset_version: str = ""
-) -> list[str]:
-    """#54 grill D7: flag stale runs, never auto-delete. Pure, unit-tested."""
-    flags = []
-    collection = run.get("collection", "")
-    if collection and collection_exists is not None and not collection_exists(collection):
-        flags.append(f"collection `{collection}` no longer exists")
-    stamped = run.get("dataset_version", "")
-    if stamped and current_dataset_version and stamped != current_dataset_version:
-        flags.append(
-            f"dataset {stamped} predates the current set ({current_dataset_version})"
-        )
-    return flags
+def _newest_by_sweep_value(runs: list[dict], knob: str) -> dict[str, dict]:
+    """Newest run for each value of one sweep knob."""
+    newest: dict[str, dict] = {}
+    for run in sorted(runs, key=lambda item: item.get("timestamp", "")):
+        sweep = run.get("sweep") or {}
+        if sweep.get("knob") == knob:
+            newest[str(sweep.get("value"))] = run
+    return newest
 
 
 def sweep_rows(runs: list[dict], knob: str) -> tuple[list[dict], list[str]]:
@@ -68,11 +118,7 @@ def sweep_rows(runs: list[dict], knob: str) -> tuple[list[dict], list[str]]:
     Rows come from runs stamped `sweep.knob == knob` (newest per value);
     missing values power the "run this sweep" hint (#54 grill D9).
     """
-    newest_by_value: dict[str, dict] = {}
-    for run in sorted(runs, key=lambda r: r.get("timestamp", "")):
-        sweep = run.get("sweep") or {}
-        if sweep.get("knob") == knob:
-            newest_by_value[str(sweep.get("value"))] = run
+    newest_by_value = _newest_by_sweep_value(runs, knob)
     rows = []
     for value, run in newest_by_value.items():
         for metric in _METRICS:
@@ -85,313 +131,359 @@ def sweep_rows(runs: list[dict], knob: str) -> tuple[list[dict], list[str]]:
     return rows, missing
 
 
-def sweep_baseline_label(knob: str) -> str | None:
-    """The sweep value that IS the pristine Production baseline. Pure."""
-    production = ExperimentConfig().apply_preset(PresetType.PRODUCTION_HYBRID)
-    for label, config in sweep_configs(knob):
-        if config == production:
-            return label
-    return None
+def newest_full_v2_by_model(
+    runs: list[dict], n_conversations: int, n_turns: int
+) -> dict[str, dict]:
+    """Newest Routing Stack v2 conversation run per understand-model.
 
-
-def render_metric_scorecards(run: dict) -> None:
-    """Metric cards with delta chips vs the prior same-config-hash run."""
-    cols = st.columns(5)
-    for col, metric in zip(cols, _METRICS):
-        if run.get(metric) is None:
-            continue
-        delta = (run.get("delta") or {}).get(metric)
-        col.metric(
-            _METRIC_LABELS[metric],
-            f"{run[metric]:.2f}",
-            delta=f"{delta:+.2f}" if delta is not None else None,
-        )
-
-
-def render_history_chart(runs: list[dict]) -> None:
-    """One grouped bar per run × metric — architecture comparison at a glance."""
-    rows = []
+    A run counts only when ``n_conversations`` and ``n_turns`` match the
+    golden conversations. A shorter pilot cannot replace a full run.
+    """
+    newest: dict[str, dict] = {}
     for run in runs:
-        for metric in _METRICS:
-            if run.get(metric) is not None:
-                rows.append({"run": run_display_name(run), "metric": _METRIC_LABELS[metric],
-                             "value": run[metric]})
+        if run.get("mode") != "conversation" or run.get("routing_stack") != "v2":
+            continue
+        if run.get("n_conversations") != n_conversations or run.get("n_turns") != n_turns:
+            continue
+        model = (run.get("config_snapshot") or {}).get("v2_router_model")
+        if not model:
+            continue
+        previous = newest.get(model)
+        if previous is None or run.get("timestamp", "") > previous.get("timestamp", ""):
+            newest[model] = run
+    return newest
+
+
+def hit_rate_points(runs: list[dict], knob: str) -> list[tuple[str, float]]:
+    """Newest sweep point per value, hit rate only, in sweep order.
+
+    Calls ``sweep_rows``. MRR and the other metrics on the same run are ignored.
+    """
+    rows, _missing = sweep_rows(runs, knob)
+    scores = {
+        row["value"]: row["score"] for row in rows if row["metric"] == _METRIC_LABELS["hit_rate"]
+    }
+    order = [label for label, _ in sweep_configs(knob)]
+    return [(label, scores[label]) for label in order if label in scores]
+
+
+def reply_points(by_model: dict[str, dict]) -> list[tuple[str, float]]:
+    """(understand-model id, faithfulness) for fleet runs that have a reply score.
+
+    Known models stay in report order. Any other id follows, sorted.
+    A missing faithfulness is omitted, not drawn as zero.
+    """
+
+    def sort_key(model_id: str) -> tuple:
+        if model_id in _MODEL_ORDER:
+            return (0, _MODEL_ORDER.index(model_id))
+        return (1, model_id)
+
+    points = []
+    for model_id in sorted(by_model, key=sort_key):
+        score = by_model[model_id].get("faithfulness")
+        if score is None:
+            continue
+        points.append((model_id, score))
+    return points
+
+
+def score_swing(scores: list[float]) -> float | None:
+    """Best minus worst. None when fewer than two scores."""
+    if len(scores) < 2:
+        return None
+    return max(scores) - min(scores)
+
+
+def widest_decision(swings: dict[str, float]) -> list[str]:
+    """Ids that share the largest swing, in insertion order."""
+    if not swings:
+        return []
+    top = max(swings.values())
+    return [key for key, gap in swings.items() if gap == top]
+
+
+def saved_count_note(saved: int, current: int, noun: str) -> str | None:
+    """Caption clause when the saved count differs from the golden file."""
+    if saved == current:
+        return None
+    return f"Scored {saved} {noun}. The golden file now has {current}."
+
+
+def percent_label(score: float) -> str:
+    """One decimal percent. 0.226 -> '22.6%'."""
+    return f"{score * 100:.1f}%"
+
+
+def lead_sentence(
+    entries: list[tuple[str, str, list[tuple[str, float]], float]],
+) -> str | None:
+    """The opening sentence. ``entries`` are (title, metric phrase, percent points, swing).
+
+    Names every decision that shares the largest swing. None when no decision
+    has two options.
+    """
+    if not entries:
+        return None
+    swings = {title: gap for title, _metric, _points, gap in entries}
+    packed = {title: (metric, points) for title, metric, points, _gap in entries}
+    names = widest_decision(swings)
+    clauses = []
+    for title in names:
+        metric, points = packed[title]
+        best = max(points, key=lambda point: point[1])
+        worst = min(points, key=lambda point: point[1])
+        clauses.append(
+            f"{title} moved {metric} the furthest: "
+            f"{best[1]:.1f}% on {best[0]}, {worst[1]:.1f}% on {worst[0]}, "
+            f"{swings[title]:.1f} points"
+        )
+    if len(clauses) == 1:
+        return clauses[0] + "."
+    return "These decisions are tied for the largest swing. " + " ".join(
+        clause + "." for clause in clauses
+    )
+
+
+def _percent_points(
+    raw: list[tuple[str, float]], labels: dict[str, str]
+) -> list[tuple[str, float]]:
+    return [(labels.get(value, value), round(score * 100, 1)) for value, score in raw]
+
+
+def _saved_on(runs: list[dict]) -> str:
+    stamps = [run.get("timestamp", "") for run in runs if run.get("timestamp")]
+    if not stamps:
+        return ""
+    try:
+        moment = datetime.fromisoformat(max(stamps).replace("Z", "+00:00"))
+    except ValueError:
+        return max(stamps)[:10]
+    return f"{moment.day} {moment.strftime('%b')} {moment.year}"
+
+
+def _line_chart(points: list[tuple[str, float]]) -> None:
+    frame = pd.DataFrame(
+        {"option": [point[0] for point in points], "score": [point[1] for point in points]}
+    )
+    fig = px.line(frame, x="option", y="score", markers=True, text="score")
+    fig.update_traces(textposition="top center", texttemplate="%{text:.1f}")
+    fig.update_xaxes(categoryorder="array", categoryarray=frame["option"].tolist(), title="")
+    fig.update_yaxes(range=[0, 100], title="")
+    fig.update_layout(height=320, margin=dict(l=10, r=10, t=28, b=10), showlegend=False)
+    st.plotly_chart(fig, width="stretch", config={"staticPlot": True})
+
+
+def _conversation_chart(run: dict) -> None:
+    rows = []
+    ids = []
+    for convo in run.get("per_conversation") or []:
+        ids.append(convo.get("id", ""))
+        for _run_key, convo_key, label in _SCORE_LINES:
+            if convo_key is None:
+                continue
+            score = convo.get(convo_key)
+            rows.append(
+                {
+                    "conversation": convo.get("id", ""),
+                    "line": label,
+                    "score": None if score is None else round(score * 100, 1),
+                }
+            )
     if not rows:
-        st.info("No runs with metrics yet — run `python -m src.evals.runner`.")
+        st.caption(_MISSING)
         return
     frame = pd.DataFrame(rows)
-    fig = px.bar(frame, x="run", y="value", color="metric", barmode="group",
-                 color_discrete_sequence=px.colors.qualitative.Set2)
-    fig.update_layout(height=320, margin=dict(l=10, r=10, t=10, b=10),
-                      legend_title="", yaxis_title="score")
-    st.plotly_chart(fig, use_container_width=True)
-
-
-def render_sweep_section(runs: list[dict]) -> None:
-    """Knob picker → metric vs knob-value from matching sweep runs (D9)."""
-    st.markdown("#### Knob impact")
-    knob = st.selectbox("Knob", sorted(SWEEPS), format_func=lambda k: k.replace("_", " "))
-    rows, missing = sweep_rows(runs, knob)
-    if rows:
-        frame = pd.DataFrame(rows)
-        # Categorical x-axis: plotly's add_vline can't annotate string ticks,
-        # so the Production baseline is marked in the tick label itself.
-        baseline = sweep_baseline_label(knob)
-        if baseline is not None:
-            frame["value"] = frame["value"].map(
-                lambda v: f"{v} (baseline)" if v == baseline else v
-            )
-        fig = px.bar(frame, x="value", y="score", color="metric", barmode="group",
-                     color_discrete_sequence=px.colors.qualitative.Set2)
-        fig.update_layout(height=320, margin=dict(l=10, r=10, t=30, b=10),
-                          legend_title="", xaxis_title=knob, yaxis_title="score")
-        st.plotly_chart(fig, use_container_width=True)
-    if missing:
-        st.caption(
-            f"No runs yet for: {', '.join(missing)} — "
-            f"`python -m src.evals.runner --sweep {knob}`"
-        )
-
-
-def render_evaluate_current(session) -> None:
-    """Evaluate the sidebar's exact config (#54 grill D8): free by default,
-    live modes opt-in with the call count + remaining budget printed."""
-    st.markdown("#### Evaluate current Lab config")
-    mode = st.radio(
-        "Mode", ["retrieval", "routing", "full"], horizontal=True,
-        format_func=lambda m: f"{m} ({'free' if _MODE_COSTS[m] == 0 else f'~{_MODE_COSTS[m]} LLM calls/query'})",
+    fig = px.line(frame, x="conversation", y="score", color="line", markers=True)
+    fig.update_xaxes(categoryorder="array", categoryarray=ids, title="")
+    fig.update_yaxes(range=[0, 100], title="")
+    fig.update_layout(
+        height=360,
+        margin=dict(l=10, r=10, t=28, b=10),
+        legend_title="",
     )
-    caption = "Deterministic replay — no LLM calls."
-    if _MODE_COSTS[mode]:
+    st.plotly_chart(fig, width="stretch", config={"staticPlot": True})
+
+
+def _golden_sizes() -> tuple[int | None, int | None, int | None]:
+    n_conversations = n_turns = n_queries = None
+    try:
+        from src.evals.conversations import load_conversations
+
+        conversations = load_conversations()
+        n_conversations = len(conversations.conversations)
+        n_turns = sum(len(convo.turns) for convo in conversations.conversations)
+    except (OSError, ValueError):
+        pass
+    try:
+        from src.evals.runner import load_dataset
+
+        n_queries = len(load_dataset())
+    except (OSError, ValueError):
+        pass
+    return n_conversations, n_turns, n_queries
+
+
+def _load_runs(results_dir: Path) -> list[dict]:
+    if not results_dir.exists():
+        return []
+    runs = []
+    for path in sorted(results_dir.glob("*.json")):
         try:
-            spend = session.budget_tracker.weekly_spend()
-            remaining = max(session.budget_tracker.WEEKLY_CAP_USD - spend, 0.0)
-            caption = f"Live run — budget-gated. Remaining this week: ${remaining:.2f}."
-        except Exception:  # sink read failure must not break the tab
-            caption = "Live run — budget-gated."
-    st.caption(caption)
-    if not st.button("Run evaluation", type="primary"):
-        return
-    from src.evals.runner import (
-        DEFAULT_DATASET,
-        BenchmarkRunner,
-        _run_one,
-        load_dataset,
-        load_dataset_version,
-    )
-    from src.indexing.vector_store import MovieVectorStore
-    from src.storage.database import MovieDatabase
-
-    queries = load_dataset(DEFAULT_DATASET)
-    with st.status(f"Running {mode} evaluation ({len(queries)} queries)", expanded=False):
-        try:
-            summary = _run_one(
-                session.config.model_copy(deep=True), mode, queries,
-                label="lab", dataset_version=load_dataset_version(DEFAULT_DATASET),
-                db=MovieDatabase("data/tmdb_movies.db"),
-                store=MovieVectorStore("data/chroma_db"),
-            )
-        except RuntimeError as exc:  # budget gate abort (#59)
-            st.error(str(exc))
-            return
-        except Exception as exc:  # noqa: BLE001 — readable failure, not a traceback
-            st.error(f"Evaluation failed: {type(exc).__name__}: {exc}")
-            return
-    if summary is None:
-        st.error("The configured collection is not built — see the Lab combo picker.")
-        return
-    path = BenchmarkRunner(session.config, engine=None).save(summary)
-    st.toast(f"Run saved: {path.name}")
-    st.rerun()
+            runs.append(_load_run(path))
+        except (OSError, json.JSONDecodeError):
+            continue
+    return runs
 
 
-def render_feedback_section(store: FeedbackStore | None = None) -> None:
-    """User feedback breakdown by RAG version (issue #9)."""
-    store = store or FeedbackStore()
-    stats = store.stats_by_version()
-    st.markdown("#### User Feedback")
-    if not stats:
-        st.info(
-            "No feedback yet — rate replies with thumbs in the Chat tab; "
-            "ratings land here per RAG version."
-        )
-        return
-    frame = pd.DataFrame(stats)
-    left, right = st.columns([1, 2])
-    with left:
-        st.dataframe(frame, use_container_width=True, hide_index=True)
-    with right:
-        fig = px.bar(
-            frame, x="rag_version", y="avg_rating", color="n",
-            hover_data=["thumbs_up", "thumbs_down"],
-            color_continuous_scale="RdYlGn", range_y=[-1, 1],
-            labels={"avg_rating": "avg rating (+1/−1)", "n": "n ratings"},
-        )
-        fig.update_layout(height=260, margin=dict(l=10, r=10, t=10, b=10))
-        st.plotly_chart(fig, use_container_width=True)
+def _newest_sweep_runs(runs: list[dict], knob: str) -> list[dict]:
+    """Newest run per sweep value, in sweep order. Caption facts, not scores."""
+    newest = _newest_by_sweep_value(runs, knob)
+    order = [label for label, _ in sweep_configs(knob)]
+    return [newest[label] for label in order if label in newest]
 
 
-def scorecard_runs(selected_runs: list[dict]) -> list[dict]:
-    """Runs eligible for the per-run scorecards (#93 round-3 fix).
+def _query_count_clause(saved_counts: set[int], current: int | None) -> str:
+    counts = sorted(saved_counts)
+    if len(counts) == 1:
+        saved = counts[0]
+        if current is None:
+            return f"{saved} queries."
+        note = saved_count_note(saved, current, "queries")
+        return note if note else f"{saved} queries."
+    listed = ", ".join(str(count) for count in counts)
+    if current is None:
+        return f"Scored {listed} queries across the options."
+    return f"Scored {listed} queries across the options. The golden file now has {current}."
 
-    Pure helper so the conversation-run skip is test-pinned: conversation
-    runs have no ``n_queries``/``per_query`` and render entirely in their own
-    section — including them here KeyErrors the page.
-    """
-    return [r for r in selected_runs if r.get("mode") != "conversation"]
+
+def _retrieval_caption(runs: list[dict], knob: str, n_queries: int | None) -> str:
+    newest_runs = _newest_sweep_runs(runs, knob)
+    saved_counts = {
+        int(run["n_queries"]) for run in newest_runs if run.get("n_queries") is not None
+    }
+    parts = []
+    if saved_counts:
+        parts.append(_query_count_clause(saved_counts, n_queries))
+    saved_on = _saved_on(newest_runs)
+    if saved_on:
+        parts.append(f"Saved {saved_on}.")
+    if knob == "embedding_combo":
+        parts.append(_ADR_NOTE)
+    return " ".join(parts)
 
 
-def render_conversations_section(runs: list[dict]) -> None:
-    """#93 (D11): the multi-turn golden source, beside the single-turn source.
-
-    Composition/styling stays map #64's — this fixes the data contract: two
-    conversation runs (defaults: newest per routing_stack on the newest
-    conversations version) joined side by side, per-tier rows, expandable
-    per-conversation turn tables. Read-only: nothing here invites a visitor
-    to run anything.
-    """
-    conv_runs = [r for r in runs if r.get("mode") == "conversation"]
-    if not conv_runs:
-        return
-    st.markdown("#### Conversations (multi-turn golden source)")
-    newest_version = max(r.get("dataset_version", "") for r in conv_runs)
-    version_runs = [r for r in conv_runs if r.get("dataset_version", "") == newest_version]
-    by_stack: dict[str, dict] = {}
-    for run in version_runs:  # newest per stack wins
-        stack = run.get("routing_stack", "v1")
-        if stack not in by_stack or run.get("timestamp", "") > by_stack[stack].get("timestamp", ""):
-            by_stack[stack] = run
-    stacks = sorted(by_stack)
-    st.caption(
-        f"Golden conversations `{newest_version}` · stacks compared: {', '.join(stacks)}"
-    )
-
-    metric_rows = []
-    for stack in stacks:
-        r = by_stack[stack]
-        metric_rows.append({
-            "stack": stack,
-            "run": f"{r.get('config_hash', '?')[:8]} · {r.get('timestamp', '?')[:16]}",
-            "convs": r.get("n_conversations", 0),
-            "turns": r.get("n_turns", 0),
-            "intent": r["intent_accuracy"] if r.get("intent_accuracy") is not None else "n/a",
-            "path": r.get("path_accuracy", 0.0),
-            "fidelity": r.get("constraint_fidelity", 0.0),
-            "no-repeat": r.get("no_repeat_rate", 0.0),
-            "intersections": r.get("intersection_failures", 0),
-            "tokens": r.get("total_tokens", 0),
-        })
-    st.dataframe(pd.DataFrame(metric_rows), use_container_width=True, hide_index=True)
-
-    # per-tier rows across the compared runs
-    tier_rows = []
-    for stack in stacks:
-        for convo in by_stack[stack].get("per_conversation", []):
-            tier_rows.append({
-                "stack": stack, "tier": convo["tier"], "id": convo["id"],
-                "intent": convo["intent_accuracy"] if convo.get("intent_accuracy") is not None else "n/a",
-                "path": convo.get("path_accuracy", 0.0),
-                "fidelity": convo.get("fidelity", 0.0),
-                "failed": convo.get("failed", False),
-            })
-    if tier_rows:
-        st.dataframe(pd.DataFrame(tier_rows), use_container_width=True, hide_index=True)
-
-    for stack in stacks:
-        run = by_stack[stack]
-        for convo in run.get("per_conversation", []):
-            if not convo.get("failed"):
-                continue
-            with st.expander(f"[{stack}] {convo['id']} · {convo['title']} — failed turns"):
-                from src.evals.conversation_metrics import ConversationTurnResult, turn_failed
-                rows = []
-                for t in convo.get("per_turn", []):
-                    # one predicate, same as the runner — a key-miss failure
-                    # (the C01 carry-miss class) must not render an empty table
-                    if not turn_failed(ConversationTurnResult(**t)):
-                        continue
-                    rows.append({
-                        "n": t["n"], "user": t["user"],
-                        "intent": f"{t.get('expected_intent')} → {t.get('observed_intent')}",
-                        "path": f"{t.get('expected_path')} → {t.get('observed_path')}",
-                        "fidelity": t.get("fidelity"),
-                        "violations": ", ".join((t.get("constraint_detail") or {}).get("violations", [])),
-                        "missed keys": ", ".join(
-                            k for k, ok in (t.get("constraint_detail") or {}).get("keys", {}).items()
-                            if not ok
-                        ),
-                        "no-repeat": t.get("no_repeat_violation_ids") or "",
-                        "trace": t.get("trace_id", "")[:12],
-                    })
-                if rows:
-                    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+def _model_caption(runs: list[dict]) -> str:
+    parts = ["This line is a judge score on the turns that wrote a reply."]
+    if runs:
+        run = runs[0]
+        tail = f"{run.get('n_conversations', 0)} conversations, {run.get('n_turns', 0)} turns"
+        saved_on = _saved_on(runs)
+        if saved_on:
+            tail += f", saved {saved_on}"
+        parts.append(tail + ".")
+    return " ".join(parts)
 
 
 def render_evals(session=None, results_dir: Path = RESULTS_DIR) -> None:
+    """Static Routing Stack v2 report (#142).
+
+    ``session`` is accepted so ``app.py`` can keep passing the Lab session.
+    This view does not read it.
+    """
+    del session
     st.header("Evals")
-    st.caption(
-        "Benchmark runs from `src/evals/runner.py` — one artifact per config "
-        "snapshot; deltas compare against the prior run of the same config."
-    )
-    if session is not None:
-        render_evaluate_current(session)
-    render_feedback_section()
-    if not results_dir.exists() or not list(results_dir.glob("*.json")):
-        st.info(
-            "No benchmark results yet. Run:\n\n"
-            "`python -m src.evals.runner --combos`"
+    st.caption("Static report. Routing Stack v2. Saved measurements only.")
+    runs = _load_runs(results_dir)
+    n_conversations, n_turns, n_queries = _golden_sizes()
+    if n_conversations is None or n_turns is None:
+        by_model: dict[str, dict] = {}
+    else:
+        by_model = newest_full_v2_by_model(runs, n_conversations, n_turns)
+    model_points = _percent_points(reply_points(by_model), _MODEL_LABELS)
+
+    sections: list[tuple[str, str, str, list[tuple[str, float]], str, float | None]] = []
+    title, metric = _DECISION_COPY["models"]
+    model_gap = score_swing([point[1] for point in model_points])
+    sections.append(
+        (
+            "models",
+            title,
+            metric,
+            model_points,
+            _model_caption(list(by_model.values())) if model_points else "",
+            None if model_gap is None else round(model_gap, 1),
         )
-        return
-
-    paths = sorted(results_dir.glob("*.json"))
-    runs = [_load_run(p) for p in paths]
-    current_dataset_version = ""
-    try:
-        from src.evals.runner import DEFAULT_DATASET, load_dataset_version
-
-        current_dataset_version = load_dataset_version(DEFAULT_DATASET)
-    except Exception:  # dataset absent must not break the tab
-        pass
-    collection_exists = None
-    if session is not None:
-        from src.ui.sidebar_lab import _lab_store
-
-        collection_exists = _lab_store(session).has_collection
-
-    names = [run_display_name(r) for r in runs]
-    modern_default = [n for r, n in zip(runs, names) if r.get("config_hash")]
-    selected = st.multiselect(
-        "Runs to display", sorted(set(names)), default=sorted(set(modern_default))[-4:]
     )
-    selected_runs = [r for r, n in zip(runs, names) if n in selected]
-    if not selected_runs:
-        st.warning("Select at least one run.")
-        return
-
-    render_history_chart(selected_runs)
-    render_sweep_section(runs)
-    render_conversations_section(runs)
-
-    st.markdown("#### Per-run scorecards")
-    for run in scorecard_runs(selected_runs):
-        with st.expander(
-            f"**{run_display_name(run)}** — {run['mode']} · n={run['n_queries']} · "
-            f"{run.get('timestamp', '?')[:19]}",
-            expanded=run is selected_runs[-1],
-        ):
-            for flag in staleness_flags(run, collection_exists, current_dataset_version):
-                st.warning(f"Stale: {flag}")
-            render_metric_scorecards(run)
-            snap = run.get("config_snapshot", {})
-            st.caption(
-                f"config {run.get('config_hash', '?')}: "
-                f"collection={run.get('collection') or snap.get('rag_version', '?')} "
-                f"· alpha={snap.get('hybrid_alpha', '?')} "
-                f"· reranker={snap.get('reranker_enabled', '?')} · synth={snap.get('synthesis_model', '?')}"
+    for knob in REPORT_DECISIONS:
+        if knob == "models":
+            continue
+        title, metric = _DECISION_COPY[knob]
+        points = _percent_points(hit_rate_points(runs, knob), _POINT_LABELS.get(knob, {}))
+        gap = score_swing([point[1] for point in points])
+        sections.append(
+            (
+                knob,
+                title,
+                metric,
+                points,
+                _retrieval_caption(runs, knob, n_queries) if points else "",
+                None if gap is None else round(gap, 1),
             )
-            st.dataframe(
-                pd.DataFrame(run["per_query"])[
-                    ["query_id", "tier", "query", "hit_rate", "mrr", "context_precision"]
-                ],
-                use_container_width=True, hide_index=True,
-            )
+        )
+
+    swings = {
+        decision_id: gap
+        for decision_id, _title, _metric, _points, _caption, gap in sections
+        if gap is not None
+    }
+    marked = set(widest_decision(swings))
+    lead = lead_sentence(
+        [
+            (title, metric, points, gap)
+            for _decision_id, title, metric, points, _caption, gap in sections
+            if gap is not None
+        ]
+    )
+    if lead:
+        st.markdown(lead)
+
+    for decision_id, title, _metric, points, caption, _gap in sections:
+        with st.container(border=True):
+            if decision_id in marked:
+                st.markdown("**Largest swing**")
+            st.subheader(title)
+            if not points:
+                st.caption(_MISSING)
+                continue
+            _line_chart(points)
+            if caption:
+                st.caption(caption)
+
+    with st.container(border=True):
+        st.subheader("Closed-world grounding")
+        st.caption(_GUARDRAIL)
+
+    headline_model = ExperimentConfig().v2_router_model
+    headline = by_model.get(headline_model)
+    st.subheader("Golden conversations")
+    if headline is None:
+        st.caption(_MISSING)
+    else:
+        model_label = _MODEL_LABELS.get(headline_model, headline_model)
+        st.caption(
+            f"{model_label}. The four scores count turns. "
+            f"{headline.get('n_conversations', 0)} conversations, "
+            f"{headline.get('n_turns', 0)} turns, saved {_saved_on([headline])}."
+        )
+        with st.container(horizontal=True):
+            for run_key, _convo_key, label in _SCORE_LINES:
+                score = headline.get(run_key)
+                st.metric(
+                    label,
+                    percent_label(score) if score is not None else "n/a",
+                    border=True,
+                )
+        st.caption("This chart is one point per conversation.")
+        _conversation_chart(headline)
+    st.caption(_FOOTER)
