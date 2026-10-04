@@ -3,10 +3,11 @@ title: Maya — Film Curator
 emoji: 🎬
 colorFrom: indigo
 colorTo: pink
-sdk: streamlit
-python_version: "3.12"
-app_file: app.py
+sdk: docker
+app_port: 8501
 pinned: false
+short_description: Film curator for US movies, 1970–2026
+startup_duration_timeout: 30m
 ---
 
 # 🎬 TMDB RAG & Evaluation Harness ("Maya")
@@ -19,7 +20,9 @@ pinned: false
 [![Streamlit](https://img.shields.io/badge/UI-Streamlit-red.svg)]()
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-An observable, multi-version **Retrieval-Augmented Generation (RAG)** pipeline and **Evaluation Harness** specialized in US theatrical releases from **1970 to 2026** (9,119 curated films). 
+An observable, multi-version **Retrieval-Augmented Generation (RAG)** pipeline and **Evaluation Harness** specialized in US theatrical releases from **1970 to 2026** (9,119 curated films).
+
+The movie catalog and the six Lab collections are in [maya-data](https://huggingface.co/datasets/rishib09/maya-data). On a machine that does not already have them, the app downloads that dataset at startup. 
 
 Fronted by **"Maya"**, a conversational film curator featuring deterministic intent routing, Closed-World Assumption (CWA) grounding, high-resolution poster rendering, 5-layer multi-turn conversational memory, and full-fidelity **Langfuse Cloud** telemetry alongside an in-app Streamlit trace inspector.
 

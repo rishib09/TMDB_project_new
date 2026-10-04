@@ -8,8 +8,11 @@ Pure logic lives here so it is testable without a Streamlit runtime.
 
 import logging
 import os
+import sqlite3
+import tempfile
 import uuid
 from datetime import UTC, datetime
+from pathlib import Path
 
 import streamlit as st
 from langchain_core.messages import HumanMessage
@@ -32,7 +35,7 @@ from src.feedback.inbox import (
 from src.feedback.langfuse_score import push_feedback_score, push_report_comment
 from src.feedback.store import FeedbackStore
 from src.graph.orchestrator import build_maya_graph
-from src.indexing.embeddings import collection_name, provider_from_profile
+from src.indexing.embeddings import collection_name, lab_collection_names, provider_from_profile
 from src.indexing.vector_store import MovieVectorStore
 from src.maya.agent import MayaSynthesizer
 from src.maya.guardrails import (
@@ -66,9 +69,7 @@ _CHECKPOINT_ALLOWLIST: tuple[type, ...] = (
     UserSessionPreferences,
     LLMUsage,
 )
-_CHECKPOINT_SERDE = JsonPlusSerializer(
-    allowed_msgpack_modules=list(_CHECKPOINT_ALLOWLIST)
-)
+_CHECKPOINT_SERDE = JsonPlusSerializer(allowed_msgpack_modules=list(_CHECKPOINT_ALLOWLIST))
 
 
 # --- shared read-only resources (issue #17) ---------------------------------
@@ -79,18 +80,110 @@ _CHECKPOINT_SERDE = JsonPlusSerializer(
 # (memory, tracer, limiter, config) stays on MayaSession.
 
 
+DATA_REPO = "rishib09/maya-data"
+
+
+def catalog_movie_count(db_path: Path) -> int:
+    """Rows in ``movies``, or 0 when the file is missing or not a catalog."""
+    if not db_path.is_file() or db_path.stat().st_size == 0:
+        return 0
+    try:
+        conn = sqlite3.connect(f"file:{db_path.as_posix()}?mode=ro", uri=True)
+        try:
+            row = conn.execute("SELECT COUNT(*) FROM movies").fetchone()
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return 0
+    return int(row[0]) if row else 0
+
+
+def resolve_runtime_data_dir(
+    local: Path = Path("data"),
+    fallback: Path | None = None,
+) -> Path:
+    """Where the catalog and the vector index live for this process.
+
+    A populated local ``data/`` wins, so a laptop that already has the catalog
+    does not download. ``MAYA_DATA_DIR`` overrides both. Otherwise the files
+    go under the system temp directory, outside the app folder: writing the
+    dataset into the app folder makes Streamlit restart mid-download and then
+    search the empty catalog ``MovieDatabase`` creates.
+    """
+    configured = os.getenv("MAYA_DATA_DIR")
+    if configured:
+        return Path(configured)
+    if catalog_movie_count(local / "tmdb_movies.db") > 0:
+        return local
+    return fallback or (Path(tempfile.gettempdir()) / "maya-data")
+
+
+def _chroma_client(persist_dir: Path):
+    import chromadb
+    from chromadb.config import Settings
+
+    return chromadb.PersistentClient(
+        path=str(persist_dir),
+        settings=Settings(anonymized_telemetry=False),
+    )
+
+
+def runtime_files_missing(data_dir: Path = Path("data")) -> bool:
+    """True when the catalog or any Lab collection is absent or empty."""
+    if catalog_movie_count(data_dir / "tmdb_movies.db") <= 0:
+        return True
+    sqlite_path = data_dir / "chroma_db" / "chroma.sqlite3"
+    if not sqlite_path.is_file():
+        return True
+    client = _chroma_client(data_dir / "chroma_db")
+    counts = {col.name: col.count() for col in client.list_collections()}
+    return any(counts.get(name, 0) <= 0 for name in lab_collection_names())
+
+
+def ensure_runtime_files(
+    data_dir: Path | None = None,
+    repo_id: str | None = None,
+    download=None,
+) -> None:
+    """Download the catalog and the six Lab collections when either is missing.
+
+    Calls ``huggingface_hub.snapshot_download`` unless ``download`` is passed.
+    No-op when the catalog has movies and every Lab collection is already on disk.
+    ``repo_id`` defaults to ``MAYA_DATA_REPO`` or ``rishib09/maya-data``.
+    With ``data_dir`` omitted, a populated local catalog stays put and an empty
+    one is fetched outside the app folder.
+    """
+    data_dir = data_dir or resolve_runtime_data_dir()
+    if not runtime_files_missing(data_dir):
+        return
+    repo_id = repo_id or os.getenv("MAYA_DATA_REPO", DATA_REPO)
+    logger.info("catalog missing, downloading dataset %s into %s", repo_id, data_dir)
+    if download is None:
+        from huggingface_hub import snapshot_download
+
+        snapshot_download(repo_id=repo_id, repo_type="dataset", local_dir=str(data_dir))
+        if runtime_files_missing(data_dir):
+            raise RuntimeError(
+                f"The movie catalog at {data_dir} is still empty after downloading {repo_id}."
+            )
+        return
+    download(repo_id, data_dir)
+
+
 @st.cache_resource(show_spinner=False)
-def shared_database(db_path: str = "data/tmdb_movies.db") -> MovieDatabase:
+def shared_database(db_path: str | None = None) -> MovieDatabase:
     """Process-wide SQLite handle (also the budget sink)."""
-    logger.info("building shared MovieDatabase path=%s", db_path)
-    return MovieDatabase(db_path)
+    path = db_path or str(resolve_runtime_data_dir() / "tmdb_movies.db")
+    logger.info("building shared MovieDatabase path=%s", path)
+    return MovieDatabase(path)
 
 
 @st.cache_resource(show_spinner=False)
-def shared_vector_store(persist_dir: str = "data/chroma_db") -> MovieVectorStore:
+def shared_vector_store(persist_dir: str | None = None) -> MovieVectorStore:
     """Process-wide ChromaDB client + embedder caches."""
-    logger.info("building shared MovieVectorStore path=%s", persist_dir)
-    return MovieVectorStore(persist_dir)
+    path = persist_dir or str(resolve_runtime_data_dir() / "chroma_db")
+    logger.info("building shared MovieVectorStore path=%s", path)
+    return MovieVectorStore(path)
 
 
 def slice_new_traces(ring_before: int, traces: list[dict]) -> list[dict]:
@@ -133,9 +226,7 @@ class MayaSession:
         # (#96-F2: the stale hard-coded rag_version/search_provider that used
         # to sit here were dead — both names were overwritten two lines below,
         # and the stale assignment built an orphaned cached provider.)
-        self.rag_version = collection_name(
-            self.config.column_preset, self.config.embedding_profile
-        )
+        self.rag_version = collection_name(self.config.column_preset, self.config.embedding_profile)
         self.search_provider = provider_from_profile(self.config.embedding_profile)
         self.config_version = 0  # bumped on preset apply → knob widgets remount
         self.turn_log: list[dict] = []  # one row per turn for badges/trace
@@ -153,9 +244,7 @@ class MayaSession:
     def _build_graph(self):
         # #30: re-derive the dense pair on every rebuild — a Lab combo change
         # must swap collection and query-embedder together, never one alone.
-        self.rag_version = collection_name(
-            self.config.column_preset, self.config.embedding_profile
-        )
+        self.rag_version = collection_name(self.config.column_preset, self.config.embedding_profile)
         self.search_provider = provider_from_profile(self.config.embedding_profile)
         engine = HybridRetrievalEngine(
             db=self.db,
@@ -171,9 +260,11 @@ class MayaSession:
             # #26-B: the dataset's own genres are the genre-guard vocabulary.
             # #106: the stack selector decides which router is injected —
             # the graph's isinstance check then wires the matching route node.
-            (MayaV2Router(self.config)
-             if self.config.routing_stack == "v2"
-             else MayaRouter(self.config, genre_vocabulary=self.db.distinct_genres())),
+            (
+                MayaV2Router(self.config)
+                if self.config.routing_stack == "v2"
+                else MayaRouter(self.config, genre_vocabulary=self.db.distinct_genres())
+            ),
             engine,
             MayaSynthesizer(self.config),
             self.tracer,
@@ -185,14 +276,20 @@ class MayaSession:
     def _graph_signature(self) -> str:
         """Engine + routing knobs that require a graph rebuild when changed."""
         return "|".join(
-            str(v) for v in (
-                self.config.router_model, self.config.synthesis_model,
-                self.config.temperature, self.config.hybrid_alpha,
-                self.config.reranker_enabled, self.config.reranker_model,
-                self.config.retrieval_top_k, self.config.route_max_attempts,
+            str(v)
+            for v in (
+                self.config.router_model,
+                self.config.synthesis_model,
+                self.config.temperature,
+                self.config.hybrid_alpha,
+                self.config.reranker_enabled,
+                self.config.reranker_model,
+                self.config.retrieval_top_k,
+                self.config.route_max_attempts,
                 self.config.reasoning_effort,
                 # #30: combo change swaps collection + query provider
-                self.config.embedding_profile, self.config.column_preset,
+                self.config.embedding_profile,
+                self.config.column_preset,
             )
         )
 
@@ -267,14 +364,13 @@ class MayaSession:
             "session_preferences", self.conversation.session_preferences
         )
         self.conversation.probe_count = out.get("probe_count", self.conversation.probe_count)
-        self.conversation.funnel_active = out.get(
-            "funnel_active", self.conversation.funnel_active
-        )
-        self.conversation.offered_genre_options = out.get(
-            "offered_genre_options", []
-        )
+        self.conversation.funnel_active = out.get("funnel_active", self.conversation.funnel_active)
+        self.conversation.offered_genre_options = out.get("offered_genre_options", [])
         self.conversation.add_turn(
-            query, row["response"], movies, out.get("routing_decision"),
+            query,
+            row["response"],
+            movies,
+            out.get("routing_decision"),
             tokens_used=row["tokens"],
             cost_usd=row["cost_usd"],
             turn_ref=len(self.turn_log),  # #26-K: identity join, stamped pre-append
@@ -414,9 +510,7 @@ class MayaSession:
         if not (0 <= turn_index < len(self.turn_log)):
             raise IndexError(f"turn_index {turn_index} out of range")
         row = self._turn_row_for_ui_index(turn_index) or self.turn_log[turn_index]
-        self.feedback_store.record(
-            row["trace_id"], value, row["rag_version"], intent=row["intent"]
-        )
+        self.feedback_store.record(row["trace_id"], value, row["rag_version"], intent=row["intent"])
         self.feedback_log[turn_index] = value
         post_inbox_comment(format_rating_comment(value, row))  # #76: durable copy
         return push_feedback_score(row["trace_id"], value)
