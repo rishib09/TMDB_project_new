@@ -146,5 +146,7 @@ def test_stacked_turn_is_the_prototype_panel():
     assert "Retrieval" in html_turn and "heat.jpg" in html_turn
     assert "Metadata" in html_turn and "maya-chip" in html_turn
     assert "SEMANTIC_SEARCH" in html_turn
+    assert "<h2" not in html_turn
+    assert 'class="maya-kicker"' in html_turn
     assert "<script>" not in user_bubble_html('<script>alert("x")</script>')
 

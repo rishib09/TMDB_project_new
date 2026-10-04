@@ -33,14 +33,13 @@ _INK = "#1B1B24"
 _LAYOUT_CSS = f"""
 <style>
 [data-testid="stMainBlockContainer"] {{
-  max-width: 760px !important;
-  margin-left: auto;
-  margin-right: auto;
+  max-width: none;
+  width: 100%;
 }}
 [data-testid="stFeedback"] {{
   margin: 8px 0 16px;
 }}
-.maya-turn {{ margin: 0 0 8px; }}
+.maya-turn {{ margin: 0 0 8px; width: 100%; }}
 .maya-user {{ display: flex; justify-content: flex-end; }}
 .maya-user-copy {{
   max-width: 68%;
@@ -55,24 +54,32 @@ _LAYOUT_CSS = f"""
 }}
 .maya-assistant {{
   margin-top: 40px;
+  width: 100%;
   background: {_WHITE};
-  border: 1px solid color-mix(in srgb, {_INK} 16%, {_WHITE});
+  border: 1px solid color-mix(in srgb, {_INK} 12%, {_WHITE});
   border-radius: 16px;
   overflow: hidden;
 }}
 .maya-sec {{ padding: 18px 20px 16px; }}
 .maya-sec + .maya-sec {{
-  border-top: 1px solid color-mix(in srgb, {_INK} 16%, {_WHITE});
+  border-top: 1px solid color-mix(in srgb, {_INK} 10%, {_WHITE});
 }}
+.maya-conversation {{ background: {_WHITE}; }}
 .maya-retrieval {{ background: {_GREY}; }}
+.maya-metadata {{ background: #F7F8FA; }}
 .maya-kicker {{
-  margin: 0 0 8px;
-  font-size: 11px;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  font-weight: 700;
-  color: {_RED};
+  display: block;
+  margin: 0 0 8px !important;
+  padding: 0 !important;
+  font-size: 11px !important;
+  line-height: 1.2 !important;
+  letter-spacing: 0.14em !important;
+  text-transform: uppercase !important;
+  font-weight: 700 !important;
 }}
+.maya-conversation .maya-kicker {{ color: {_RED} !important; }}
+.maya-retrieval .maya-kicker {{ color: {_INK} !important; }}
+.maya-metadata .maya-kicker {{ color: color-mix(in srgb, {_INK} 45%, {_RED}) !important; }}
 .maya-prose {{
   margin: 0;
   font-size: 16px;
@@ -103,12 +110,13 @@ _LAYOUT_CSS = f"""
 }}
 .maya-chips {{ display: flex; flex-wrap: wrap; gap: 6px; }}
 .maya-chip {{
-  background: {_GREY};
+  background: {_WHITE};
   color: {_INK};
   border-radius: 999px;
   padding: 4px 10px;
   font-size: 12px;
 }}
+.maya-strip {{ min-width: 0; width: 100%; }}
 </style>
 """
 
@@ -241,21 +249,21 @@ def assistant_panel_html(response: str, row: dict | None) -> str:
     if prose:
         sections.append(
             '<section class="maya-sec maya-conversation">'
-            '<h2 class="maya-kicker">Conversation</h2>'
+            '<div class="maya-kicker">Conversation</div>'
             f'<p class="maya-prose">{html.escape(prose)}</p>'
             "</section>"
         )
     if movies:
         sections.append(
             '<section class="maya-sec maya-retrieval">'
-            '<h2 class="maya-kicker">Retrieval</h2>'
+            '<div class="maya-kicker">Retrieval</div>'
             f"{_poster_strip_html(movies)}"
             "</section>"
         )
     if row is not None:
         sections.append(
             '<section class="maya-sec maya-metadata">'
-            '<h2 class="maya-kicker">Metadata</h2>'
+            '<div class="maya-kicker">Metadata</div>'
             f"{_chips_html(metadata_fields(row))}"
             "</section>"
         )
@@ -470,14 +478,15 @@ def render_chat(session: MayaSession) -> None:
             )
         return
 
+    # Paint the visitor line before the pipeline so it is on screen while Maya works.
+    st.markdown(
+        f'<div class="maya-turn">{user_bubble_html(query)}</div>',
+        unsafe_allow_html=True,
+    )
     try:
         with st.spinner("Working through the pipeline"):
             session.turn(query)
     except Exception as exc:  # noqa: BLE001 — surface a readable failure, never a traceback
-        st.markdown(
-            f'<div class="maya-turn">{user_bubble_html(query)}</div>',
-            unsafe_allow_html=True,
-        )
         st.error(
             "Maya could not complete this turn. Check that the app was started with "
             "the encrypted environment loaded:  \n"
@@ -487,5 +496,7 @@ def render_chat(session: MayaSession) -> None:
         return
     idx = len(session.turn_log) - 1
     last = resolve_turn_row(session, idx) or session.turn_log[idx]
-    render_assistant_turn(session, query, last.get("response", ""), last, idx)
+    st.markdown(assistant_panel_html(last.get("response", ""), last), unsafe_allow_html=True)
+    render_feedback(session, idx)
+    render_report_receipt(session, last)
     scroll_to_newest()  # #27-R: land on the fresh response, not the page top
