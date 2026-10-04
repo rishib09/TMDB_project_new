@@ -1,11 +1,13 @@
-"""Chat view (issue #7, #147): one thread, three labeled regions per reply.
+"""Chat view (issue #7, #147): prototype A, in the app's white / red / grey.
 
-The page chrome matches the other views (theme background, ``st.header``,
-``st.caption``, bordered containers). Feedback thumbs are captured per
-assistant turn and linked to that turn's trace row (Langfuse scoring +
-SQLite persistence land with issue #9).
+Each turn is the stacked layout from the chat prototype: a right-aligned
+visitor line, then one panel whose Conversation, Retrieval, and Metadata
+regions stack. Colors are the theme hexes in ``.streamlit/config.toml``:
+``#FFFFFF``, ``#D7263D``, ``#F3F4F6``, with ``#1B1B24`` text.
+Feedback thumbs stay per assistant turn (issue #9).
 """
 
+import html
 import re
 
 import streamlit as st
@@ -19,11 +21,96 @@ from src.feedback.inbox import (
 )
 from src.ui.session import MayaSession
 
-MAYA_AVATAR = ":material/movie:"
-USER_AVATAR = ":material/person:"
-
 #: FORMAT_RULE card header: ``**Title (Year)**`` at the start of a line.
 _CARD_LINE = re.compile(r"^\*\*[^*\n]+\(\d{4}\)\*\*")
+
+# Theme hexes from .streamlit/config.toml — white, red, grey, text.
+_WHITE = "#FFFFFF"
+_RED = "#D7263D"
+_GREY = "#F3F4F6"
+_INK = "#1B1B24"
+
+_LAYOUT_CSS = f"""
+<style>
+[data-testid="stMainBlockContainer"] {{
+  max-width: 760px !important;
+  margin-left: auto;
+  margin-right: auto;
+}}
+[data-testid="stFeedback"] {{
+  margin: 8px 0 16px;
+}}
+.maya-turn {{ margin: 0 0 8px; }}
+.maya-user {{ display: flex; justify-content: flex-end; }}
+.maya-user-copy {{
+  max-width: 68%;
+  margin: 0;
+  background: {_RED};
+  color: {_WHITE};
+  padding: 12px 16px;
+  border-radius: 16px 16px 4px 16px;
+  font-size: 15px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}}
+.maya-assistant {{
+  margin-top: 40px;
+  background: {_WHITE};
+  border: 1px solid color-mix(in srgb, {_INK} 16%, {_WHITE});
+  border-radius: 16px;
+  overflow: hidden;
+}}
+.maya-sec {{ padding: 18px 20px 16px; }}
+.maya-sec + .maya-sec {{
+  border-top: 1px solid color-mix(in srgb, {_INK} 16%, {_WHITE});
+}}
+.maya-retrieval {{ background: {_GREY}; }}
+.maya-kicker {{
+  margin: 0 0 8px;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  font-weight: 700;
+  color: {_RED};
+}}
+.maya-prose {{
+  margin: 0;
+  font-size: 16px;
+  line-height: 1.6;
+  color: {_INK};
+  white-space: pre-wrap;
+}}
+.maya-strip {{
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}}
+.maya-poster {{ width: 112px; flex: 0 0 112px; margin: 0; }}
+.maya-poster img {{
+  width: 112px;
+  height: 168px;
+  object-fit: cover;
+  border-radius: 8px;
+  display: block;
+  background: {_GREY};
+}}
+.maya-poster figcaption {{
+  margin-top: 6px;
+  font-size: 12px;
+  line-height: 1.35;
+  color: {_INK};
+}}
+.maya-chips {{ display: flex; flex-wrap: wrap; gap: 6px; }}
+.maya-chip {{
+  background: {_GREY};
+  color: {_INK};
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 12px;
+}}
+</style>
+"""
 
 
 def intent_badge_text(log_row: dict) -> str:
@@ -107,6 +194,82 @@ def metadata_fields(log_row: dict) -> list[tuple[str, str]]:
 def render_metadata(log_row: dict) -> None:
     for label, value in metadata_fields(log_row):
         st.markdown(f"**{label}** · {value}")
+
+
+def user_bubble_html(text: str) -> str:
+    """Right-aligned visitor line (prototype A)."""
+    return (
+        '<div class="maya-user">'
+        f'<p class="maya-user-copy">{html.escape(text)}</p>'
+        "</div>"
+    )
+
+
+def _poster_strip_html(movies: list) -> str:
+    cards = []
+    for movie in movies:
+        title = html.escape(getattr(movie, "title", ""))
+        year = html.escape(str(getattr(movie, "release_year", "")))
+        score = f"{float(getattr(movie, 'vote_average', 0) or 0):.1f}"
+        genres = html.escape(", ".join(getattr(movie, "genres", [])[:3]))
+        src = html.escape(getattr(movie, "poster_url", "") or "", quote=True)
+        cards.append(
+            '<figure class="maya-poster">'
+            f'<img src="{src}" alt="{title}">'
+            f"<figcaption><b>{title}</b> ({year})<br>{score} / 10"
+            + (f" — {genres}" if genres else "")
+            + "</figcaption></figure>"
+        )
+    return f'<div class="maya-strip">{"".join(cards)}</div>'
+
+
+def _chips_html(fields: list[tuple[str, str]]) -> str:
+    chips = "".join(
+        f'<span class="maya-chip">{html.escape(label)} · {html.escape(value)}</span>'
+        for label, value in fields
+    )
+    return f'<div class="maya-chips">{chips}</div>'
+
+
+def assistant_panel_html(response: str, row: dict | None) -> str:
+    """One assistant panel: Conversation, Retrieval, Metadata (prototype A)."""
+    movies = list((row or {}).get("movies") or [])
+    prose = conversation_prose(response)
+    if not prose and not movies:
+        prose = (response or "").strip()
+    sections: list[str] = []
+    if prose:
+        sections.append(
+            '<section class="maya-sec maya-conversation">'
+            '<h2 class="maya-kicker">Conversation</h2>'
+            f'<p class="maya-prose">{html.escape(prose)}</p>'
+            "</section>"
+        )
+    if movies:
+        sections.append(
+            '<section class="maya-sec maya-retrieval">'
+            '<h2 class="maya-kicker">Retrieval</h2>'
+            f"{_poster_strip_html(movies)}"
+            "</section>"
+        )
+    if row is not None:
+        sections.append(
+            '<section class="maya-sec maya-metadata">'
+            '<h2 class="maya-kicker">Metadata</h2>'
+            f"{_chips_html(metadata_fields(row))}"
+            "</section>"
+        )
+    return f'<div class="maya-assistant">{"".join(sections)}</div>'
+
+
+def stacked_turn_html(user: str, response: str, row: dict | None) -> str:
+    """Visitor bubble, 40px, then the assistant panel."""
+    return (
+        '<div class="maya-turn">'
+        f"{user_bubble_html(user)}"
+        f"{assistant_panel_html(response, row)}"
+        "</div>"
+    )
 
 
 def _widget_rating_to_canonical(value: int) -> int:
@@ -251,36 +414,17 @@ def scroll_to_newest() -> None:
 
 
 def render_assistant_turn(
-    session: MayaSession, content: str, row: dict | None, turn_index: int
+    session: MayaSession, user: str, content: str, row: dict | None, turn_index: int
 ) -> None:
-    """Conversation, Retrieval, and Metadata inside one assistant message (#147).
-
-    Uses bordered containers so the regions pick up the same theme as the
-    other views. Movie-card markdown stays in the stored reply and is omitted
-    here. Posters come from this turn's row, not from a list under the thread.
-    """
-    movies = list((row or {}).get("movies") or [])
-    prose = conversation_prose(content)
-    if prose or not movies:
-        with st.container(border=True):
-            st.markdown("**Conversation**")
-            st.markdown(prose or content)
-    if movies:
-        with st.container(border=True):
-            st.markdown("**Retrieval**")
-            st.caption(f"{len(movies)} movies in Maya's closed world this turn")
-            render_poster_grid(movies)
+    """Prototype A turn: one HTML panel, then the live thumb control (#147)."""
+    st.markdown(stacked_turn_html(user, content, row), unsafe_allow_html=True)
+    render_feedback(session, turn_index)
     if row is not None:
-        with st.container(border=True):
-            st.markdown("**Metadata**")
-            render_metadata(row)
-            render_feedback(session, turn_index)
-            render_report_receipt(session, row)
-    else:
-        render_feedback(session, turn_index)
+        render_report_receipt(session, row)
 
 
 def render_chat(session: MayaSession) -> None:
+    st.markdown(_LAYOUT_CSS, unsafe_allow_html=True)
     st.header("Maya")
     st.caption(
         "Conversational film curator for US theatrical releases, 1970–2026 — "
@@ -289,22 +433,24 @@ def render_chat(session: MayaSession) -> None:
 
     messages = session.conversation.messages
     turn_index = -1
-    for i, msg in enumerate(messages):
-        role = "user" if msg.role == "user" else "assistant"
-        avatar = USER_AVATAR if msg.role == "user" else MAYA_AVATAR
-        with st.chat_message(role, avatar=avatar):
-            if msg.role != "assistant":
-                st.markdown(msg.content)
-            else:
-                turn_index += 1
-                row = resolve_turn_row(session, turn_index)  # #26-K identity join
-                render_assistant_turn(session, msg.content, row, turn_index)
-        if msg.role == "user":
-            nxt = messages[i + 1] if i + 1 < len(messages) else None
-            if nxt is not None and nxt.role == "assistant":
-                st.space("medium")  # #147: air between the visitor and the reply
-        elif i + 1 < len(messages):
-            st.space("small")
+    i = 0
+    while i < len(messages):
+        msg = messages[i]
+        if msg.role != "user":
+            i += 1
+            continue
+        nxt = messages[i + 1] if i + 1 < len(messages) else None
+        if nxt is not None and nxt.role == "assistant":
+            turn_index += 1
+            row = resolve_turn_row(session, turn_index)  # #26-K identity join
+            render_assistant_turn(session, msg.content, nxt.content, row, turn_index)
+            i += 2
+        else:
+            st.markdown(
+                f'<div class="maya-turn">{user_bubble_html(msg.content)}</div>',
+                unsafe_allow_html=True,
+            )
+            i += 1
 
     # #147: recent-query recall is not mounted. The current thread stays.
     query = st.chat_input("Ask Maya about movies")
@@ -324,16 +470,14 @@ def render_chat(session: MayaSession) -> None:
             )
         return
 
-    if messages:
-        st.space("small")
-    with st.chat_message("user", avatar=USER_AVATAR):
-        st.markdown(query)
-    st.space("medium")
-    assistant = st.chat_message("assistant", avatar=MAYA_AVATAR)
     try:
-        with assistant, st.status("Working through the pipeline", expanded=False):
+        with st.spinner("Working through the pipeline"):
             session.turn(query)
     except Exception as exc:  # noqa: BLE001 — surface a readable failure, never a traceback
+        st.markdown(
+            f'<div class="maya-turn">{user_bubble_html(query)}</div>',
+            unsafe_allow_html=True,
+        )
         st.error(
             "Maya could not complete this turn. Check that the app was started with "
             "the encrypted environment loaded:  \n"
@@ -342,7 +486,6 @@ def render_chat(session: MayaSession) -> None:
         )
         return
     idx = len(session.turn_log) - 1
-    with assistant:
-        last = resolve_turn_row(session, idx) or session.turn_log[idx]
-        render_assistant_turn(session, last.get("response", ""), last, idx)
+    last = resolve_turn_row(session, idx) or session.turn_log[idx]
+    render_assistant_turn(session, query, last.get("response", ""), last, idx)
     scroll_to_newest()  # #27-R: land on the fresh response, not the page top

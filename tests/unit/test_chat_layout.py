@@ -110,3 +110,41 @@ def test_turn_stores_movies_for_the_retrieval_section():
     session.turn("something rainy")
     assert session.turn_log[0]["movies"][0].title == "Heat"
     assert conversation_prose(session.turn_log[0]["response"]) == "Rainy."
+
+
+def test_stacked_turn_is_the_prototype_panel():
+    from types import SimpleNamespace
+
+    from src.ui.chat_tab import stacked_turn_html, user_bubble_html
+
+    movie = SimpleNamespace(
+        title="Heat",
+        release_year=1995,
+        vote_average=8.3,
+        genres=["Crime", "Drama"],
+        poster_url="https://image.tmdb.org/t/p/w500/heat.jpg",
+    )
+    row = {
+        "intent": "SEMANTIC_SEARCH",
+        "confidence": 0.9,
+        "path": "retrieve",
+        "attempts": 1,
+        "n_movies": 1,
+        "tokens": 100,
+        "movies": [movie],
+    }
+    response = (
+        "A city at night.\n\n"
+        "**Heat (1995)** — dir. Michael Mann\n"
+        "The one to watch.\n"
+    )
+    html_turn = stacked_turn_html("something rainy", response, row)
+    assert 'class="maya-user"' in html_turn
+    assert 'class="maya-assistant"' in html_turn
+    assert "Conversation" in html_turn and "A city at night." in html_turn
+    assert "**Heat (1995)**" not in html_turn
+    assert "Retrieval" in html_turn and "heat.jpg" in html_turn
+    assert "Metadata" in html_turn and "maya-chip" in html_turn
+    assert "SEMANTIC_SEARCH" in html_turn
+    assert "<script>" not in user_bubble_html('<script>alert("x")</script>')
+
