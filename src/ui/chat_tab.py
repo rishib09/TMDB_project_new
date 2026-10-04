@@ -452,7 +452,7 @@ def render_chat(session: MayaSession) -> None:
     st.header("Maya")
     st.caption(
         "Conversational film curator for US theatrical releases, 1970–2026 — "
-        "deterministic routing, closed-world grounding, full trace observability."
+        "deterministic routing, closed-world grounding, full trace observability. Use /feedback to report issues."
     )
 
     messages = session.conversation.messages
