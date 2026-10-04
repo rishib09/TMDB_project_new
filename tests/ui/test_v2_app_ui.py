@@ -119,6 +119,24 @@ def test_app_boots_on_v2_and_labels_routed_turns(monkeypatch):
     assert "Recent queries" not in shown
 
 
+def test_transport_env_override_flips_config(monkeypatch):
+    """#150: the same local-flip affordance as MAYA_ROUTING_STACK — compare
+    the two Understand transports in the running app with no Lab widget and
+    no code edit. Overrides compose with the stack flip."""
+    monkeypatch.setenv("MAYA_V2_UNDERSTAND_TRANSPORT", "structured_output")
+    at = _boot_app(monkeypatch)
+    session = at.session_state["maya_session"]
+    assert session.config.v2_understand_transport == "structured_output"
+    assert session.config.routing_stack == "v2"  # both env overrides compose
+
+
+def test_transport_env_override_ignores_unknown_value(monkeypatch):
+    """Values outside the config Literal are ignored — the default holds."""
+    monkeypatch.setenv("MAYA_V2_UNDERSTAND_TRANSPORT", "json_mode_please")
+    at = _boot_app(monkeypatch)
+    assert at.session_state["maya_session"].config.v2_understand_transport == "tool_call"
+
+
 def test_admin_input_routes_as_ordinary_turn(monkeypatch):
     """#91: /admin is dead — the Lab is public, so typing it must process
     as an ordinary message (one turn in the log), not a swallowed branch."""
