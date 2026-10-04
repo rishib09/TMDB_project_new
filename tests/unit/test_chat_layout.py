@@ -150,3 +150,12 @@ def test_stacked_turn_is_the_prototype_panel():
     assert 'class="maya-kicker"' in html_turn
     assert "<script>" not in user_bubble_html('<script>alert("x")</script>')
 
+
+def test_retrieval_strip_is_a_full_width_horizontal_scroller():
+    from src.ui.chat_tab import _LAYOUT_CSS
+
+    assert "grid-auto-flow: column" in _LAYOUT_CSS
+    assert "grid-auto-columns: minmax(160px, 1fr)" in _LAYOUT_CSS
+    assert "overflow-x: auto" in _LAYOUT_CSS
+    assert "width: 112px" not in _LAYOUT_CSS
+

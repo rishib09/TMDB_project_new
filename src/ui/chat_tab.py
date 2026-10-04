@@ -65,7 +65,12 @@ _LAYOUT_CSS = f"""
   border-top: 1px solid color-mix(in srgb, {_INK} 10%, {_WHITE});
 }}
 .maya-conversation {{ background: {_WHITE}; }}
-.maya-retrieval {{ background: {_GREY}; }}
+.maya-retrieval {{
+  background: {_GREY};
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}}
 .maya-metadata {{ background: #F7F8FA; }}
 .maya-kicker {{
   display: block;
@@ -88,25 +93,37 @@ _LAYOUT_CSS = f"""
   white-space: pre-wrap;
 }}
 .maya-strip {{
-  display: flex;
-  gap: 10px;
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(160px, 1fr);
+  gap: 12px;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
   overflow-x: auto;
-  padding-bottom: 4px;
+  overflow-y: hidden;
+  padding-bottom: 8px;
+  box-sizing: border-box;
 }}
-.maya-poster {{ width: 112px; flex: 0 0 112px; margin: 0; }}
+.maya-poster {{
+  min-width: 0;
+  margin: 0;
+}}
 .maya-poster img {{
-  width: 112px;
-  height: 168px;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 2 / 3;
   object-fit: cover;
   border-radius: 8px;
   display: block;
-  background: {_GREY};
+  background: {_WHITE};
 }}
 .maya-poster figcaption {{
   margin-top: 6px;
   font-size: 12px;
   line-height: 1.35;
   color: {_INK};
+  overflow-wrap: anywhere;
 }}
 .maya-chips {{ display: flex; flex-wrap: wrap; gap: 6px; }}
 .maya-chip {{
@@ -116,7 +133,6 @@ _LAYOUT_CSS = f"""
   padding: 4px 10px;
   font-size: 12px;
 }}
-.maya-strip {{ min-width: 0; width: 100%; }}
 </style>
 """
 
