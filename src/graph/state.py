@@ -99,3 +99,8 @@ class MayaGraphState(BaseModel):
     #: None = engine never ran this turn, {} = ran with zero filters (the
     #: engine-invoked signal for the conversation-mode path adapter).
     filters_applied: dict | None = None
+    #: #153 (v2): the carry-over transparency notice already fired this
+    #: session. Persists in the thread via the checkpointer like probe_count/
+    #: funnel_active — deliberately NOT reset by begin_turn (the notice is
+    #: once per session, not once per turn).
+    carryover_notice_shown: bool = False

@@ -29,6 +29,7 @@ _WHITE = "#FFFFFF"
 _RED = "#D7263D"
 _GREY = "#F3F4F6"
 _INK = "#1B1B24"
+_MUTED = "#6B7280"
 
 _LAYOUT_CSS = f"""
 <style>
@@ -133,6 +134,11 @@ _LAYOUT_CSS = f"""
   padding: 4px 10px;
   font-size: 12px;
 }}
+.maya-legend {{
+  color: {_MUTED};
+  font-size: 11px;
+  margin-top: 4px;
+}}
 </style>
 """
 
@@ -190,7 +196,12 @@ def conversation_prose(response: str) -> str:
 
 
 def metadata_fields(log_row: dict) -> list[tuple[str, str]]:
-    """Labeled turn-record fields (#147). Empty narrowing and filters are omitted."""
+    """Labeled turn-record fields (#147). Empty narrowing and filters are omitted.
+
+    #153 labels carry the lifetime in the name: "Session filter" is what is
+    remembered (applies to every search until cleared), "Current filter" is
+    what this search actually ran with (the effective post-injection set).
+    """
     path = log_row.get("path", "?")
     attempts = log_row.get("attempts", 1) or 1
     path_label = f"{path} (x{attempts})" if attempts > 1 else str(path)
@@ -208,16 +219,25 @@ def metadata_fields(log_row: dict) -> list[tuple[str, str]]:
     ]
     narrowing = log_row.get("narrowing") or []
     if narrowing:
-        fields.append(("Narrowing", " · ".join(narrowing)))
+        fields.append(("Session filter", " · ".join(narrowing)))
     filters = log_row.get("filters") or []
     if filters:
-        fields.append(("Filters", " · ".join(filters)))
+        fields.append(("Current filter", " · ".join(filters)))
     return fields
 
 
 def render_metadata(log_row: dict) -> None:
     for label, value in metadata_fields(log_row):
         st.markdown(f"**{label}** · {value}")
+    st.caption(_METADATA_LEGEND)
+
+
+#: #153: one-line legend under the metadata chips — the explicit statement of
+#: what each chip means, so the distinction never has to be guessed.
+_METADATA_LEGEND = (
+    "Session filter = remembered preferences applied to every search until you "
+    "clear them · Current filter = what this search actually ran with"
+)
 
 
 def user_bubble_html(text: str) -> str:
@@ -281,6 +301,7 @@ def assistant_panel_html(response: str, row: dict | None) -> str:
             '<section class="maya-sec maya-metadata">'
             '<div class="maya-kicker">Metadata</div>'
             f"{_chips_html(metadata_fields(row))}"
+            f'<div class="maya-legend">{html.escape(_METADATA_LEGEND)}</div>'
             "</section>"
         )
     return f'<div class="maya-assistant">{"".join(sections)}</div>'

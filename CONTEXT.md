@@ -32,6 +32,14 @@ _Avoid_: Chat history, session memory, context buffer.
 A user-specified negative preference (e.g. `excluded_genres: ["Horror"]`, `excluded_actors: ["Tom Cruise"]`) that remains active across all subsequent retrieval queries within a session until explicitly revoked.
 _Avoid_: Permanent filter, blacklist, negative prompt.
 
+**Session Filter**:
+The preferences Maya remembers for the whole session — moods, audiences, genres, directors, exclusions, year bounds — applied by code to every search until the visitor clears them. The chip labeled "Session filter" in the UI renders this set.
+_Avoid_: Narrowing, persistent filter, memory filter.
+
+**Current Filter**:
+The effective filter set one search actually ran with — this turn's declared filters plus whatever Session Filter entries code folded in. The chip labeled "Current filter" in the UI renders this set; it is the ground truth of the WHERE clause, not the turn's raw reading.
+_Avoid_: Turn filter, applied filter, query filter.
+
 **Understanding**:
 The single structured reading of one user turn against the Conversation State, returned by the Router in v2: Intent, Standalone Query, filters, era label, Preference Delta, reset signal, readiness to retrieve, missing Narrowing Axes, Clarifying Question, and Referenced Titles.
 _Avoid_: Routing decision (the v1 object), extraction, parse, analysis.

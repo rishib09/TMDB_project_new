@@ -15,6 +15,7 @@ from src.maya.v2.disposer import (
     turn_decision,
 )
 from src.maya.v2.models import PreferenceDelta, Understanding
+from src.maya.v2.notices import build_filter_carryover_notice, injected_genres
 from src.maya.v2.project import project_understanding
 from src.maya.v2.prompt import SYSTEM_PROMPT_V2, build_state_block
 from src.maya.v2.router import MayaV2Router
@@ -42,11 +43,13 @@ __all__ = [
     "TurnDecision",
     "Understanding",
     "MayaV2Router",
+    "build_filter_carryover_notice",
     "build_state_block",
     "deterministic_ask",
     "dispose",
     "enforce_probe_budget",
     "enforce_question",
+    "injected_genres",
     "known_axes",
     "project_understanding",
     "turn_decision",

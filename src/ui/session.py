@@ -460,31 +460,54 @@ class MayaSession:
             "response": response,
             "probe": any(t["node"] == "probe" for t in new_traces),
             "narrowing": preference_chips(prefs) if prefs else [],
-            "filters": MayaSession._filter_chips(decision),
+            "filters": MayaSession._effective_filter_chips(
+                out.get("filters_applied"), decision
+            ),
         }
 
     @staticmethod
+    def _effective_filter_chips(applied, decision) -> list[str]:
+        """What the engine ACTUALLY saw this turn (#153, #93 Q3 O1).
+
+        Prefers the post-injection ``filters_applied`` snapshot so remembered
+        preferences code folded into the SQL are visible in the chip — the
+        "Current filter" line never disagrees with what ran. Falls back to
+        the routing decision when the engine never ran this turn.
+        """
+        if applied is None:
+            return MayaSession._filter_chips(decision)
+        return MayaSession._filter_chips_from_criteria(applied)
+
+    @staticmethod
     def _filter_chips(decision) -> list[str]:
-        """Active SQL filters for this turn's metadata line (#26-F)."""
+        """Declared SQL filters for this turn's metadata line (#26-F)."""
         if decision is None or decision.filters is None:
             return []
-        f = decision.filters
+        return MayaSession._filter_chips_from_criteria(decision.filters.model_dump())
+
+    @staticmethod
+    def _filter_chips_from_criteria(data: dict | None) -> list[str]:
+        """Chip rendering over a flat MetadataFilterCriteria dict (#153)."""
+        if not data:
+            return []
         chips: list[str] = []
-        if f.genres:
-            mode = f" ({f.genre_match})" if len(f.genres) > 1 else ""
-            chips.append("genres: " + ", ".join(f.genres) + mode)
-        if f.exact_year:
-            chips.append(str(f.exact_year))
-        elif f.year_min or f.year_max:
-            chips.append(f"{f.year_min or '…'}–{f.year_max or '…'}")
-        if f.director:
-            chips.append(f"dir. {f.director}")
-        if f.cast_member:
-            chips.append(f"cast {f.cast_member}")
-        if f.person:
-            chips.append(f"person: {f.person}")
-        chips.extend(f"no {g}" for g in f.excluded_genres)
-        chips.extend(f"no {a}" for a in f.excluded_actors)
+        if data.get("genres"):
+            mode = (
+                f" ({data.get('genre_match')})" if len(data["genres"]) > 1 else ""
+            )
+            chips.append("genres: " + ", ".join(data["genres"]) + mode)
+        if data.get("exact_year"):
+            chips.append(str(data["exact_year"]))
+        elif data.get("year_min") or data.get("year_max"):
+            chips.append(f"{data.get('year_min') or '…'}–{data.get('year_max') or '…'}")
+        if data.get("director"):
+            chips.append(f"dir. {data['director']}")
+        if data.get("cast_member"):
+            chips.append(f"cast {data['cast_member']}")
+        if data.get("person"):
+            chips.append(f"person: {data['person']}")
+        chips.extend(f"no {g}" for g in (data.get("excluded_genres") or []))
+        chips.extend(f"no {a}" for a in (data.get("excluded_actors") or []))
         return chips
 
     @staticmethod

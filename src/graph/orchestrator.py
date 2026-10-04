@@ -70,7 +70,16 @@ from src.maya.probing import (
     should_probe,
 )
 from src.maya.router import MayaRouter
-from src.maya.v2 import MayaV2Router, dispose, project_understanding, turn_decision
+from src.maya.v2 import (
+    MayaV2Router,
+    dispose,
+    project_understanding,
+    turn_decision,
+)
+from src.maya.v2.notices import (
+    build_filter_carryover_notice as v2_carryover_notice,
+    injected_genres,
+)
 from src.observability.tracer import DualModeObservabilityManager
 from src.retrieval.hybrid_engine import HybridRetrievalEngine
 
@@ -762,6 +771,47 @@ def build_maya_graph(
             "rolling_summary": _update_summary(state, decision),
         }
 
+    def carryover_notice_node(state: MayaGraphState) -> dict:
+        """#153 (v2): announce remembered filters that silently joined the SQL.
+
+        The retrieve node injects the session's preferred genres when this
+        turn declared none (#25). That injection is a code disposal, so the
+        explanation is deterministic code too — never a model call (ADR 0005):
+        it appends the v1-proven transparency line, whose escape-hatch
+        question is the visitor's way out. Fires at most once per session
+        (thread-persistent ``carryover_notice_shown``), only on turns that
+        actually retrieved, and only when a preference genre really joined.
+        """
+        injected = injected_genres(
+            state.filters_applied,
+            state.routing_decision.filters if state.routing_decision else None,
+        )
+        if (
+            not injected
+            or state.carryover_notice_shown
+            or not state.retrieved_movies
+        ):
+            return {}
+        notice = v2_carryover_notice(state.session_preferences)
+        if not notice:
+            return {}
+        tracer.record_local(
+            "carryover_notice", {"injected_genres": injected, "fired": True}
+        )
+        noticed = state.final_response + notice
+        last = state.messages[-1] if state.messages else None
+        if isinstance(last, AIMessage) and last.id:
+            # Same-id replacement: add_messages swaps the assistant message in
+            # place, so the transcript carries the notice without a duplicate.
+            return {
+                "final_response": noticed,
+                "messages": [last.model_copy(update={"content": noticed})],
+                "carryover_notice_shown": True,
+            }
+        # No usable message id — the UI reads final_response, so the notice
+        # still ships; the transcript simply keeps the un-noticed text.
+        return {"final_response": noticed, "carryover_notice_shown": True}
+
     def refusal_node(state: MayaGraphState) -> dict:
         """Deterministic refusal — guardrail text already in final_response."""
         tracer.record_local("refusal", {})
@@ -909,6 +959,9 @@ def build_maya_graph(
     graph.add_node("route", route_node_v2 if stack_v2 else route_node)
     graph.add_node("retrieve", retrieve_node)
     graph.add_node("synthesize", synthesize_node)
+    # #153: the transparency node rides ONLY the v2 path (registered but
+    # unreachable on v1, mirroring how probe/funnel rest on v2 turns).
+    graph.add_node("carryover_notice", carryover_notice_node)
     graph.add_node("refusal", refusal_node)
     graph.add_node("pivot", pivot_node)
     graph.add_node("probe", probe_node)
@@ -923,7 +976,11 @@ def build_maya_graph(
     )
     # The route→route cycle is implicit: route_after_router may return "route".
     graph.add_edge("retrieve", "synthesize")
-    graph.add_edge("synthesize", "trim")
+    if stack_v2:
+        graph.add_edge("synthesize", "carryover_notice")
+        graph.add_edge("carryover_notice", "trim")
+    else:
+        graph.add_edge("synthesize", "trim")
     graph.add_edge("trim", END)
     graph.add_edge("refusal", "trim")
     graph.add_edge("pivot", "trim")
