@@ -113,6 +113,11 @@ def test_app_boots_on_v2_and_labels_routed_turns(monkeypatch):
     assert all(r["path"] != "refusal" for r in rows)
     assert all(r["intent"] == "SEMANTIC_SEARCH" for r in rows)
 
+    shown = " ".join(el.value for el in at.markdown)
+    assert "Conversation" in shown
+    assert "Metadata" in shown
+    assert "Recent queries" not in shown
+
 
 def test_admin_input_routes_as_ordinary_turn(monkeypatch):
     """#91: /admin is dead — the Lab is public, so typing it must process

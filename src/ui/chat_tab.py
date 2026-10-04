@@ -1,9 +1,14 @@
-"""Chat view (issue #7): conversation, routing chip, poster gallery, feedback.
+"""Chat view (issue #7, #147): prototype A, in the app's white / red / grey.
 
-Professional chrome: no emojis, plain-text separators. Feedback thumbs are
-captured per assistant turn and linked to that turn's trace row (Langfuse
-scoring + SQLite persistence land with issue #9).
+Each turn is the stacked layout from the chat prototype: a right-aligned
+visitor line, then one panel whose Conversation, Retrieval, and Metadata
+regions stack. Colors are the theme hexes in ``.streamlit/config.toml``:
+``#FFFFFF``, ``#D7263D``, ``#F3F4F6``, with ``#1B1B24`` text.
+Feedback thumbs stay per assistant turn (issue #9).
 """
+
+import html
+import re
 
 import streamlit as st
 
@@ -16,24 +21,118 @@ from src.feedback.inbox import (
 )
 from src.ui.session import MayaSession
 
-MAYA_AVATAR = ":material/movie:"
-USER_AVATAR = ":material/person:"
+#: FORMAT_RULE card header: ``**Title (Year)**`` at the start of a line.
+_CARD_LINE = re.compile(r"^\*\*[^*\n]+\(\d{4}\)\*\*")
 
-_CHAT_CSS = """
+# Theme hexes from .streamlit/config.toml — white, red, grey, text.
+_WHITE = "#FFFFFF"
+_RED = "#D7263D"
+_GREY = "#F3F4F6"
+_INK = "#1B1B24"
+
+_LAYOUT_CSS = f"""
 <style>
-[data-testid="stHeader"] { display: none; }
-[data-testid="stChatMessage"] { padding-top: 0.3rem; padding-bottom: 0.3rem; }
-[data-testid="stChatMessage"] p { margin-bottom: 0.25rem; }
-[data-testid="stVerticalBlock"] { gap: 0.35rem; }
-.maya-sticky-header {
-  position: sticky; top: 0; z-index: 1000;
-  background: #ffffff; padding: 0.5rem 0 0.6rem;
-  border-bottom: 1px solid #ececec; margin-bottom: 0.5rem;
-}
-.maya-sticky-header .maya-title {
-  font-size: 1.7rem; font-weight: 700; line-height: 1.25; color: #1b1b24;
-}
-.maya-sticky-header .maya-subtitle { font-size: 0.85rem; color: #5a5a66; }
+[data-testid="stMainBlockContainer"] {{
+  max-width: none;
+  width: 100%;
+}}
+[data-testid="stFeedback"] {{
+  margin: 8px 0 16px;
+}}
+.maya-turn {{ margin: 0 0 8px; width: 100%; }}
+.maya-user {{ display: flex; justify-content: flex-end; }}
+.maya-user-copy {{
+  max-width: 68%;
+  margin: 0;
+  background: {_RED};
+  color: {_WHITE};
+  padding: 12px 16px;
+  border-radius: 16px 16px 4px 16px;
+  font-size: 15px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}}
+.maya-assistant {{
+  margin-top: 40px;
+  width: 100%;
+  background: {_WHITE};
+  border: 1px solid color-mix(in srgb, {_INK} 12%, {_WHITE});
+  border-radius: 16px;
+  overflow: hidden;
+}}
+.maya-sec {{ padding: 18px 20px 16px; }}
+.maya-sec + .maya-sec {{
+  border-top: 1px solid color-mix(in srgb, {_INK} 10%, {_WHITE});
+}}
+.maya-conversation {{ background: {_WHITE}; }}
+.maya-retrieval {{
+  background: {_GREY};
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}}
+.maya-metadata {{ background: #F7F8FA; }}
+.maya-kicker {{
+  display: block;
+  margin: 0 0 8px !important;
+  padding: 0 !important;
+  font-size: 11px !important;
+  line-height: 1.2 !important;
+  letter-spacing: 0.14em !important;
+  text-transform: uppercase !important;
+  font-weight: 700 !important;
+}}
+.maya-conversation .maya-kicker {{ color: {_RED} !important; }}
+.maya-retrieval .maya-kicker {{ color: {_INK} !important; }}
+.maya-metadata .maya-kicker {{ color: color-mix(in srgb, {_INK} 45%, {_RED}) !important; }}
+.maya-prose {{
+  margin: 0;
+  font-size: 16px;
+  line-height: 1.6;
+  color: {_INK};
+  white-space: pre-wrap;
+}}
+.maya-strip {{
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(160px, 1fr);
+  gap: 12px;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: 8px;
+  box-sizing: border-box;
+}}
+.maya-poster {{
+  min-width: 0;
+  margin: 0;
+}}
+.maya-poster img {{
+  width: 100%;
+  height: auto;
+  aspect-ratio: 2 / 3;
+  object-fit: cover;
+  border-radius: 8px;
+  display: block;
+  background: {_WHITE};
+}}
+.maya-poster figcaption {{
+  margin-top: 6px;
+  font-size: 12px;
+  line-height: 1.35;
+  color: {_INK};
+  overflow-wrap: anywhere;
+}}
+.maya-chips {{ display: flex; flex-wrap: wrap; gap: 6px; }}
+.maya-chip {{
+  background: {_WHITE};
+  color: {_INK};
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 12px;
+}}
 </style>
 """
 
@@ -63,6 +162,138 @@ def intent_badge_text(log_row: dict) -> str:
 
 def render_intent_badge(log_row: dict) -> None:
     st.caption(intent_badge_text(log_row))
+
+
+def conversation_prose(response: str) -> str:
+    """Visible reply with FORMAT_RULE movie cards removed (#147).
+
+    A card is a line starting with ``**Title (Year)**`` plus the lines under
+    it until the next blank line. Card-free text (greetings, probes) is
+    returned unchanged. A reply that is only cards returns "" so the view
+    can show Retrieval instead of the text list. The stored response is
+    untouched.
+    """
+    if not response:
+        return ""
+    kept: list[str] = []
+    skipping = False
+    for line in response.splitlines():
+        if _CARD_LINE.match(line.strip()):
+            skipping = True
+            continue
+        if skipping:
+            if not line.strip():
+                skipping = False
+            continue
+        kept.append(line)
+    return "\n".join(kept).strip()
+
+
+def metadata_fields(log_row: dict) -> list[tuple[str, str]]:
+    """Labeled turn-record fields (#147). Empty narrowing and filters are omitted."""
+    path = log_row.get("path", "?")
+    attempts = log_row.get("attempts", 1) or 1
+    path_label = f"{path} (x{attempts})" if attempts > 1 else str(path)
+    confidence = log_row.get("confidence", 0)
+    try:
+        confidence_text = f"{float(confidence):.2f}"
+    except (TypeError, ValueError):
+        confidence_text = str(confidence)
+    fields = [
+        ("Intent", str(log_row.get("intent", "?"))),
+        ("Confidence", confidence_text),
+        ("Route", path_label),
+        ("Movies", str(log_row.get("n_movies", 0))),
+        ("Tokens", str(log_row.get("tokens", 0))),
+    ]
+    narrowing = log_row.get("narrowing") or []
+    if narrowing:
+        fields.append(("Narrowing", " · ".join(narrowing)))
+    filters = log_row.get("filters") or []
+    if filters:
+        fields.append(("Filters", " · ".join(filters)))
+    return fields
+
+
+def render_metadata(log_row: dict) -> None:
+    for label, value in metadata_fields(log_row):
+        st.markdown(f"**{label}** · {value}")
+
+
+def user_bubble_html(text: str) -> str:
+    """Right-aligned visitor line (prototype A)."""
+    return (
+        '<div class="maya-user">'
+        f'<p class="maya-user-copy">{html.escape(text)}</p>'
+        "</div>"
+    )
+
+
+def _poster_strip_html(movies: list) -> str:
+    cards = []
+    for movie in movies:
+        title = html.escape(getattr(movie, "title", ""))
+        year = html.escape(str(getattr(movie, "release_year", "")))
+        score = f"{float(getattr(movie, 'vote_average', 0) or 0):.1f}"
+        genres = html.escape(", ".join(getattr(movie, "genres", [])[:3]))
+        src = html.escape(getattr(movie, "poster_url", "") or "", quote=True)
+        cards.append(
+            '<figure class="maya-poster">'
+            f'<img src="{src}" alt="{title}">'
+            f"<figcaption><b>{title}</b> ({year})<br>{score} / 10"
+            + (f" — {genres}" if genres else "")
+            + "</figcaption></figure>"
+        )
+    return f'<div class="maya-strip">{"".join(cards)}</div>'
+
+
+def _chips_html(fields: list[tuple[str, str]]) -> str:
+    chips = "".join(
+        f'<span class="maya-chip">{html.escape(label)} · {html.escape(value)}</span>'
+        for label, value in fields
+    )
+    return f'<div class="maya-chips">{chips}</div>'
+
+
+def assistant_panel_html(response: str, row: dict | None) -> str:
+    """One assistant panel: Conversation, Retrieval, Metadata (prototype A)."""
+    movies = list((row or {}).get("movies") or [])
+    prose = conversation_prose(response)
+    if not prose and not movies:
+        prose = (response or "").strip()
+    sections: list[str] = []
+    if prose:
+        sections.append(
+            '<section class="maya-sec maya-conversation">'
+            '<div class="maya-kicker">Conversation</div>'
+            f'<p class="maya-prose">{html.escape(prose)}</p>'
+            "</section>"
+        )
+    if movies:
+        sections.append(
+            '<section class="maya-sec maya-retrieval">'
+            '<div class="maya-kicker">Retrieval</div>'
+            f"{_poster_strip_html(movies)}"
+            "</section>"
+        )
+    if row is not None:
+        sections.append(
+            '<section class="maya-sec maya-metadata">'
+            '<div class="maya-kicker">Metadata</div>'
+            f"{_chips_html(metadata_fields(row))}"
+            "</section>"
+        )
+    return f'<div class="maya-assistant">{"".join(sections)}</div>'
+
+
+def stacked_turn_html(user: str, response: str, row: dict | None) -> str:
+    """Visitor bubble, 40px, then the assistant panel."""
+    return (
+        '<div class="maya-turn">'
+        f"{user_bubble_html(user)}"
+        f"{assistant_panel_html(response, row)}"
+        "</div>"
+    )
 
 
 def _widget_rating_to_canonical(value: int) -> int:
@@ -98,12 +329,9 @@ def render_report_receipt(session: MayaSession, row: dict) -> None:
 
 
 def render_poster_grid(movies, cols: int = 4) -> None:
-    """Retrieved-context gallery: bordered cards, uniform poster width."""
+    """Poster cards for one turn's retrieval. The section title is the caller's."""
     if not movies:
         return
-    st.markdown(
-        f"**Retrieved context** — Maya's closed world this turn ({len(movies)} movies)"
-    )
     for start in range(0, len(movies), cols):
         chunk = movies[start : start + cols]
         for col, movie in zip(st.columns(cols), chunk):
@@ -137,7 +365,7 @@ def recall_queries(turn_log: list[dict], limit: int = 10) -> list[str]:
 
 
 def render_recall(session: MayaSession) -> str | None:
-    """Recent-queries popover above the chat input (#48, ADR 0009).
+    """Recent-queries popover (#48, ADR 0009). Not mounted (#147).
 
     Returns a query to replay this rerun, or None. Recall replays INPUT only:
     the returned query becomes an ordinary turn under current state.
@@ -209,45 +437,48 @@ def scroll_to_newest() -> None:
     )
 
 
+def render_assistant_turn(
+    session: MayaSession, user: str, content: str, row: dict | None, turn_index: int
+) -> None:
+    """Prototype A turn: one HTML panel, then the live thumb control (#147)."""
+    st.markdown(stacked_turn_html(user, content, row), unsafe_allow_html=True)
+    render_feedback(session, turn_index)
+    if row is not None:
+        render_report_receipt(session, row)
+
+
 def render_chat(session: MayaSession) -> None:
-    st.markdown(_CHAT_CSS, unsafe_allow_html=True)
-    st.markdown(
-        '<div class="maya-sticky-header">'
-        '<div class="maya-title">Maya</div>'
-        '<div class="maya-subtitle">Conversational film curator for US theatrical '
-        "releases, 1970\u20132026 — deterministic routing, closed-world grounding, "
-        "full trace observability."
-        "</div></div>",
-        unsafe_allow_html=True,
+    st.markdown(_LAYOUT_CSS, unsafe_allow_html=True)
+    st.header("Maya")
+    st.caption(
+        "Conversational film curator for US theatrical releases, 1970–2026 — "
+        "deterministic routing, closed-world grounding, full trace observability. Use /feedback to report issues."
     )
 
-    # history: routing chip + thumbs inside each assistant bubble
+    messages = session.conversation.messages
     turn_index = -1
-    for msg in session.conversation.messages:
-        role = "user" if msg.role == "user" else "assistant"
-        avatar = USER_AVATAR if msg.role == "user" else MAYA_AVATAR
-        with st.chat_message(role, avatar=avatar):
-            st.markdown(msg.content)
-            if msg.role != "assistant":
-                continue
+    i = 0
+    while i < len(messages):
+        msg = messages[i]
+        if msg.role != "user":
+            i += 1
+            continue
+        nxt = messages[i + 1] if i + 1 < len(messages) else None
+        if nxt is not None and nxt.role == "assistant":
             turn_index += 1
             row = resolve_turn_row(session, turn_index)  # #26-K identity join
-            if row is not None:
-                render_intent_badge(row)
-            render_feedback(session, turn_index)
-            if row is not None:
-                render_report_receipt(session, row)
+            render_assistant_turn(session, msg.content, nxt.content, row, turn_index)
+            i += 2
+        else:
+            st.markdown(
+                f'<div class="maya-turn">{user_bubble_html(msg.content)}</div>',
+                unsafe_allow_html=True,
+            )
+            i += 1
 
-    recalled_query = render_recall(session)  # #48: replay input, never output
+    # #147: recent-query recall is not mounted. The current thread stays.
     query = st.chat_input("Ask Maya about movies")
-    recalled = False
-    if recalled_query and not query:
-        query, recalled = recalled_query, True
     if not query:
-        # #80: the standing grid draws on idle reruns only — drawing it
-        # unconditionally painted the OLD posters above a fresh response
-        # on every turn rerun (the double-draw from the visitor Report).
-        render_poster_grid(session.last_movies)
         return
     report = parse_feedback_command(query)
     if report is not None:  # #76: Report on the last reply, never a turn
@@ -263,12 +494,14 @@ def render_chat(session: MayaSession) -> None:
             )
         return
 
-    with st.chat_message("user", avatar=USER_AVATAR):
-        st.markdown(query)
-    assistant = st.chat_message("assistant", avatar=MAYA_AVATAR)
+    # Paint the visitor line before the pipeline so it is on screen while Maya works.
+    st.markdown(
+        f'<div class="maya-turn">{user_bubble_html(query)}</div>',
+        unsafe_allow_html=True,
+    )
     try:
-        with assistant, st.status("Working through the pipeline", expanded=False):
-            session.turn(query, recalled=recalled)
+        with st.spinner("Working through the pipeline"):
+            session.turn(query)
     except Exception as exc:  # noqa: BLE001 — surface a readable failure, never a traceback
         st.error(
             "Maya could not complete this turn. Check that the app was started with "
@@ -278,10 +511,8 @@ def render_chat(session: MayaSession) -> None:
         )
         return
     idx = len(session.turn_log) - 1
-    with assistant:
-        last = resolve_turn_row(session, idx) or session.turn_log[idx]
-        st.markdown(last["response"])
-        render_intent_badge(last)
-        render_feedback(session, idx)
-    render_poster_grid(session.last_movies)
+    last = resolve_turn_row(session, idx) or session.turn_log[idx]
+    st.markdown(assistant_panel_html(last.get("response", ""), last), unsafe_allow_html=True)
+    render_feedback(session, idx)
+    render_report_receipt(session, last)
     scroll_to_newest()  # #27-R: land on the fresh response, not the page top
