@@ -355,7 +355,8 @@ class MayaSession:
             prev_cost=self.conversation.session_cost_usd,
         )
         row["recalled"] = recalled  # #48: replayed input, evaluated fresh
-        movies = out.get("retrieved_movies", [])
+        movies = list(out.get("retrieved_movies") or [])
+        row["movies"] = movies  # #147: Retrieval reads this turn, including after a rerun
         self.last_movies = movies
         # Guided narrowing (#22): probe answers extracted this turn persist
         # in session state; probe turns carry no movies and no synthesis cost.
