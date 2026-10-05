@@ -18,6 +18,7 @@ from pydantic import ValidationError
 
 from src.domain.config import ExperimentConfig
 from src.domain.memory import UserSessionPreferences
+from src.domain.routing import MetadataFilterCriteria
 from src.domain.usage import LLMUsage
 from src.maya.providers import DEFAULT_ZAI_BASE_URL, resolve_chat_endpoint
 from src.maya.v2.disposer import (
@@ -26,8 +27,70 @@ from src.maya.v2.disposer import (
     enforce_probe_budget,
     enforce_question,
 )
-from src.maya.v2.models import Understanding
+from src.maya.v2.models import PreferenceDelta, SubmitUnderstanding, Understanding
 from src.maya.v2.prompt import SYSTEM_PROMPT_V2, build_state_block
+
+#: Strict key sets (#150): derived from the schemas, never hardcoded — the
+#: schema IS the contract. Unknown keys are the #149 failure mode: pydantic's
+#: default policy silently ignores them, so they must be caught BEFORE
+#: validation. The dict-shaped slots of Understanding are exactly these
+#: three levels; every other field is a scalar or a list of enums/strings.
+_TOP_KEYS = frozenset(Understanding.model_fields)
+_FILTER_KEYS = frozenset(MetadataFilterCriteria.model_fields)
+_DELTA_KEYS = frozenset(PreferenceDelta.model_fields)
+
+
+def strict_understanding(args) -> tuple[Understanding | None, str | None]:
+    """Pure (#150): validate submit-tool args against the Understanding
+    schema, rejecting keys the schema does not define at every dict-shaped
+    level (top, ``filters``, ``preference_delta``) BEFORE pydantic's default
+    silently ignores them (#149: five live Bruce Willis turns invented
+    ``filters.cast`` and the actor vanished — silently, confidence 0.97).
+
+    Returns ``(understanding, None)`` or ``(None, reason)``; the reason
+    names the offending keys so the trace shows why (telemetry rule).
+    Validates with ``Understanding`` itself — never the ``SubmitUnderstanding``
+    subclass — so the result stays class-equal across the stack (pydantic
+    equality is class-strict; ``deterministic_ask`` comparisons rely on it).
+    """
+    if not isinstance(args, dict):
+        return None, f"args not a dict: {type(args).__name__}"
+    unknown = sorted(set(args) - _TOP_KEYS)
+    if unknown:
+        return None, f"unexpected key(s): {', '.join(unknown)}"
+    filters = args.get("filters")
+    if isinstance(filters, dict):
+        unknown = sorted(set(filters) - _FILTER_KEYS)
+        if unknown:
+            return None, f"unexpected filters key(s): {', '.join(unknown)}"
+    delta = args.get("preference_delta")
+    if isinstance(delta, dict):
+        unknown = sorted(set(delta) - _DELTA_KEYS)
+        if unknown:
+            return None, f"unexpected preference_delta key(s): {', '.join(unknown)}"
+    try:
+        return Understanding.model_validate(args), None
+    except ValidationError as exc:
+        parts = [
+            f"{'.'.join(str(loc) for loc in err['loc'])}: {err['msg']}"
+            for err in exc.errors()[:3]
+        ]
+        return None, f"invalid args: {'; '.join(parts)}"
+
+
+def _tool_args(resp) -> tuple[dict | None, str | None]:
+    """Pure (#150): the args dict of the first tool call on a response.
+    ``(None, reason)`` when the model answered without a usable tool call —
+    the forced-tool transports treat prose as a schema failure, never feed
+    it to a second parser (D19)."""
+    calls = getattr(resp, "tool_calls", None) or []
+    if not calls:
+        return None, "no tool call"
+    first = calls[0]
+    args = first.get("args") if isinstance(first, dict) else getattr(first, "args", None)
+    if not isinstance(args, dict):
+        return None, "tool call args not a dict"
+    return args, None
 
 
 class MayaV2Router:
@@ -129,13 +192,16 @@ class MayaV2Router:
         total_prompt = 0
         total_completion = 0
 
+        if self.config.v2_understand_transport != "prompt_json":
+            notes.append(f"understand transport={self.config.v2_understand_transport} (#150)")
+
         def _accrue(usage: LLMUsage | None) -> None:
             nonlocal total_prompt, total_completion
             if usage is not None:
                 total_prompt += usage.prompt_tokens
                 total_completion += usage.completion_tokens
 
-        parsed, api_error, usage = self._try_chain(messages)
+        parsed, api_error, usage = self._try_chain(messages, notes=notes)
         _accrue(usage)
         attempts = 1
         while (
@@ -145,7 +211,7 @@ class MayaV2Router:
         ):
             attempts += 1
             notes.append(f"schema failure on attempt {attempts - 1}; retrying with the error")
-            parsed, api_error, usage = self._try_chain(messages)
+            parsed, api_error, usage = self._try_chain(messages, notes=notes)
             _accrue(usage)
         if parsed is None:
             # #113: one attempt on the fallback model before the ask — the
@@ -153,7 +219,7 @@ class MayaV2Router:
             # model is configured. Fired-or-not lands in the trace (notes).
             fb_llm = self._resolve_fallback()
             if fb_llm is not None:
-                fb_parsed, fb_error, usage = self._try_chain(messages, llm=fb_llm)
+                fb_parsed, fb_error, usage = self._try_chain(messages, llm=fb_llm, notes=notes)
                 _accrue(usage)  # D3: priced at the primary rate — see _summed_usage
                 if fb_parsed is not None:
                     notes.append(
@@ -204,13 +270,28 @@ class MayaV2Router:
     # --- private -------------------------------------------------------------
 
     def _try_chain(
+        self, messages, llm=None, notes=None
+    ) -> tuple[Understanding | None, str | None, LLMUsage | None]:
+        """One client call under the configured transport (#150 knob):
+        ``(None, error, None)`` on API failure, ``(None, None, usage)`` on an
+        unusable reading (tokens were still spent — metered, #123). ``llm``
+        overrides the client (#113 fallback); ``notes`` collects the
+        per-attempt disposition when provided."""
+        transport = self.config.v2_understand_transport
+        if transport == "tool_call":
+            return self._try_chain_tool_call(messages, llm, notes)
+        if transport == "structured_output":
+            return self._try_chain_structured(messages, llm, notes)
+        return self._try_chain_prose(messages, llm)
+
+    def _try_chain_prose(
         self, messages, llm=None
     ) -> tuple[Understanding | None, str | None, LLMUsage | None]:
-        """One client call; ``(None, error, None)`` on API failure,
-        ``(None, None, usage)`` on unusable JSON (tokens were still spent —
-        metered, #123). The fence is stripped and pydantic validates HERE —
-        within the SAME attempt, before any C12 retry is spent. ``llm``
-        overrides the client (#113 fallback); defaults to the primary."""
+        """Pre-#150 prose path (``prompt_json`` escape hatch): the C14 prompt
+        carries the contract; the fence is stripped and pydantic validates
+        HERE — within the SAME attempt, before any C12 retry is spent. Kept
+        byte-compatible: it is the pinned baseline of the transport
+        comparison and the fallback if a provider cannot honor tool calls."""
         try:
             resp = (llm or self._llm).invoke(messages)
         except Exception as exc:  # noqa: BLE001 — D17 client exhausted; degrade (C12)
@@ -228,3 +309,79 @@ class MayaV2Router:
             return Understanding.model_validate_json(stripped), None, usage
         except ValidationError:
             return None, None, usage
+
+    def _try_chain_tool_call(
+        self, messages, llm=None, notes=None
+    ) -> tuple[Understanding | None, str | None, LLMUsage | None]:
+        """``tool_call`` transport (#150, option A): the schema bound as the
+        single tool with ``tool_choice`` forced — the model's reading arrives
+        as the tool-call arguments: structured JSON, exact keys, no fence to
+        strip (live-probed on z.ai glm-5.3-flash: the force is honored and
+        invented keys in prose JSON disappear). Args pass the strict
+        validator BEFORE pydantic (#149); a prose answer despite the force
+        is a schema failure — never a second parser (D19)."""
+        client = llm or self._llm
+        try:
+            resp = client.bind_tools(
+                [SubmitUnderstanding], tool_choice="SubmitUnderstanding"
+            ).invoke(messages)
+        except Exception as exc:  # noqa: BLE001 — D17 client exhausted; degrade (C12)
+            return None, f"{type(exc).__name__}: {exc}", None
+        usage = LLMUsage.from_response(resp)
+        calls = getattr(resp, "tool_calls", None) or []
+        if len(calls) > 1 and notes is not None:
+            notes.append(f"two tool calls — used first ({len(calls)} seen)")
+        args, reason = _tool_args(resp)
+        if args is None:
+            if reason is not None and notes is not None:
+                notes.append(f"understand tool_call: {reason}")
+            return None, None, usage
+        parsed, strict_reason = strict_understanding(args)
+        if parsed is None and notes is not None:
+            notes.append(f"understand strict rejection: {strict_reason}")
+        return parsed, strict_reason, usage
+
+    def _try_chain_structured(
+        self, messages, llm=None, notes=None
+    ) -> tuple[Understanding | None, str | None, LLMUsage | None]:
+        """``structured_output`` transport (#150, option B): LangChain's
+        wrapper — ``with_structured_output(method='function_calling',
+        include_raw=True)`` with ``tool_choice`` forced via kwargs
+        passthrough (verified on langchain-openai 1.6.0: the bind kwargs
+        carry it). The wrapper's ``parsed`` is NEVER trusted:
+        PydanticToolsParser validates with the schema whose nested models
+        silently ignore extras — the exact invented-key path of #149. The
+        raw AIMessage's tool args get the same strict validation, and usage
+        is metered from ``raw`` — token granularity is kept under this
+        transport (#123)."""
+        client = llm or self._llm
+        try:
+            structured = client.with_structured_output(
+                SubmitUnderstanding,
+                method="function_calling",
+                include_raw=True,
+                tool_choice="SubmitUnderstanding",
+            )
+            result = structured.invoke(messages)
+        except Exception as exc:  # noqa: BLE001 — D17 client exhausted; degrade (C12)
+            return None, f"{type(exc).__name__}: {exc}", None
+        if not isinstance(result, dict):  # include_raw=False shape would mean a re-design
+            return None, None, None
+        raw = result.get("raw")
+        usage = LLMUsage.from_response(raw)
+        if result.get("parsing_error") is not None:
+            if notes is not None:
+                notes.append(f"understand parsing_error: {result['parsing_error']}")
+            return None, None, usage
+        calls = getattr(raw, "tool_calls", None) or []
+        if len(calls) > 1 and notes is not None:
+            notes.append(f"two tool calls — used first ({len(calls)} seen)")
+        args, reason = _tool_args(raw)
+        if args is None:
+            if reason is not None and notes is not None:
+                notes.append(f"understand structured_output: {reason}")
+            return None, None, usage
+        parsed, strict_reason = strict_understanding(args)
+        if parsed is None and notes is not None:
+            notes.append(f"understand strict rejection: {strict_reason}")
+        return parsed, strict_reason, usage
