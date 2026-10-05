@@ -205,6 +205,15 @@ class MayaSession:
         env_stack = os.getenv("MAYA_ROUTING_STACK", "").strip().lower()
         if env_stack in {"v1", "v2"}:
             self.config = self.config.model_copy(update={"routing_stack": env_stack})
+        # #150: the same affordance for the Understand transport — run the
+        # app twice with different values to compare the two transports;
+        # each turn's trace notes record the transport in force. Values
+        # outside the Literal are ignored (default holds).
+        env_transport = os.getenv("MAYA_V2_UNDERSTAND_TRANSPORT", "").strip().lower()
+        if env_transport in {"prompt_json", "tool_call", "structured_output"}:
+            self.config = self.config.model_copy(
+                update={"v2_understand_transport": env_transport}
+            )
         self.conversation = ConversationState()
         self.tracer = DualModeObservabilityManager(session_id=f"ui-{datetime.now(UTC):%H%M%S}")
         self.limiter = SessionCostLimiter()

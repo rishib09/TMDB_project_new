@@ -58,6 +58,21 @@ class ExperimentConfig(BaseModel):
     #: #107 sweep isolation: pin exact config id, no provider swap (v1's
     #: pin_router_config_id pattern).
     pin_v2_router_config_id: bool = Field(default=False)
+    #: #150: how the v2 Understand call returns structure. tool_call = the
+    #: schema bound as a forced submit-tool (bind_tools + tool_choice) with
+    #: strict arg validation — z.ai honors the force (live-probed);
+    #: structured_output = with_structured_output(function_calling,
+    #: include_raw=True) with the SAME strict validation on raw args (the
+    #: wrapper's parsed is never trusted — pydantic silently ignores extras);
+    #: prompt_json = the pre-#150 prose path (fenced JSON), kept as the
+    #: escape hatch. ADR 0004 tunable. Default = structured_output (option B)
+    #: per decision 2026-10-04 on the live comparison — 0 retries and fewer
+    #: tokens than tool_call, same forced wire call, same strict backstop —
+    #: so switching between transports stays safe in either direction
+    #: (MAYA_V2_UNDERSTAND_TRANSPORT locally; this knob everywhere else).
+    v2_understand_transport: Literal[
+        "prompt_json", "tool_call", "structured_output"
+    ] = Field(default="structured_output")
     routing_stack: Literal["v1", "v2"] = Field(
         default="v1",
         description="Routing Stack in force (#83): v1 = gated router (production); "

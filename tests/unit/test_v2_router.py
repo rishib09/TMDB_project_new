@@ -17,8 +17,13 @@ from src.maya.v2 import (
     deterministic_ask,
     project_understanding,
 )
+from src.maya.v2.router import _tool_args, strict_understanding
 
 CFG = ExperimentConfig()
+#: The prose transport these ladder tests were written against — the knob
+#: default is the #150 tool_call transport, so the fence/retry/degradation
+#: tests pin ``prompt_json`` explicitly (ADR 0004 tunable).
+CFG_PROSE = ExperimentConfig(v2_understand_transport="prompt_json")
 
 
 def _u(**kw) -> Understanding:
@@ -36,8 +41,10 @@ def _content(u: Understanding | None, *, fenced: bool = False) -> str:
 
 
 def _router_with(responses) -> MayaV2Router:
-    """Router whose client pops scripted response bodies (str) or raises."""
-    r = MayaV2Router(CFG, api_key="test-key")
+    """Router whose client pops scripted response bodies (str) or raises.
+    Pinned to ``prompt_json``: these tests exercise the prose-path fence and
+    the C12 ladder, not the #150 tool transports."""
+    r = MayaV2Router(CFG_PROSE, api_key="test-key")
     scripted = list(responses)
 
     class _Resp:
@@ -108,7 +115,7 @@ def test_understand_builds_c14_payload():
             seen["messages"] = messages
             return _Resp()
 
-    r = MayaV2Router(CFG, api_key="test-key")
+    r = MayaV2Router(CFG_PROSE, api_key="test-key")
     r._llm = _LLM()
     prefs = UserSessionPreferences(preferred_mood="scary", excluded_genres=["Horror"])
     r.understand("the query", prefs, ["Inception"], "last reply", 1)
@@ -288,3 +295,95 @@ def test_understand_stub_without_usage_meters_none():
     out, notes, usage = r.understand("q", UserSessionPreferences(), [], None, 0)
     assert out is not None
     assert usage is None
+
+
+# --- #150: strict arg validation (pure) ----------------------------------------
+
+BASE_ARGS = {"intent": IntentType.SEMANTIC_SEARCH, "standalone_query": "q", "confidence": 0.9}
+
+
+def test_strict_understanding_passes_exact_keys():
+    out, reason = strict_understanding(BASE_ARGS)
+    assert reason is None
+    assert out is not None and out.standalone_query == "q"
+    assert type(out) is Understanding  # class-strict equality across the stack
+
+
+def test_strict_understanding_rejects_unknown_at_every_level():
+    for bad, needle in (
+        ({**BASE_ARGS, "lead_actor": "Bruce Willis"}, "lead_actor"),
+        ({**BASE_ARGS, "filters": {"cast": "Bruce Willis"}}, "cast"),
+        ({**BASE_ARGS, "preference_delta": {"add_cast": ["x"]}}, "add_cast"),
+        ({**BASE_ARGS, "intent": "MOVIE_SEARCH"}, "intent"),  # outside the taxonomy
+    ):
+        out, reason = strict_understanding(bad)
+        assert out is None
+        assert needle in reason
+
+
+def test_strict_understanding_valid_filters_survive():
+    f = {"cast_member": "Bruce Willis", "genres": ["Action"]}
+    out, reason = strict_understanding({**BASE_ARGS, "filters": f})
+    assert reason is None
+    assert out.filters.cast_member == "Bruce Willis"
+    assert out.filters.genres == ["Action"]
+
+
+def test_strict_understanding_non_dict_args():
+    out, reason = strict_understanding("not a dict")
+    assert out is None and "not a dict" in reason
+
+
+def test_tool_args_extraction_shapes():
+    resp = type("R", (), {"tool_calls": [{"name": "SubmitUnderstanding", "args": BASE_ARGS}]})()
+    args, reason = _tool_args(resp)
+    assert reason is None and args == BASE_ARGS
+
+    args, reason = _tool_args(type("R", (), {"tool_calls": []})())
+    assert args is None and reason == "no tool call"
+
+    args, reason = _tool_args(type("R", (), {"tool_calls": None})())
+    assert args is None and reason == "no tool call"
+
+    ns_call = type("C", (), {"args": BASE_ARGS})()
+    args, reason = _tool_args(type("R", (), {"tool_calls": [ns_call]})())
+    assert reason is None and args == BASE_ARGS
+
+    args, reason = _tool_args(type("R", (), {"tool_calls": [{"args": "junk"}]})())
+    assert args is None and reason == "tool call args not a dict"
+
+
+def test_config_defaults_structured_output_transport():
+    assert CFG.v2_understand_transport == "structured_output"  # #150 default (option B)
+
+
+def test_understand_tool_transport_notes_the_transport():
+    """Telemetry rule: the transport in force is visible in the trace."""
+    r = _router_with([_content(_u())])
+    r.config = ExperimentConfig(v2_understand_transport="tool_call")
+    r._llm = _ToolCallLLM([_tool_msg(BASE_ARGS)])
+    out, notes, _ = r.understand("q", UserSessionPreferences(), [], None, 0)
+    assert out.standalone_query == "q"
+    assert notes[0].startswith("understand transport=tool_call")
+
+
+class _ToolCallLLM:
+    """Minimal tool_call-transport client: bind_tools scripts one response."""
+
+    def __init__(self, responses):
+        self._responses = list(responses)
+
+    def bind_tools(self, tools, **kwargs):
+        return self
+
+    def invoke(self, messages):
+        return self._responses.pop(0)
+
+
+def _tool_msg(args: dict):
+    from langchain_core.messages import AIMessage
+
+    return AIMessage(
+        content="",
+        tool_calls=[{"name": "SubmitUnderstanding", "args": args, "id": "c1", "type": "tool_call"}],
+    )

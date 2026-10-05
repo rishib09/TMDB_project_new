@@ -55,3 +55,16 @@ class Understanding(BaseModel):
     clarifying_question: str | None = None  # C9: asked only if code agrees
     referenced_titles: list[str] = Field(default_factory=list)  # C10
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)  # C11: telemetry only
+
+
+class SubmitUnderstanding(Understanding):
+    """The forced submit-tool signature of the v2 Understand call (#150).
+
+    Subclasses carry NO new fields — the schema IS the contract (C1–C14).
+    The router binds this class as the single tool and pins ``tool_choice``
+    to its name, so the model's reading arrives as the tool-call arguments:
+    structured JSON with exact keys, no fence to strip. The strict arg
+    validator lives in ``router.strict_understanding`` — it rejects keys the
+    schema does not define BEFORE pydantic's default silently ignores them
+    (#149: invented ``filters.cast`` dropped the actor five turns running).
+    """
