@@ -53,8 +53,8 @@ def test_metadata_fields_are_labeled_and_skip_empty_sections():
     assert fields["Route"] == "retrieve"
     assert fields["Movies"] == "4"
     assert fields["Tokens"] == "640"
-    assert "Narrowing" not in fields
-    assert "Filters" not in fields
+    assert "Session filter" not in fields
+    assert "Current filter" not in fields
 
 
 def test_metadata_fields_include_narrowing_filters_and_reroute():
@@ -69,8 +69,37 @@ def test_metadata_fields_include_narrowing_filters_and_reroute():
         "filters": ["genres: Horror, Thriller (all)"],
     }))
     assert fields["Route"] == "reroute (x2)"
-    assert fields["Narrowing"] == "mood: scary · audience: kids"
-    assert fields["Filters"] == "genres: Horror, Thriller (all)"
+    # #153: the labels name the lifetime, not the action
+    assert fields["Session filter"] == "mood: scary · audience: kids"
+    assert fields["Current filter"] == "genres: Horror, Thriller (all)"
+
+
+def test_turn_row_current_filter_comes_from_effective_set():
+    """#153, the Nolan/Action repro: the turn declared only director+years,
+    code injected the session's Action — the chip shows what actually ran."""
+    from src.domain.routing import IntentType, MetadataFilterCriteria, QueryRoutingDecision
+    from src.ui.session import MayaSession
+
+    decision = QueryRoutingDecision(
+        intent=IntentType.SEMANTIC_SEARCH, confidence=0.9,
+        standalone_query="latest Nolan", requires_rag=True,
+        filters=MetadataFilterCriteria(director="Christopher Nolan", year_min=2017),
+    )
+    row = MayaSession._build_turn_row(
+        {
+            "final_response": "Tenet.",
+            "routing_decision": decision,
+            "retrieved_movies": [],
+            "filters_applied": {
+                "genres": ["Action"], "genre_match": "any",
+                "director": "Christopher Nolan", "year_min": 2017,
+            },
+        },
+        query="latest Nolan", trace_id="t", rag_version="test",
+        new_traces=[], prev_tokens=0,
+    )
+    assert "genres: Action" in row["filters"]
+    assert "dir. Christopher Nolan" in row["filters"]
 
 
 def test_turn_stores_movies_for_the_retrieval_section():
@@ -146,6 +175,10 @@ def test_stacked_turn_is_the_prototype_panel():
     assert "Retrieval" in html_turn and "heat.jpg" in html_turn
     assert "Metadata" in html_turn and "maya-chip" in html_turn
     assert "SEMANTIC_SEARCH" in html_turn
+    # #153: the legend says what each chip means, in plain words
+    assert "maya-legend" in html_turn
+    assert "Session filter = remembered preferences" in html_turn
+    assert "Current filter = what this search actually ran with" in html_turn
     assert "<h2" not in html_turn
     assert 'class="maya-kicker"' in html_turn
     assert "<script>" not in user_bubble_html('<script>alert("x")</script>')
