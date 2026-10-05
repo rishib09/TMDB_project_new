@@ -777,10 +777,12 @@ def build_maya_graph(
         The retrieve node injects the session's preferred genres when this
         turn declared none (#25). That injection is a code disposal, so the
         explanation is deterministic code too — never a model call (ADR 0005):
-        it appends the v1-proven transparency line, whose escape-hatch
-        question is the visitor's way out. Fires at most once per session
-        (thread-persistent ``carryover_notice_shown``), only on turns that
-        actually retrieved, and only when a preference genre really joined.
+        it appends the transparency line for exactly the genres that joined
+        (review 2026-10-04: never over-claim filters that did not run), whose
+        escape-hatch question is the visitor's way out. Fires at most once per
+        session (thread-persistent ``carryover_notice_shown``), only on turns
+        that actually retrieved, and only when a preference genre really
+        joined.
         """
         injected = injected_genres(
             state.filters_applied,
@@ -792,25 +794,26 @@ def build_maya_graph(
             or not state.retrieved_movies
         ):
             return {}
-        notice = v2_carryover_notice(state.session_preferences)
+        notice = v2_carryover_notice(injected)
         if not notice:
             return {}
-        tracer.record_local(
-            "carryover_notice", {"injected_genres": injected, "fired": True}
-        )
         noticed = state.final_response + notice
         last = state.messages[-1] if state.messages else None
-        if isinstance(last, AIMessage) and last.id:
-            # Same-id replacement: add_messages swaps the assistant message in
-            # place, so the transcript carries the notice without a duplicate.
-            return {
-                "final_response": noticed,
-                "messages": [last.model_copy(update={"content": noticed})],
-                "carryover_notice_shown": True,
-            }
-        # No usable message id — the UI reads final_response, so the notice
-        # still ships; the transcript simply keeps the un-noticed text.
-        return {"final_response": noticed, "carryover_notice_shown": True}
+        # Same-id replacement: add_messages swaps the assistant message in
+        # place, so the transcript carries the notice without a duplicate.
+        # No usable id → the UI still reads final_response (the transcript
+        # keeps the un-noticed text) — a fail-open the trace distinguishes
+        # via transcript_replaced (telemetry rule: fail-open is recorded).
+        replaced = isinstance(last, AIMessage) and bool(last.id)
+        tracer.record_local(
+            "carryover_notice",
+            {"injected_genres": injected, "fired": True,
+             "transcript_replaced": replaced},
+        )
+        update: dict = {"final_response": noticed, "carryover_notice_shown": True}
+        if replaced:
+            update["messages"] = [last.model_copy(update={"content": noticed})]
+        return update
 
     def refusal_node(state: MayaGraphState) -> dict:
         """Deterministic refusal — guardrail text already in final_response."""

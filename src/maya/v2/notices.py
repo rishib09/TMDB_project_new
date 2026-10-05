@@ -1,57 +1,31 @@
 """v2 filter transparency (#153): the carry-over notice, owned by v2.
 
-DELIBERATE COPY of ``src/maya/probing.py``'s ``preference_chips`` and
-``build_filter_carryover_notice`` (#26-E). The v2 stack must not import v1's
-modules — the two routing stacks will be split into separate branches — so
-these helpers are duplicated here, byte-for-byte in behavior, with the new
-injection-diff helper this stack needs. When the split lands, this module
-travels with v2 and probing.py stays with v1 untouched (per #153 decision).
+v2 never imports v1's modules — the two routing stacks will be split into
+separate branches — so the transparency line is v2-local. It deliberately
+DIVERGES from v1's ``src/maya/probing.build_filter_carryover_notice``: v1
+announces every remembered chip (its funnel owns the whole narrowing), while
+v2 announces exactly the genres code folded into this turn's SQL (#25) —
+review decision 2026-10-04: the line must not over-claim filters that did
+not run. v1's all-chips version stays in probing.py for v1's funnel path.
 
 The transparency line itself is deterministic code, never a model call: the
 filter injection it explains is a code disposal (the #25 genre merge in the
 shared retrieve node), so the explanation is code's job too (ADR 0005).
 """
 
-from src.domain.memory import UserSessionPreferences
 from src.domain.routing import MetadataFilterCriteria
 
 
-def preference_chips(prefs: UserSessionPreferences) -> list[str]:
-    """Human-readable chips for the active preferences (shared by UI + notice).
+def build_filter_carryover_notice(injected: list[str]) -> str:
+    """Post-retrieval transparency line (#153): the genres that silently
+    joined this turn's SQL, with the deterministic escape hatch.
 
-    Copy of ``src/maya/probing.preference_chips`` — see module docstring.
+    Empty when nothing joined (nothing to announce).
     """
-    chips: list[str] = []
-    if prefs.preferred_mood:
-        chips.append(f"mood: {prefs.preferred_mood}")
-    if prefs.audience:
-        chips.append(f"audience: {prefs.audience}")
-    chips.extend(f"no {d}" for d in prefs.noted_donts)
-    if prefs.preferred_genres:
-        chips.append("genres: " + ", ".join(prefs.preferred_genres))
-    chips.extend(f"dir. {d}" for d in prefs.preferred_directors)
-    # #27-Q: carried year constraints are visible like any other filter.
-    if prefs.exact_year:
-        chips.append(f"year: {prefs.exact_year}")
-    elif prefs.year_min or prefs.year_max:
-        lo = prefs.year_min or "…"
-        hi = prefs.year_max or "…"
-        chips.append(f"years: {lo}-{hi}")
-    return chips
-
-
-def build_filter_carryover_notice(prefs: UserSessionPreferences) -> str:
-    """Post-retrieval transparency line (#153, pattern #26-E): what is still
-    filtering, with the deterministic escape hatch.
-
-    Copy of ``src/maya/probing.build_filter_carryover_notice`` — see module
-    docstring. Empty when nothing is remembered (nothing to announce).
-    """
-    chips = preference_chips(prefs)
-    if not chips:
-        return ""  # no prefs carried → nothing to announce
+    if not injected:
+        return ""
     return (
-        "\n\n---\nStill filtering by " + " · ".join(chips) + " — want to "
+        "\n\n---\nStill filtering by genres: " + ", ".join(injected) + " — want to "
         'continue with these, or watch something completely different?'
     )
 
