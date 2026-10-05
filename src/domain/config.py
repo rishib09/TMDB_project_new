@@ -65,10 +65,14 @@ class ExperimentConfig(BaseModel):
     #: include_raw=True) with the SAME strict validation on raw args (the
     #: wrapper's parsed is never trusted — pydantic silently ignores extras);
     #: prompt_json = the pre-#150 prose path (fenced JSON), kept as the
-    #: escape hatch. ADR 0004 tunable; default flipped only on live evidence.
+    #: escape hatch. ADR 0004 tunable. Default = structured_output (option B)
+    #: per decision 2026-10-04 on the live comparison — 0 retries and fewer
+    #: tokens than tool_call, same forced wire call, same strict backstop —
+    #: so switching between transports stays safe in either direction
+    #: (MAYA_V2_UNDERSTAND_TRANSPORT locally; this knob everywhere else).
     v2_understand_transport: Literal[
         "prompt_json", "tool_call", "structured_output"
-    ] = Field(default="tool_call")
+    ] = Field(default="structured_output")
     routing_stack: Literal["v1", "v2"] = Field(
         default="v1",
         description="Routing Stack in force (#83): v1 = gated router (production); "

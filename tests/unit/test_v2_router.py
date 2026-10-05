@@ -353,8 +353,8 @@ def test_tool_args_extraction_shapes():
     assert args is None and reason == "tool call args not a dict"
 
 
-def test_config_defaults_tool_call_transport():
-    assert CFG.v2_understand_transport == "tool_call"  # #150 default (option A)
+def test_config_defaults_structured_output_transport():
+    assert CFG.v2_understand_transport == "structured_output"  # #150 default (option B)
 
 
 def test_understand_tool_transport_notes_the_transport():
