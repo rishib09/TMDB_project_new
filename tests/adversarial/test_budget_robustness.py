@@ -13,7 +13,6 @@ from src.maya.guardrails import (
     WeeklyBudgetTracker,
     estimate_cost,
 )
-from src.maya.v2 import MayaV2Router
 from src.storage.database import MovieDatabase
 
 pytestmark = pytest.mark.adversarial
@@ -62,33 +61,6 @@ class _UsageV1Router:
             standalone_query=query,
             requires_rag=False,
             reasoning="test",
-        )
-
-
-class _UsageV2Router(MayaV2Router):
-    """Real subclass so the stack selector wires route_node_v2; understand()
-    returns the post-#123 3-tuple with usage."""
-
-    def __init__(self):
-        from src.domain.config import ExperimentConfig
-
-        # Real construction (api_key test-pinned, no network at build time).
-        super().__init__(ExperimentConfig(), api_key="test-key")
-
-    def understand(self, query, prefs, shown_titles, last_assistant, probe_count):
-        from src.domain.routing import IntentType
-        from src.domain.usage import LLMUsage
-        from src.maya.v2 import Understanding
-
-        return (
-            Understanding(
-                intent=IntentType.SEMANTIC_SEARCH,
-                standalone_query=query,
-                confidence=0.9,
-                ready_to_retrieve=True,
-            ),
-            ["scripted"],
-            LLMUsage(model="glm-5.3-flash", prompt_tokens=300, completion_tokens=100),
         )
 
 
@@ -240,27 +212,6 @@ def test_funnel_extract_router_call_is_metered():
     rows = [t for t in tracer.traces() if t["node"] == "cost" and t["payload"].get("node") == "funnel_extract"]
     assert rows and rows[0]["payload"]["cost_usd"] == pytest.approx(extract_cost)
     assert out["session_cost_usd"] >= extract_cost - 1e-9
-
-
-def test_v2_route_node_writes_understand_cost_to_session():
-    """#123 adversarial: the v2 Understand call was unmetered — a v2 turn
-    must carry session_cost_usd > 0 and a ``cost`` trace row."""
-    from src.domain.config import ExperimentConfig
-    from src.graph.orchestrator import build_maya_graph
-
-    expected = estimate_cost("glm-5.3-flash", 300, 100)
-    graph = build_maya_graph(
-        ExperimentConfig(),
-        _UsageV2Router(),
-        _EmptyEngine(),
-        _UsageSynth(),
-        tracer := _fresh_tracer(),
-        budget_tracker=None,
-    )
-    out = graph.invoke({"messages": [HumanMessage(content="feel-good comedies")]})
-    assert out["session_cost_usd"] == pytest.approx(expected)
-    assert out["session_cost_usd"] > 0
-    assert "cost" in [t["node"] for t in tracer.traces()]
 
 
 class ExplodingSink:

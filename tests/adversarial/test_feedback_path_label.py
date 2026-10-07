@@ -38,15 +38,6 @@ def _build(new_traces: list[dict], out: dict) -> dict:
     )
 
 
-def test_v2_routed_retrieve_turn_is_not_labeled_refusal():
-    row = _build([{"node": "route_v2", "data": {}}], _v2_out("retrieve"))
-    assert row["path"] != "refusal"
-    assert row["path"] == "retrieve"
-
-
-def test_v2_ask_turn_labels_ask():
-    row = _build([{"node": "route_v2", "data": {}}], _v2_out("ask"))
-    assert row["path"] == "ask"
 
 
 def test_v1_single_route_label_unchanged():
@@ -78,32 +69,7 @@ def test_v1_funnel_owned_retrieve_still_labels_funnel():
     assert row["path"] == "funnel"
 
 
-def test_v2_clean_ask_without_notes_still_labels_ask():
-    """Live finding (#113): a clean glm ask emits zero guard notes — the
-    unconditional route_v2 passage marker is the only trace evidence."""
-    row = _build([{"node": "route_v2", "data": {"turn_decision": "ask"}}], _v2_out("ask"))
-    assert row["path"] == "ask"
 
-
-def test_v2_clean_retrieve_resets_stage_but_labels_retrieve():
-    """v2 retrieves reset turn_stage to \"\" (per-turn state reset) — the
-    passage marker must carry the label, not the stale stage."""
-    out = _v2_out("")
-    row = _build(
-        [{"node": "route_v2", "data": {"turn_decision": "retrieve"}}], out
-    )
-    assert row["path"] == "retrieve"
-    assert row["path"] != "refusal"
-
-
-def test_v2_decision_present_without_evidence_is_retrieve_never_refusal():
-    """Live finding, C06 t2: a full retrieval turn (5 movies synthesized)
-    arrived with decision present, stage '', and no route evidence — the
-    old fallthrough labeled it 'refusal'. Decision-present turns are never
-    refusals; refusals are guard-diverted decisionless."""
-    out = _v2_out("")
-    row = _build([], out)
-    assert row["path"] == "retrieve"
 
 
 def test_refusal_node_trace_labels_refusal_even_with_decision():

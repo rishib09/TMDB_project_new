@@ -70,16 +70,6 @@ from src.maya.probing import (
     should_probe,
 )
 from src.maya.router import MayaRouter
-from src.maya.v2 import (
-    MayaV2Router,
-    dispose,
-    project_understanding,
-    turn_decision,
-)
-from src.maya.v2.notices import (
-    build_filter_carryover_notice as v2_carryover_notice,
-    injected_genres,
-)
 from src.observability.tracer import DualModeObservabilityManager
 from src.retrieval.hybrid_engine import HybridRetrievalEngine
 
@@ -123,7 +113,7 @@ def fold_preference_years(
 
 def build_maya_graph(
     config: ExperimentConfig,
-    router: MayaRouter | "MayaV2Router",
+    router: MayaRouter,
     engine: HybridRetrievalEngine,
     synthesizer: MayaSynthesizer,
     tracer: DualModeObservabilityManager,
@@ -140,10 +130,6 @@ def build_maya_graph(
     limiter = limiter or SessionCostLimiter()
     injection_filter = InjectionFilter()
     pivot = OffTopicPivot()
-    # #106: the stack selector. v2 passes a MayaV2Router and the funnel
-    # collapses into its route node; v1 wiring is byte-for-byte unchanged.
-    stack_v2 = isinstance(router, MayaV2Router)
-    router_v2 = router if stack_v2 else None
 
     def _meter_llm(usage: LLMUsage | None, node: str) -> float:
         """Record one LLM call everywhere it matters (#123).
@@ -771,50 +757,6 @@ def build_maya_graph(
             "rolling_summary": _update_summary(state, decision),
         }
 
-    def carryover_notice_node(state: MayaGraphState) -> dict:
-        """#153 (v2): announce remembered filters that silently joined the SQL.
-
-        The retrieve node injects the session's preferred genres when this
-        turn declared none (#25). That injection is a code disposal, so the
-        explanation is deterministic code too — never a model call (ADR 0005):
-        it appends the transparency line for exactly the genres that joined
-        (review 2026-10-04: never over-claim filters that did not run), whose
-        escape-hatch question is the visitor's way out. Fires at most once per
-        session (thread-persistent ``carryover_notice_shown``), only on turns
-        that actually retrieved, and only when a preference genre really
-        joined.
-        """
-        injected = injected_genres(
-            state.filters_applied,
-            state.routing_decision.filters if state.routing_decision else None,
-        )
-        if (
-            not injected
-            or state.carryover_notice_shown
-            or not state.retrieved_movies
-        ):
-            return {}
-        notice = v2_carryover_notice(injected)
-        if not notice:
-            return {}
-        noticed = state.final_response + notice
-        last = state.messages[-1] if state.messages else None
-        # Same-id replacement: add_messages swaps the assistant message in
-        # place, so the transcript carries the notice without a duplicate.
-        # No usable id → the UI still reads final_response (the transcript
-        # keeps the un-noticed text) — a fail-open the trace distinguishes
-        # via transcript_replaced (telemetry rule: fail-open is recorded).
-        replaced = isinstance(last, AIMessage) and bool(last.id)
-        tracer.record_local(
-            "carryover_notice",
-            {"injected_genres": injected, "fired": True,
-             "transcript_replaced": replaced},
-        )
-        update: dict = {"final_response": noticed, "carryover_notice_shown": True}
-        if replaced:
-            update["messages"] = [last.model_copy(update={"content": noticed})]
-        return update
-
     def refusal_node(state: MayaGraphState) -> dict:
         """Deterministic refusal — guardrail text already in final_response."""
         tracer.record_local("refusal", {})
@@ -878,76 +820,6 @@ def build_maya_graph(
             return "probe"
         return "retrieve"
 
-    # --- #106: the v2 stack — funnel collapsed into the route node ----------
-
-    def route_node_v2(state: MayaGraphState) -> dict:
-        """One Understand call -> disposer -> projection; the ask is INLINE.
-
-        The v2 route node replaces v1's route/probe/funnel trio: the model
-        authors the clarifying question (C9), the disposer enforces every
-        invariant (C7/C2/C12), and the Turn Decision on Narrowing Axes
-        (C8) routes the turn. The preferences snapshot rides verbatim
-        (PreferencesUpdate replace) so removals cannot be resurrected by
-        the union reducer.
-        """
-        probe_count = state.probe_count
-        u, notes, usage = router_v2.understand(
-            state.current_query,
-            state.session_preferences,
-            shown_titles=state.shown_movie_titles,
-            last_assistant=last_assistant_text(state),
-            probe_count=probe_count,
-        )
-        usage = _metered_usage_of(usage)  # review P3-2: doubles → marker path
-        understand_cost = _meter_llm(usage, "route_v2")
-        for note in notes:  # telemetry rule: every invariant on the record
-            tracer.record_local("route_v2", {"note": note})
-        disposition = dispose(u, state.session_preferences, config)
-        for note in disposition.notes:
-            tracer.record_local("route_v2", {"note": note})
-        decision = project_understanding(disposition.understanding, disposition.preferences)
-        td = turn_decision(
-            disposition.understanding, disposition.preferences, config,
-            probe_count=probe_count,
-        )
-        # #113: record the passage UNCONDITIONALLY — guard notes only exist
-        # on violations, so a clean ask/retrieve left no route_v2 trace and
-        # the Feedback Window inferred "refusal" from the empty channel.
-        tracer.record_local("route_v2", {"turn_decision": td.decision})
-        update = {
-            "routing_decision": decision,
-            "session_preferences": PreferencesUpdate(
-                prefs=disposition.preferences, replace=True
-            ),
-            "session_tokens": (
-                usage.prompt_tokens + usage.completion_tokens if usage else 0
-            ),
-            "session_cost_usd": understand_cost,
-        }
-        if td.decision == "ask":  # C9: the model-authored question IS the reply
-            question = disposition.understanding.clarifying_question or ""
-            return {
-                **update,
-                "final_response": question,
-                "messages": [AIMessage(content=question)],
-                "turn_stage": "ask",
-                "probe_count": probe_count + 1,
-            }
-        return update
-
-    def route_after_router_v2(state: MayaGraphState) -> Literal["retrieve", "synthesize", "pivot", "trim"]:
-        """C8 ladder outcomes -> graph targets. ``ask`` already answered
-        itself in route_node_v2 (turn_stage), so it trims and ends — the
-        funnel's probe/funnel nodes never run on the v2 stack."""
-        if state.turn_stage == "ask":
-            return "trim"
-        decision = state.routing_decision
-        if decision.intent is IntentType.OUT_OF_SCOPE:
-            return "pivot"
-        if not decision.requires_rag:
-            return "synthesize"
-        return "retrieve"
-
     def trim_node(state: MayaGraphState) -> dict:
         """#93/D16: the window rides Experiment Config (ADR 0004)."""
         return trim_message_window(state, config.message_window)
@@ -956,15 +828,9 @@ def build_maya_graph(
     graph.add_node("begin_turn", begin_turn_node)
     graph.add_node("trim", trim_node)
     graph.add_node("guard_input", guard_input_node)
-    # #106 stack selector: v2 swaps the route node + its conditional edge;
-    # probe/funnel nodes stay registered but are unreachable on v2 turns
-    # (route_after_router_v2 never targets them).
-    graph.add_node("route", route_node_v2 if stack_v2 else route_node)
+    graph.add_node("route", route_node)
     graph.add_node("retrieve", retrieve_node)
     graph.add_node("synthesize", synthesize_node)
-    # #153: the transparency node rides ONLY the v2 path (registered but
-    # unreachable on v1, mirroring how probe/funnel rest on v2 turns).
-    graph.add_node("carryover_notice", carryover_notice_node)
     graph.add_node("refusal", refusal_node)
     graph.add_node("pivot", pivot_node)
     graph.add_node("probe", probe_node)
@@ -974,16 +840,10 @@ def build_maya_graph(
     graph.add_edge("begin_turn", "guard_input")
     graph.add_conditional_edges("guard_input", route_after_guard)
     graph.add_conditional_edges("funnel", route_after_funnel)
-    graph.add_conditional_edges(
-        "route", route_after_router_v2 if stack_v2 else route_after_router
-    )
+    graph.add_conditional_edges("route", route_after_router)
     # The route→route cycle is implicit: route_after_router may return "route".
     graph.add_edge("retrieve", "synthesize")
-    if stack_v2:
-        graph.add_edge("synthesize", "carryover_notice")
-        graph.add_edge("carryover_notice", "trim")
-    else:
-        graph.add_edge("synthesize", "trim")
+    graph.add_edge("synthesize", "trim")
     graph.add_edge("trim", END)
     graph.add_edge("refusal", "trim")
     graph.add_edge("pivot", "trim")
@@ -993,14 +853,6 @@ def build_maya_graph(
 
 
 # --- helpers (pure, module-level for testability) ---
-
-def last_assistant_text(state) -> str | None:
-    """#106/C14: Maya's last reply for the Understand payload (not a window)."""
-    for message in reversed(state.messages):
-        if isinstance(message, AIMessage) and message.text:
-            return message.text
-    return None
-
 
 def _refusal_text(reason: str) -> str:
     return (

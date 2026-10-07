@@ -254,7 +254,6 @@ from src.domain.movie import MovieRecord
 from src.graph.orchestrator import build_maya_graph
 from src.graph.state import SynthesisUsage
 from src.observability.tracer import DualModeObservabilityManager
-from src.maya.v2 import Understanding, dispose
 from src.retrieval.hybrid_engine import RetrievalResult
 
 
@@ -330,30 +329,6 @@ def test_preference_year_min_reaches_retrieval_when_decision_has_no_filters():
     routing_seen = engine.calls[0][1]
     assert routing_seen.filters is not None, "prefs years must fold into filters"
     assert routing_seen.filters.year_min == 2015
-
-
-@pytest.mark.adversarial
-def test_v2_era_snapshot_survives_to_a_bare_retrieval_turn():
-    """#116 adversarial, full v2 chain offline: the era disposition writes the
-    year floor into prefs (disposer), and a later bare turn ("recent ones")
-    retrieving with filters=None must still carry that floor."""
-    disposed = dispose(
-        Understanding(
-            intent=IntentType.SEMANTIC_SEARCH, standalone_query="x", era="recent"
-        ),
-        UserSessionPreferences(),
-        ExperimentConfig(),
-    )
-    assert disposed.preferences.year_min == ExperimentConfig().era_recent_year_min
-
-    engine = _RecordingEngine()
-    disposed_prefs = disposed.preferences.model_copy(
-        update={"preferred_mood": "feel-good", "audience": "just me"}
-    )
-    _graph_invoke(engine, disposed_prefs)
-    routing_seen = engine.calls[0][1]
-    assert routing_seen.filters is not None
-    assert routing_seen.filters.year_min == ExperimentConfig().era_recent_year_min
 
 
 @pytest.mark.adversarial

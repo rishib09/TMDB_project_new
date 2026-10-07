@@ -31,40 +31,6 @@ def test_sweep_rows_newest_per_value_and_missing_hint():
     assert missing == ["5", "10"]
 
 
-def _fleet(model: str, stamp: str, n_turns: int = 200, stack: str = "v2", **scores) -> dict:
-    return {
-        "mode": "conversation",
-        "routing_stack": stack,
-        "n_conversations": 23,
-        "n_turns": n_turns,
-        "timestamp": stamp,
-        "config_snapshot": {"v2_router_model": model},
-        **scores,
-    }
-
-
-def test_newest_full_v2_ignores_pilots_and_v1_and_keeps_the_newest():
-    from src.ui.evals_tab import newest_full_v2_by_model, reply_points
-
-    runs = [
-        _fleet("glm-5.3-flash", "2026-09-27T01:00:00", faithfulness=0.9),
-        _fleet("glm-5.3-flash", "2026-09-27T02:00:00", faithfulness=0.6),  # newer, lower
-        _fleet("glm-5.3-flash", "2026-09-27T03:00:00", n_turns=15, faithfulness=0.99),
-        _fleet("glm-5.3-flash", "2026-09-27T04:00:00", stack="v1", faithfulness=0.99),
-        _fleet("google/gemma-4-31b-it", "2026-09-27T02:00:00", faithfulness=None),
-        _fleet("other/model", "2026-09-27T02:00:00", faithfulness=0.5),
-    ]
-    by_model = newest_full_v2_by_model(runs, n_conversations=23, n_turns=200)
-    assert set(by_model) == {"glm-5.3-flash", "google/gemma-4-31b-it", "other/model"}
-    assert by_model["glm-5.3-flash"]["faithfulness"] == 0.6
-    assert by_model.get("glm-5.3-flash")["timestamp"] == "2026-09-27T02:00:00"
-    assert by_model.get("missing") is None
-    assert reply_points(by_model) == [
-        ("glm-5.3-flash", 0.6),
-        ("other/model", 0.5),
-    ]
-
-
 def test_hit_rate_points_follow_sweep_order_and_ignore_mrr():
     from src.ui.evals_tab import REPORT_DECISIONS, hit_rate_points
 
@@ -216,29 +182,3 @@ def test_single_turn_score_rows_keep_precision_and_mrr():
             "Relevancy (judge)": 40.0,
         }
     ]
-
-
-def test_conversation_score_notes_name_the_understand_model_and_the_reply_writer():
-    from src.ui.evals_tab import conversation_score_notes
-
-    notes = dict(conversation_score_notes("GLM 5.3 Flash", "Gemini 3.5 Flash Lite"))
-    assert "GLM 5.3 Flash" in notes["Understood the request"]
-    assert "Intent" in notes["Understood the request"]
-    assert "ask, retrieve, converse, pivot, or refuse" in notes["Took the expected step"]
-    assert "filters that reached retrieval" in notes["Kept the expected filters"]
-    assert "Gemini 3.5 Flash Lite" in notes["Reply stayed on the movies"]
-
-
-def test_golden_index_names_c01_and_lists_its_turns():
-    from src.evals.conversations import load_conversations
-    from src.ui.evals_tab import golden_conversation_index, golden_turn_rows
-
-    conversations = load_conversations()
-    index = golden_conversation_index(conversations)
-    c01 = next(row for row in index if row["id"] == "C01")
-    assert c01["title"] == "Date Night Movies Refined Backwards"
-    assert c01["kind"] == "Recorded session"
-    turns = [row for row in golden_turn_rows(conversations) if row["conversation"] == "C01"]
-    assert turns[0]["turn"] == 1
-    assert turns[0]["user says"]
-    assert turns[0]["expected intent"]

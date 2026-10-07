@@ -743,7 +743,6 @@ def _run_one(
         from src.maya.agent import MayaSynthesizer
         from src.maya.guardrails import SessionCostLimiter
         from src.maya.router import MayaRouter
-        from src.maya.v2 import MayaV2Router
         from src.observability.tracer import DualModeObservabilityManager
 
         tracer = DualModeObservabilityManager(session_id=f"eval-{config_hash(config)}")
@@ -753,8 +752,7 @@ def _run_one(
             judge=MayaJudge(config),
             graph=build_maya_graph(
                 config,
-                (MayaV2Router(config) if config.routing_stack == "v2"
-                 else MayaRouter(config, genre_vocabulary=db.distinct_genres())),
+                MayaRouter(config, genre_vocabulary=db.distinct_genres()),
                 engine,
                 MayaSynthesizer(config),
                 tracer,
@@ -798,7 +796,7 @@ def _run_one(
 
     runner.graph = build_maya_graph(
         config,
-        MayaV2Router(config) if config.routing_stack == "v2" else MayaRouter(config),
+        MayaRouter(config),
         engine, MayaSynthesizer(config),
         DualModeObservabilityManager(session_id="benchmark"),
         limiter=SessionCostLimiter(),
@@ -818,9 +816,6 @@ def main(argv: list[str] | None = None) -> int:
                         help="comma-separated conversation ids (smoke runs, e.g. C01,C02)")
     parser.add_argument("--tier", default=None,
                         help="filter by golden tier (conversation mode)")
-    parser.add_argument("--stack", choices=["v1", "v2"],
-                        default=os.getenv("MAYA_ROUTING_STACK", "v1"),
-                        help="routing stack under test (#106: v2 = LLM Understanding)")
     parser.add_argument("--limit", type=int, default=None, help="first N queries (smoke runs)")
     parser.add_argument("--push-langfuse", action="store_true")
     parser.add_argument(
@@ -832,10 +827,6 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--router-model", default=None,
         help="override config.router_model (routing-mode A/B, #29)",
-    )
-    parser.add_argument(
-        "--v2-router-model", default=None,
-        help="override config.v2_router_model (#107 sweep)",
     )
     parser.add_argument("--synthesis-model", help="override config.synthesis_model (#89 sweep)")
     parser.add_argument(
@@ -902,10 +893,7 @@ def main(argv: list[str] | None = None) -> int:
     }
     if sweep_pins:
         config = config.model_copy(update=sweep_pins)  # #89: explicit in the envelope
-    if args.v2_router_model:
-        config = config.model_copy(update={"v2_router_model": args.v2_router_model})
     if args.mode == "conversation":
-        config = config.model_copy(update={"routing_stack": args.stack})
         conversations = load_conversations(args.conversations)
         if args.ids:
             wanted = {c.strip().upper() for c in args.ids.split(",")}
