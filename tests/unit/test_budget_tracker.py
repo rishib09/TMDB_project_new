@@ -100,19 +100,12 @@ def test_guard_node_blocks_at_weekly_cap():
             return 12.50  # over cap
 
     from src.domain.config import ExperimentConfig
-    from tests.unit.test_orchestrator import FakeEngine, FakeRouter, FakeSynthesizer, _decision
+    from tests.unit.test_orchestrator import FakeEngine, FakeSynthesizer, ScriptedV2
 
-    graph = build_maya_graph(
-        ExperimentConfig(), FakeRouter([_decision()]), FakeEngine(movies=[]),
-        FakeSynthesizer(), DualModeObservabilityManager(session_id="t"),
-        budget_tracker=WeeklyBudgetTracker(CappedSink()),
-    )
-    from src.domain.routing import IntentType
-    from tests.unit.test_orchestrator import _decision as _dec
-
+    # the guard refuses at the weekly cap BEFORE the route node — no readings
     graph = build_maya_graph(
         ExperimentConfig(),
-        FakeRouter([_dec(intent=IntentType.CAPABILITIES, requires_rag=False)]),
+        ScriptedV2([]),
         FakeEngine(movies=[]), FakeSynthesizer(),
         DualModeObservabilityManager(session_id="t"),
         budget_tracker=WeeklyBudgetTracker(CappedSink()),
@@ -228,18 +221,22 @@ def test_graph_turn_meters_route_and_synthesis_into_limiter_and_ledger(tmp_path)
     from src.observability.tracer import DualModeObservabilityManager
 
     class _Router:
+        """v2 Understand stub reporting its token usage (#156 port)."""
+
         def __init__(self):
-            self.last_usage = LLMUsage(
-                model="glm-5.3-flash", prompt_tokens=500, completion_tokens=200
+            from src.maya.v2 import Understanding
+
+            self.reading = Understanding(
+                intent=IntentType.CAPABILITIES,
+                standalone_query="what can you do",
+                confidence=0.9,
             )
 
-        def route(self, query, state, feedback=None):
-            return QueryRoutingDecision(
-                intent=IntentType.CAPABILITIES,
-                confidence=0.9,
-                standalone_query=query,
-                requires_rag=False,
-                reasoning="t",
+        def understand(self, query, prefs, shown_titles, last_assistant, probe_count):
+            return (
+                self.reading,
+                [],
+                LLMUsage(model="glm-5.3-flash", prompt_tokens=500, completion_tokens=200),
             )
 
     class _Synth:
@@ -288,14 +285,19 @@ def test_meter_llm_unusable_usage_costs_nothing_but_is_recorded(tmp_path):
     from src.graph.state import SynthesisUsage
     from src.observability.tracer import DualModeObservabilityManager
 
-    class _Router:  # no last_usage attr at all (old-style fake)
-        def route(self, query, state, feedback=None):
-            return QueryRoutingDecision(
-                intent=IntentType.CAPABILITIES,
-                confidence=0.9,
-                standalone_query=query,
-                requires_rag=False,
-                reasoning="t",
+    class _Router:  # v2 Understand stub reporting NO usage (api_error shape)
+        def understand(self, query, prefs, shown_titles, last_assistant, probe_count):
+            from src.domain.routing import IntentType as _IT
+            from src.maya.v2 import Understanding
+
+            return (
+                Understanding(
+                    intent=_IT.CAPABILITIES,
+                    standalone_query=query,
+                    confidence=0.9,
+                ),
+                [],
+                None,
             )
 
     class _Synth:
@@ -325,4 +327,4 @@ def test_meter_llm_unusable_usage_costs_nothing_but_is_recorded(tmp_path):
         for t in tracer.traces()
         if t["node"] == "cost" and t["payload"].get("unmetered") == "no_usage_metadata"
     ]
-    assert {m["payload"]["node"] for m in markers} == {"route"}
+    assert {m["payload"]["node"] for m in markers} == {"route_v2"}

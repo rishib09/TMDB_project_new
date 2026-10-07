@@ -222,21 +222,12 @@ def knob_editor(
         edited.reranker_enabled, edited.reranker_model = reranker, reranker_model
 
     with st.expander("Routing and Guardrails", expanded=False):
-        attempts = st.slider(
-            "Route max attempts (bounded re-route cycle)", 1, 5, config.route_max_attempts,
-            key=f"attempts_{v}",
-        )
-        threshold = st.slider(
-            "Router confidence threshold (below → heuristic fallback)",
-            0.0, 1.0, config.confidence_threshold, 0.05,
-            key=f"conf_threshold_{v}",
-        )
         cwa = st.checkbox(
             "Closed-world-assumption grounding enforcement", config.cwa_guardrail_enabled,
             key=f"cwa_{v}",
         )
         retrieve_axes = st.slider(
-            "Funnel retrieve threshold (answered axes → retrieve)",
+            "Ask/retrieve threshold (answered axes → retrieve)",
             1, 5, config.funnel_retrieve_axes,
             key=f"retrieve_axes_{v}",
         )
@@ -251,16 +242,14 @@ def knob_editor(
             key=f"era_recent_{v}",
         )
         for old, new in [
-            (config.route_max_attempts, attempts), (config.cwa_guardrail_enabled, cwa),
-            (config.confidence_threshold, threshold),
+            (config.cwa_guardrail_enabled, cwa),
             (config.funnel_retrieve_axes, retrieve_axes),
             (config.era_old_year_max, era_old),
             (config.era_recent_year_min, era_recent),
         ]:
             if old != new:
                 changed = True
-        edited.route_max_attempts, edited.cwa_guardrail_enabled = attempts, cwa
-        edited.confidence_threshold = threshold
+        edited.cwa_guardrail_enabled = cwa
         edited.funnel_retrieve_axes = retrieve_axes
         edited.era_old_year_max, edited.era_recent_year_min = era_old, era_recent
 

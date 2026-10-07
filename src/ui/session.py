@@ -45,7 +45,6 @@ from src.maya.guardrails import (
     WeeklyBudgetTracker,
 )
 from src.maya.probing import preference_chips
-from src.maya.router import MayaRouter
 from src.maya.v2 import MayaV2Router
 from src.observability.tracer import DualModeObservabilityManager
 from src.retrieval.hybrid_engine import HybridRetrievalEngine
@@ -200,15 +199,11 @@ class MayaSession:
 
     def __init__(self) -> None:
         self.config = ExperimentConfig()
-        # #106/D12: local stack flip without touching the Lab — the harness
-        # and the developer set the field; the env var is the local override.
-        env_stack = os.getenv("MAYA_ROUTING_STACK", "").strip().lower()
-        if env_stack in {"v1", "v2"}:
-            self.config = self.config.model_copy(update={"routing_stack": env_stack})
-        # #150: the same affordance for the Understand transport — run the
-        # app twice with different values to compare the two transports;
-        # each turn's trace notes record the transport in force. Values
-        # outside the Literal are ignored (default holds).
+        # #150: the Understand transport flip — run the app twice with
+        # different values to compare the two transports; each turn's trace
+        # notes record the transport in force. Values outside the Literal
+        # are ignored (default holds). (The #106/D12 MAYA_ROUTING_STACK
+        # override is gone — this fork runs one stack, #156.)
         env_transport = os.getenv("MAYA_V2_UNDERSTAND_TRANSPORT", "").strip().lower()
         if env_transport in {"prompt_json", "tool_call", "structured_output"}:
             self.config = self.config.model_copy(
@@ -266,14 +261,8 @@ class MayaSession:
         )
         return build_maya_graph(
             self.config,
-            # #26-B: the dataset's own genres are the genre-guard vocabulary.
-            # #106: the stack selector decides which router is injected —
-            # the graph's isinstance check then wires the matching route node.
-            (
-                MayaV2Router(self.config)
-                if self.config.routing_stack == "v2"
-                else MayaRouter(self.config, genre_vocabulary=self.db.distinct_genres())
-            ),
+            # #106/#156: the Understand router is this fork's only router.
+            MayaV2Router(self.config),
             engine,
             MayaSynthesizer(self.config),
             self.tracer,
@@ -294,7 +283,6 @@ class MayaSession:
                 self.config.reranker_enabled,
                 self.config.reranker_model,
                 self.config.retrieval_top_k,
-                self.config.route_max_attempts,
                 self.config.reasoning_effort,
                 # #30: combo change swaps collection + query provider
                 self.config.embedding_profile,
@@ -374,8 +362,6 @@ class MayaSession:
             "session_preferences", self.conversation.session_preferences
         )
         self.conversation.probe_count = out.get("probe_count", self.conversation.probe_count)
-        self.conversation.funnel_active = out.get("funnel_active", self.conversation.funnel_active)
-        self.conversation.offered_genre_options = out.get("offered_genre_options", [])
         self.conversation.add_turn(
             query,
             row["response"],
@@ -414,24 +400,20 @@ class MayaSession:
     ) -> dict:
         """Pure, atomic turn_log row (#26-A) — unit-testable without a graph.
 
-        Funnel-owned turns (probe/confirm/genre-confirm) end without a
-        routing decision: the deterministic funnel stage becomes the intent
-        label and the path reads "funnel". Previously ``decision.intent``
-        crashed here mid-turn, leaving a stale row that made the UI render
-        one turn's chip against another turn's response.
+        A missing decision on this fork means the guard refused before the
+        route node ran (#156: no funnel turns exist to explain one).
         """
         decision = out.get("routing_decision")
         stage = out.get("turn_stage", "")
         response = out["final_response"]
         tokens = max(out.get("session_tokens", 0) - prev_tokens, 0)
         cost_usd = max(out.get("session_cost_usd", 0.0) - prev_cost, 0.0)
-        route_traces = [t for t in new_traces if t["node"] == "route"]
         route_v2_traces = [t for t in new_traces if t["node"] == "route_v2"]
         node_names = {t["node"] for t in new_traces}
         if decision is None:
-            intent = f"FUNNEL_{(stage or 'probe').upper()}"
+            intent = "REFUSAL"
             confidence = 1.0  # deterministic — no model involved
-            path = "funnel"
+            path = "refusal"
         else:
             intent = decision.intent.value
             confidence = decision.confidence
@@ -439,18 +421,11 @@ class MayaSession:
                 path = "refusal"  # guard-diverted after a projection (#113)
             elif "pivot" in node_names:
                 path = "pivot"  # deterministic off-topic deflection (#8)
-            elif route_v2_traces or stage == "ask":
-                # #113: v2's funnel collapse records route_v2 (now
-                # unconditionally) — the path is the disposer's stage.
-                path = "ask" if stage == "ask" else "retrieve"
-            elif stage == "retrieve":
-                path = "funnel"  # v1 funnel-owned retrieval
-            elif route_traces:
-                path = MayaSession._path_taken(route_traces)
+            elif stage == "ask":
+                # #113: the Understand call always records route_v2; an ask
+                # answered itself inside the route node.
+                path = "ask"
             else:
-                # #113: a decision-present turn is NEVER a refusal —
-                # refusals are guard-diverted decisionless. Decision with no
-                # other evidence means the v2 route node served retrieval.
                 path = "retrieve"
         prefs = out.get("session_preferences")
         return {
@@ -462,12 +437,12 @@ class MayaSession:
             "confidence": confidence,
             "path": path,
             "stage": stage,
-            "attempts": len(route_traces),
             "n_movies": len(out.get("retrieved_movies", [])),
             "tokens": tokens,
             "cost_usd": cost_usd,
             "response": response,
-            "probe": any(t["node"] == "probe" for t in new_traces),
+            "attempts": 0,  # no re-route cycle on the v2 stack
+            "probe": False,  # #156: probe turns are v1-only
             "narrowing": preference_chips(prefs) if prefs else [],
             "filters": MayaSession._effective_filter_chips(
                 out.get("filters_applied"), decision
@@ -518,12 +493,6 @@ class MayaSession:
         chips.extend(f"no {g}" for g in (data.get("excluded_genres") or []))
         chips.extend(f"no {a}" for a in (data.get("excluded_actors") or []))
         return chips
-
-    @staticmethod
-    def _path_taken(route_traces: list[dict]) -> str:
-        if not route_traces:
-            return "refusal"
-        return "reroute" if len(route_traces) > 1 else "single-route"
 
     def record_feedback(self, turn_index: int, value: int) -> bool:
         """Persists a thumb rating and pushes it to Langfuse (#9).

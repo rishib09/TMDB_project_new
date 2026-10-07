@@ -1,4 +1,4 @@
-"""Adversarial: #113 — the Feedback Window path label on v2 turns.
+"""Adversarial: #113 — the Feedback Window path label on v2 turns (v2 fork, #156).
 
 `_build_turn_row` derived the path from v1's `route` node traces only; v2
 records `route_v2` (#106 funnel collapse), so every v2 routed turn was
@@ -47,35 +47,6 @@ def test_v2_routed_retrieve_turn_is_not_labeled_refusal():
 def test_v2_ask_turn_labels_ask():
     row = _build([{"node": "route_v2", "data": {}}], _v2_out("ask"))
     assert row["path"] == "ask"
-
-
-def test_v1_single_route_label_unchanged():
-    out = _v2_out("synthesize")
-    row = _build([{"node": "route", "data": {}}], out)
-    assert row["path"] == "single-route"
-
-
-def test_v1_reroute_label_unchanged():
-    out = _v2_out("synthesize")
-    row = _build(
-        [{"node": "route", "data": {}}, {"node": "route", "data": {}}], out
-    )
-    assert row["path"] == "reroute"
-
-
-def test_v1_genuine_refusal_still_labels_refusal():
-    # v1 refusal: guard diverts before any route node runs.
-    out = _v2_out("refuse")
-    out["routing_decision"] = None
-    row = _build([], out)
-    assert row["path"] == "funnel"  # decision-less turn keeps funnel semantics
-    assert row["intent"] == "FUNNEL_REFUSE"
-
-
-def test_v1_funnel_owned_retrieve_still_labels_funnel():
-    out = _v2_out("retrieve")
-    row = _build([], out)  # v1: stage=retrieve, no route_v2 traces
-    assert row["path"] == "funnel"
 
 
 def test_v2_clean_ask_without_notes_still_labels_ask():

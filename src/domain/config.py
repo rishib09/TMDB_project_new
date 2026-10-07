@@ -74,10 +74,10 @@ class ExperimentConfig(BaseModel):
         "prompt_json", "tool_call", "structured_output"
     ] = Field(default="structured_output")
     routing_stack: Literal["v1", "v2"] = Field(
-        default="v1",
-        description="Routing Stack in force (#83): v1 = gated router (production); "
-        "v2 = LLM Understanding (#106). Swept by the evaluation "
-        "harness (--stack), flippable locally via MAYA_ROUTING_STACK — never a Lab knob.",
+        default="v2",
+        description="Routing Stack in force (#83): this fork runs v2 = LLM "
+        "Understanding (#106) only — the field stays for run-envelope identity "
+        "(#156 hard split).",
     )
     temperature: float = Field(default=0.0, ge=0.0, le=1.0, description="Sampling temperature")
 
@@ -148,14 +148,6 @@ class ExperimentConfig(BaseModel):
 
     # Memory & Guardrails
     multi_turn_mode: str = Field(default="fused_single_pass", description="fused_single_pass | dedicated_2step_llm")
-    route_max_attempts: int = Field(
-        default=2,
-        ge=1,
-        le=5,
-        description="Bounded re-route cycle (#5): max routing attempts when the "
-        "router signals a heuristic fallback (low confidence / API error) — "
-        "measured: iterative re-routing resolves a share of routing failures (#12)",
-    )
     memory_strategy: str = Field(default="sliding_window_with_entity", description="Memory retention strategy")
     #: #93/D16: the in-thread message window (trim node + read model).
     message_window: int = Field(
@@ -163,34 +155,31 @@ class ExperimentConfig(BaseModel):
         description="Conversation message window kept in the LangGraph thread "
         "(trim node, #93/D16); the read model trims to the same size",
     )
-    confidence_threshold: float = Field(
-        default=0.5,
-        ge=0.0,
-        le=1.0,
-        description="Router low-confidence fallback threshold (#12): decisions "
-        "below this confidence degrade to the heuristic fallback",
-    )
     cwa_guardrail_enabled: bool = Field(default=True, description="Enforce Closed-World Assumption XML grounding")
+    #: #156 correction: NOT v1-only — the v2 disposer's C8 ask/retrieve
+    #: ladder consumes this knob (axes >= funnel_retrieve_axes retrieves).
     funnel_retrieve_axes: int = Field(
         default=2,
         ge=1,
         le=5,
-        description="#53: answered narrowing axes at which the funnel retrieves "
-        "immediately (no confirm-before-retrieve turn)",
+        description="Answered narrowing axes at which the stack retrieves "
+        "instead of asking (#53; v2 turn_decision ladder)",
     )
+    #: #156 correction: NOT v1-only — the v2 disposer's C7 era mapping
+    #: consumes both thresholds (era label -> years).
     era_old_year_max: int = Field(
         default=2000,
         ge=1970,
         le=2026,
-        description="#42: what a vague 'old/classic movie' means — deterministic "
-        "year_max applied when the era vocabulary fires mid-funnel",
+        description="What a vague 'old/classic movie' means — year_max applied "
+        "when the era vocabulary or a v2 era label fires (#42, C7)",
     )
     era_recent_year_min: int = Field(
         default=2015,
         ge=1970,
         le=2026,
-        description="#42: what a vague 'recent/latest movie' means — deterministic "
-        "year_min applied when the era vocabulary fires mid-funnel",
+        description="What a vague 'recent/latest movie' means — year_min applied "
+        "when the era vocabulary or a v2 era label fires (#42, C7)",
     )
     judge_model: str = Field(
         default="meta-llama/llama-3.3-70b-instruct",

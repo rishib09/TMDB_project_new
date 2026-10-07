@@ -1,21 +1,25 @@
-"""Unit tests for the Maya LangGraph orchestrator (issue #5).
+"""Unit tests for the Maya LangGraph orchestrator (issue #5, v2 stack #156).
 
-Fully mocked: fake router/engine/synthesizer are injected via
-``build_maya_graph`` — no LLM, no ChromaDB, no network. Verifies graph
-wiring (nodes, conditional edges, the bounded re-route cycle) and state
-reducer behavior, not component internals (covered by their own suites).
+Fully mocked: a scripted Understand router + fake engine/synthesizer are
+injected via ``build_maya_graph`` — no LLM, no ChromaDB, no network.
+Verifies graph wiring (nodes, conditional edges, the v2 ask/retrieve
+ladder) and state reducer behavior, not component internals (covered by
+their own suites). The v1 funnel/reroute coverage died with the v1 fork;
+shared-node behavior (guard, budget, CWA, zero-retrieval, metering seams)
+is pinned here against the v2 graph.
 """
 
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 
 from src.domain.config import ExperimentConfig
-from src.domain.memory import ConversationState, UserSessionPreferences
+from src.domain.memory import UserSessionPreferences
 from src.domain.movie import MovieRecord
-from src.domain.routing import IntentType, QueryRoutingDecision
+from src.domain.routing import IntentType, MetadataFilterCriteria
 from src.graph.orchestrator import build_maya_graph
 from src.graph.state import SynthesisUsage
 from src.maya.guardrails import SessionCostLimiter
+from src.maya.v2 import MayaV2Router, PreferenceDelta, Understanding
 from src.observability.tracer import DualModeObservabilityManager
 from src.retrieval.hybrid_engine import RetrievalResult
 
@@ -24,16 +28,24 @@ pytestmark = pytest.mark.unit
 
 # --- fakes (constructor-injected; record their calls for assertions) ---
 
-class FakeRouter:
-    def __init__(self, decisions):
-        self.decisions = list(decisions)
-        self.calls = []  # {query, state, feedback}
+class ScriptedV2(MayaV2Router):
+    """Real constructor (no network); understand() pops scripted
+    (Understanding, notes, usage) results — usage None = unmetered marker."""
 
-    def route(self, query, state, feedback=None):
-        self.calls.append({"query": query, "state": state, "feedback": feedback})
-        if self.decisions:
-            return self.decisions.pop(0)
-        raise AssertionError("FakeRouter ran out of scripted decisions")
+    def __init__(self, results):
+        super().__init__(ExperimentConfig(routing_stack="v2"), api_key="test-key")
+        self.results = list(results)
+        self.calls = []  # {query, prefs, shown_titles, last_assistant, probe_count}
+
+    def understand(self, query, prefs, shown_titles, last_assistant, probe_count):
+        self.calls.append({
+            "query": query, "prefs": prefs, "shown_titles": list(shown_titles),
+            "last_assistant": last_assistant, "probe_count": probe_count,
+        })
+        result = self.results.pop(0)
+        if len(result) == 2:
+            return result[0], result[1], None
+        return result
 
 
 class FakeEngine:
@@ -60,16 +72,16 @@ class FakeSynthesizer:
         )
 
 
-def _decision(intent=IntentType.SEMANTIC_SEARCH, requires_rag=True,
-              confidence=0.9, is_fallback=False,
-              query="a mind-bending sci-fi thriller about dream heists"):
-    return QueryRoutingDecision(
-        intent=intent,
-        confidence=confidence,
-        standalone_query=query,
-        requires_rag=requires_rag,
-        reasoning="test",
-        is_fallback=is_fallback,
+def _u(intent=IntentType.SEMANTIC_SEARCH, *, filters=None, mood="scary",
+       audience=None, ready=True, **kw):
+    """A scripted Understanding. ``ready=True`` (+ one axis — the default
+    mood) retrieves; the disposer projects filters onto the decision like
+    the v1 router did. Pass ``mood=None`` for an axis-less reading."""
+    delta = PreferenceDelta(set_mood=mood, set_audience=audience)
+    return Understanding(
+        intent=intent, standalone_query=kw.pop("query", "stub query"),
+        confidence=kw.pop("confidence", 0.9), filters=filters,
+        preference_delta=delta, ready_to_retrieve=ready, **kw,
     )
 
 
@@ -79,6 +91,7 @@ def _movie(mid=27205, title="Inception", year=2010):
 
 def _invoke(graph, query, **extra):
     return graph.invoke({"messages": [HumanMessage(content=query)], **extra})
+
 
 @pytest.fixture
 def tracer(monkeypatch):
@@ -92,7 +105,7 @@ def tracer(monkeypatch):
 
 def test_happy_path_semantic_search(tracer):
     config = ExperimentConfig()
-    router = FakeRouter([_decision()])
+    router = ScriptedV2([(_u(), [])])
     engine = FakeEngine(movies=[_movie()])
     synth = FakeSynthesizer()
     graph = build_maya_graph(config, router, engine, synth, tracer)
@@ -106,23 +119,28 @@ def test_happy_path_semantic_search(tracer):
     assert isinstance(out["messages"][-1], AIMessage)
     # budget recorded via the reducer: 10 prompt + 5 completion
     assert out["session_tokens"] == 15
-    # exact node path taken (#123: a `cost` row follows each LLM call and
-    # precedes the node's own record — FakeRouter reports no usage, so its
-    # cost row is an unmetered marker; FakeSynthesizer's usage meters)
+    # node path shape (#123: a `cost` row follows each LLM call and precedes
+    # the node's own record — ScriptedV2 reports no usage, so its cost row is
+    # an unmetered marker; FakeSynthesizer's usage meters). The retrieve node
+    # records twice when a mood profile applies (payload + result rows).
     nodes = [t["node"] for t in tracer.traces()]
-    assert nodes == ["guard_input", "cost", "route", "retrieve", "cost", "synthesize"]
-    # engine received the router's standalone query and config top_k
-    assert engine.calls[0][0] == "a mind-bending sci-fi thriller about dream heists"
+    assert nodes[:3] == ["guard_input", "cost", "route_v2"]
+    assert nodes[-3:] == ["retrieve", "cost", "synthesize"]
+    assert nodes.count("retrieve") == 2  # mood-profile payload + result row
+    # the #153 notice stays silent on a turn that DECLARED its filters
+    assert "carryover_notice" not in nodes
+    # engine received the Understand's standalone query (an unmapped mood
+    # rides as parenthesized flavor) and config top_k
+    assert engine.calls[0][0].startswith("stub query")
     assert engine.calls[0][2] == config.retrieval_top_k
 
 
 def test_synthesizer_receives_history_and_movies(tracer):
-    config = ExperimentConfig()
     prior = AIMessage(content="earlier answer")
-    router = FakeRouter([_decision(query="more films like the one we just discussed tonight")])
+    router = ScriptedV2([(_u(query="more films like the one we just discussed tonight"), [])])
     engine = FakeEngine(movies=[_movie()])
     synth = FakeSynthesizer()
-    graph = build_maya_graph(config, router, engine, synth, tracer)
+    graph = build_maya_graph(ExperimentConfig(), router, engine, synth, tracer)
 
     graph.invoke({
         "messages": [prior, HumanMessage(content="more like that")],
@@ -136,9 +154,7 @@ def test_synthesizer_receives_history_and_movies(tracer):
 # --- no-retrieval branch ---
 
 def test_greeting_skips_retrieval(tracer):
-    router = FakeRouter([
-        _decision(intent=IntentType.GREETING, requires_rag=False)
-    ])
+    router = ScriptedV2([(_u(intent=IntentType.GREETING, ready=False), [])])
     engine = FakeEngine()
     synth = FakeSynthesizer(response="Hi! I'm Maya.")
     graph = build_maya_graph(ExperimentConfig(), router, engine, synth, tracer)
@@ -151,9 +167,7 @@ def test_greeting_skips_retrieval(tracer):
 
 
 def test_out_of_scope_goes_to_pivot_without_llm(tracer):
-    router = FakeRouter([
-        _decision(intent=IntentType.OUT_OF_SCOPE, requires_rag=False)
-    ])
+    router = ScriptedV2([(_u(intent=IntentType.OUT_OF_SCOPE, ready=False), [])])
     engine = FakeEngine()
     synth = FakeSynthesizer()
     graph = build_maya_graph(ExperimentConfig(), router, engine, synth, tracer)
@@ -164,57 +178,15 @@ def test_out_of_scope_goes_to_pivot_without_llm(tracer):
     assert engine.calls == []
     assert "film" in out["final_response"].lower()
     nodes = [t["node"] for t in tracer.traces()]
-    assert nodes == ["guard_input", "cost", "route", "pivot"]  # cost = unmetered marker
-
-
-# --- bounded re-route cycle (#12) ---
-
-def test_reroute_loop_recovers_after_fallback(tracer):
-    config = ExperimentConfig(route_max_attempts=3)
-    fallback = _decision(is_fallback=True, confidence=0.1)
-    good = _decision()
-    router = FakeRouter([fallback, good])
-    graph = build_maya_graph(config, router, FakeEngine(movies=[_movie()]),
-                             FakeSynthesizer(), tracer)
-
-    out = _invoke(graph, "some ambiguous query")
-
-    assert len(router.calls) == 2  # fallback once, then retry
-    # second attempt carried corrective feedback built from the first decision
-    feedback = router.calls[1]["feedback"]
-    assert feedback and "previous routing attempt" in feedback and "0.10" in feedback
-    assert out["routing_decision"].is_fallback is False
-    attempts = [t["payload"].get("attempt") for t in tracer.traces() if t["node"] == "route"]
-    assert attempts == [1, 2]
-
-
-def test_reroute_loop_is_bounded(tracer):
-    config = ExperimentConfig(route_max_attempts=2)
-    fallback = _decision(is_fallback=True, confidence=0.1)
-    router = FakeRouter([fallback, fallback])
-    graph = build_maya_graph(config, router, FakeEngine(movies=[_movie()]),
-                             FakeSynthesizer(), tracer)
-
-    out = _invoke(graph, "hopelessly ambiguous query")
-
-    assert len(router.calls) == 2  # attempts exhausted, loop stopped
-    # degraded-but-safe fallback decision proceeds down the normal path
-    assert out["routing_decision"].is_fallback is True
-    assert out["final_response"] == "Here is what I found."
-
-
-def test_no_reroute_on_confident_decision(tracer):
-    router = FakeRouter([_decision()])
-    graph = build_maya_graph(ExperimentConfig(), router, FakeEngine(movies=[_movie()]),
-                             FakeSynthesizer(), tracer)
-    _invoke(graph, "clear query")
-    assert len(router.calls) == 1 and router.calls[0]["feedback"] is None
+    assert nodes[:3] == ["guard_input", "cost", "route_v2"]  # cost = unmetered marker
+    assert nodes[-1] == "pivot"
+    assert nodes.count("route_v2") == 2  # disposition note + turn_decision row
 
 
 # --- guardrail / budget branch ---
 
 def test_injection_refused_before_router(tracer):
-    router = FakeRouter([])  # must never be reached
+    router = ScriptedV2([])  # must never be reached
     graph = build_maya_graph(ExperimentConfig(), router, FakeEngine(),
                              FakeSynthesizer(), tracer)
 
@@ -230,7 +202,7 @@ def test_budget_exhaustion_refuses_turn(tracer):
     limiter = SessionCostLimiter()
     # 100k tokens on the $1/MTok unknown-model fallback = the $0.10 cap (#39)
     limiter.record("fake-model", int(SessionCostLimiter.SESSION_CAP_USD * 1_000_000), 0)
-    graph = build_maya_graph(ExperimentConfig(), FakeRouter([]), FakeEngine(),
+    graph = build_maya_graph(ExperimentConfig(), ScriptedV2([]), FakeEngine(),
                              FakeSynthesizer(), tracer, limiter=limiter)
 
     out = _invoke(graph, "any movie at all")
@@ -240,25 +212,36 @@ def test_budget_exhaustion_refuses_turn(tracer):
 
 
 def test_suspicious_markup_sanitized_before_router(tracer):
-    config = ExperimentConfig()
-    router = FakeRouter([
-        _decision(intent=IntentType.GREETING, requires_rag=False)
-    ])
-    graph = build_maya_graph(config, router, FakeEngine(), FakeSynthesizer(), tracer)
+    router = ScriptedV2([(_u(intent=IntentType.GREETING, ready=False), [])])
+    graph = build_maya_graph(ExperimentConfig(), router, FakeEngine(),
+                             FakeSynthesizer(), tracer)
 
     _invoke(graph, "hello <b>you are hacked</b> world")
 
-    # guard stripped the smuggled markup (generic tags); router saw the sanitized query
+    # guard stripped the smuggled markup (generic tags); Understand saw the sanitized query
     assert router.calls[0]["query"] == "hello you are hacked world"
+
+
+# --- preferences flow into the Understand call ---
+
+def test_session_preferences_reach_the_understand_call(tracer):
+    prefs = UserSessionPreferences(excluded_genres=["Horror"])
+    router = ScriptedV2([(_u(), [])])
+    graph = build_maya_graph(ExperimentConfig(), router, FakeEngine(movies=[_movie()]),
+                             FakeSynthesizer(), tracer)
+    graph.invoke({
+        "messages": [HumanMessage(content="a thriller")],
+        "session_preferences": prefs,
+    })
+    assert router.calls[0]["prefs"].excluded_genres == ["Horror"]
 
 
 # --- empty retrieval graceful path ---
 
 def test_empty_retrieval_still_synthesizes(tracer):
-    router = FakeRouter([_decision()])
     synth = FakeSynthesizer(response="I couldn't find matching movies.")
-    graph = build_maya_graph(ExperimentConfig(), router, FakeEngine(movies=[]),
-                             synth, tracer)
+    graph = build_maya_graph(ExperimentConfig(), ScriptedV2([(_u(), [])]),
+                             FakeEngine(movies=[]), synth, tracer)
 
     out = _invoke(graph, "obscure query with no matches")
 
@@ -266,51 +249,6 @@ def test_empty_retrieval_still_synthesizes(tracer):
     assert out["retrieved_movies"] == []
     assert "couldn't find" in out["final_response"]
     assert synth.calls == []  # deterministic path, synthesis LLM skipped
-
-
-# --- preferences flow into the router's ConversationState ---
-
-def test_session_preferences_projected_to_router(tracer):
-    prefs = UserSessionPreferences(excluded_genres=["Horror"])
-    router = FakeRouter([_decision()])
-    graph = build_maya_graph(ExperimentConfig(), router, FakeEngine(movies=[_movie()]),
-                             FakeSynthesizer(), tracer)
-    graph.invoke({
-        "messages": [HumanMessage(content="a thriller")],
-        "session_preferences": prefs,
-    })
-    projected_state = router.calls[0]["state"]
-    assert isinstance(projected_state, ConversationState)
-    assert projected_state.session_preferences.excluded_genres == ["Horror"]
-
-
-# --- issue #18 regression: re-route cycle must not duplicate retrieval ---
-
-def test_reroute_cycle_does_not_accumulate_retrieved_movies(tracer):
-    """With every attempt a fallback, retrieve runs ONCE and movies replace."""
-    config = ExperimentConfig()
-    config.route_max_attempts = 3
-    router = FakeRouter([
-        _decision(confidence=0.2, is_fallback=True),
-        _decision(confidence=0.3, is_fallback=True),
-        _decision(confidence=0.4, is_fallback=True),
-    ])
-    movies = [_movie(mid=1), _movie(mid=2), _movie(mid=3), _movie(mid=4), _movie(mid=5)]
-    engine = FakeEngine(movies=movies)
-    graph = build_maya_graph(config, router, engine, FakeSynthesizer(), tracer)
-
-    out = _invoke(graph, "best movie of 2026")
-
-    assert len(engine.calls) == 1  # single retrieval despite 3 routing attempts
-    assert [m.id for m in out["retrieved_movies"]] == [1, 2, 3, 4, 5]  # no duplication
-    # #123: FakeRouter reports no usage — each attempt's route_node run
-    # leaves an explicit unmetered marker `cost` row before its own record
-    # (P2-1); synthesis meters normally.
-    nodes = [t["node"] for t in tracer.traces()]
-    assert nodes == [
-        "guard_input", "cost", "route", "cost", "route", "cost", "route",
-        "retrieve", "cost", "synthesize",
-    ]
 
 
 # --- zero-retrieval determinism (issue #21) ------------------------------
@@ -336,7 +274,7 @@ def test_zero_retrieval_rag_turn_never_calls_llm():
     """#21: RAG intent + empty retrieval → deterministic response, no LLM call."""
     synth = FakeSynthesizer(response="HALLUCINATED")
     graph = build_maya_graph(
-        ExperimentConfig(), FakeRouter([_decision()]), FakeEngine(movies=[]),
+        ExperimentConfig(), ScriptedV2([(_u(), [])]), FakeEngine(movies=[]),
         synth, DualModeObservabilityManager(session_id="t"),
     )
     result = _invoke(graph, "family movie that is pg-14 and not horror")
@@ -348,7 +286,8 @@ def test_zero_retrieval_rag_turn_never_calls_llm():
 def test_zero_retrieval_response_asks_refinement_question():
     """#21: the deterministic reply probes instead of dead-ending."""
     graph = build_maya_graph(
-        ExperimentConfig(), FakeRouter([_decision(query="a family movie rated pg-14 that we can all watch together")]),
+        ExperimentConfig(),
+        ScriptedV2([(_u(query="a family movie rated pg-14 that we can all watch together"), [])]),
         FakeEngine(movies=[]), FakeSynthesizer(),
         DualModeObservabilityManager(session_id="t"),
     )
@@ -363,7 +302,7 @@ def test_zero_retrieval_no_usage_no_budget_charge():
     """#21: no LLM call → no synthesis usage, no session-token charge."""
     limiter = SessionCostLimiter()
     graph = build_maya_graph(
-        ExperimentConfig(), FakeRouter([_decision()]), FakeEngine(movies=[]),
+        ExperimentConfig(), ScriptedV2([(_u(), [])]), FakeEngine(movies=[]),
         FakeSynthesizer(), DualModeObservabilityManager(session_id="t"), limiter,
     )
     result = _invoke(graph, "nothing in the archive can match this ultra specific ask")
@@ -376,7 +315,7 @@ def test_zero_retrieval_trace_marks_deterministic_path():
     """#21: trace payload records the empty-retrieval branch honestly."""
     tracer = DualModeObservabilityManager(session_id="t")
     graph = build_maya_graph(
-        ExperimentConfig(), FakeRouter([_decision()]), FakeEngine(movies=[]),
+        ExperimentConfig(), ScriptedV2([(_u(), [])]), FakeEngine(movies=[]),
         FakeSynthesizer(), tracer,
     )
     _invoke(graph, "an obscure filter combination no movie can satisfy")
@@ -397,7 +336,7 @@ def test_cwa_verification_runs_on_empty_context():
     tracer = DualModeObservabilityManager(session_id="t")
     graph = build_maya_graph(
         ExperimentConfig(),
-        FakeRouter([_decision(intent=IntentType.GREETING, requires_rag=False)]),
+        ScriptedV2([(_u(intent=IntentType.GREETING, ready=False), [])]),
         FakeEngine(movies=[]), synth, tracer,
     )
     result = _invoke(graph, "hello there")
@@ -435,7 +374,7 @@ class DenseLossEngine(FakeEngine):
 def test_retrieve_node_records_dense_loss(tracer):
     engine = DenseLossEngine(movies=[_movie()])
     graph = build_maya_graph(
-        ExperimentConfig(), FakeRouter([_decision()]), engine, FakeSynthesizer(), tracer
+        ExperimentConfig(), ScriptedV2([(_u(), [])]), engine, FakeSynthesizer(), tracer
     )
 
     out = _invoke(graph, "dream heist thriller")
@@ -455,6 +394,8 @@ from src.graph.orchestrator import fold_preference_years
 
 class TestFoldPreferenceYears:
     def _decision(self, filters=None):
+        from src.domain.routing import QueryRoutingDecision
+
         return QueryRoutingDecision(
             intent=IntentType.SEMANTIC_SEARCH,
             confidence=0.9,
@@ -468,8 +409,6 @@ class TestFoldPreferenceYears:
         assert fold_preference_years(decision, UserSessionPreferences()) is decision
 
     def test_decision_exact_year_beats_prefs_wholesale(self):
-        from src.domain.routing import MetadataFilterCriteria
-
         decision = self._decision(MetadataFilterCriteria(exact_year=1999))
         prefs = UserSessionPreferences(year_min=2015)
         folded = fold_preference_years(decision, prefs)
@@ -480,15 +419,11 @@ class TestFoldPreferenceYears:
         twice (model year_min + era-extractor year_max), and composing the
         two readings over-constrains retrieval (the conversation-runner
         fidelity contract caught this)."""
-        from src.domain.routing import MetadataFilterCriteria
-
         decision = self._decision(MetadataFilterCriteria(year_max=2020))
         prefs = UserSessionPreferences(year_min=2015)
         assert fold_preference_years(decision, prefs) is decision
 
     def test_decision_beats_prefs_no_impossible_range_possible(self):
-        from src.domain.routing import MetadataFilterCriteria
-
         decision = self._decision(MetadataFilterCriteria(year_max=2000))
         prefs = UserSessionPreferences(year_min=2015)
         folded = fold_preference_years(decision, prefs)
@@ -497,8 +432,6 @@ class TestFoldPreferenceYears:
         assert folded.filters.year_min is None
 
     def test_both_decision_bounds_contradiction_untouched(self):
-        from src.domain.routing import MetadataFilterCriteria
-
         bad = MetadataFilterCriteria(year_min=2020, year_max=2000)
         decision = self._decision(bad)
         prefs = UserSessionPreferences(year_min=2015)
@@ -512,8 +445,6 @@ class TestFoldPreferenceYears:
         assert folded.year_min is None and folded.year_max is None
 
     def test_decision_range_leaves_pref_exact_year_unmixed(self):
-        from src.domain.routing import MetadataFilterCriteria
-
         decision = self._decision(MetadataFilterCriteria(year_min=2000))
         prefs = UserSessionPreferences(exact_year=1999)
         assert fold_preference_years(decision, prefs) is decision

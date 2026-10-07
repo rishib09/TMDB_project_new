@@ -67,12 +67,12 @@ def test_full_mode_judges_real_responses(runner, tmp_path):
     from src.graph.orchestrator import build_maya_graph
     from src.maya.agent import MayaSynthesizer
     from src.maya.guardrails import SessionCostLimiter
-    from src.maya.router import MayaRouter
+    from src.maya.v2 import MayaV2Router
     from src.observability.tracer import DualModeObservabilityManager
 
     graph = build_maya_graph(
         runner.config,
-        MayaRouter(runner.config),
+        MayaV2Router(runner.config),
         runner.engine,
         MayaSynthesizer(runner.config),
         DualModeObservabilityManager(session_id="eval-live"),

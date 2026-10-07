@@ -1,17 +1,20 @@
 """Maya orchestrator (issue #5): compiled LangGraph StateGraph workflow.
 
-Topology::
+v2 stack only (#156 hard split): the Understand router owns the turn, the
+v1 funnel trio is gone. Topology::
 
     START → guard_input ──blocked──→ refusal ────────────────→ END
                │clean
                ▼
-              route ──OUT_OF_SCOPE────────→ pivot ──────────→ END
+              route ──ask────────────────→ trim ───────────→ END
+               │     └─OUT_OF_SCOPE──────→ pivot ───────────→ END
                │     └─no retrieval───────→ synthesize ─────→ END
                ▼
             retrieve ──────────────────────→ synthesize ─────→ END
+                 (all synthesize paths) ──→ carryover_notice → END
 
-Every component is already built and tested (#3 router, #4 hybrid engine,
-#8 guardrails); this module only wires them as LangGraph nodes with
+Every component is already built and tested (#3/#4/#8 guardrails+engine,
+#106 v2 router); this module only wires them as LangGraph nodes with
 conditional edges — no custom dispatch, no custom state management.
 
 The graph compiles against ``MayaGraphState`` (Pydantic schema, see
@@ -29,12 +32,10 @@ from langgraph.graph.state import CompiledStateGraph
 
 from src.domain.config import ExperimentConfig
 from src.domain.memory import (
-    ConversationState,
     FocusedMovieEntity,
     PreferencesUpdate,
     ShownIdsUpdate,
     UserSessionPreferences,
-    merge_preferences,
 )
 from src.domain.moods import (
     expand_query_text,
@@ -55,21 +56,7 @@ from src.maya.guardrails import (
     WeeklyBudgetTracker,
     estimate_cost,
 )
-from src.maya.probing import (
-    build_filter_carryover_notice,
-    build_funnel_query,
-    build_probe_response,
-    extract_era,
-    extract_probe_answers,
-    handle_probe_answer,
-    has_year_constraint,
-    is_fresh_start,
-    is_narrowing_pivot,
-    match_genre_pick,
-    next_funnel_step,
-    should_probe,
-)
-from src.maya.router import MayaRouter
+from src.maya.probing import is_fresh_start
 from src.maya.v2 import (
     MayaV2Router,
     dispose,
@@ -123,7 +110,7 @@ def fold_preference_years(
 
 def build_maya_graph(
     config: ExperimentConfig,
-    router: MayaRouter | "MayaV2Router",
+    router: "MayaV2Router",
     engine: HybridRetrievalEngine,
     synthesizer: MayaSynthesizer,
     tracer: DualModeObservabilityManager,
@@ -140,10 +127,7 @@ def build_maya_graph(
     limiter = limiter or SessionCostLimiter()
     injection_filter = InjectionFilter()
     pivot = OffTopicPivot()
-    # #106: the stack selector. v2 passes a MayaV2Router and the funnel
-    # collapses into its route node; v1 wiring is byte-for-byte unchanged.
-    stack_v2 = isinstance(router, MayaV2Router)
-    router_v2 = router if stack_v2 else None
+    router_v2 = router
 
     def _meter_llm(usage: LLMUsage | None, node: str) -> float:
         """Record one LLM call everywhere it matters (#123).
@@ -235,10 +219,8 @@ def build_maya_graph(
         # SUSPICIOUS verdict (stripped markup): proceed with the sanitized query.
         sanitized = injection.sanitized_query or query
         # #26-E: "something completely different" wipes accumulated preferences
-        # at the ONE choke point every turn passes — covering funnel turns and
-        # post-retrieval turns alike. route_after_guard sees funnel_active=False
-        # (LangGraph applies updates before conditional edges) so the funnel
-        # cannot re-own the turn; routing proceeds on a clean slate.
+        # at the ONE choke point every turn passes — routing proceeds on a
+        # clean slate.
         if is_fresh_start(sanitized):
             tracer.record_local("guard_input", {"fresh_start": True})
             return {
@@ -251,260 +233,8 @@ def build_maya_graph(
                 # for the rest of the thread.
                 "shown_movie_ids": ShownIdsUpdate(reset=True),
                 "shown_movie_titles": ShownIdsUpdate(reset=True),
-                "funnel_active": False,
-                "offered_genre_options": [],
             }
         return {"guardrail_result": injection, "current_query": sanitized}
-
-    def route_node(state: MayaGraphState) -> dict:
-        """Structured routing via MayaRouter (#3); re-entry = iteration N+1.
-
-        On re-route attempts (bounded cycle from #12), the corrective feedback
-        is built from the previous failed decision and injected into the
-        router prompt — the measured fix for low-confidence failures.
-        """
-        attempts = state.route_attempts + 1
-        feedback = None
-        if state.routing_decision is not None:
-            prev = state.routing_decision
-            feedback = (
-                f"Your previous routing attempt returned intent={prev.intent.value} "
-                f"with confidence {prev.confidence:.2f}, which fell below the "
-                "confidence threshold and was rejected. Re-read the user query "
-                "carefully (check for pre-1970 references, superlatives, filter "
-                "criteria, and greetings) and return a better-reasoned decision."
-            )
-        decision = router.route(
-            state.current_query,
-            _to_conversation_state(state),
-            feedback=feedback,
-        )
-        # #123: the router call is metered — a normalized LLMUsage on the
-        # real router (review P3-2: test doubles normalize to None, the
-        # marker path, instead of crashing token accounting below).
-        route_usage = _metered_usage_of(getattr(router, "last_usage", None))
-        route_cost = _meter_llm(route_usage, "route")
-        # Guided narrowing (#22/#24): mood/audience extracted by the router
-        # itself (open vocabulary), with the deterministic vocab as fallback.
-        mood = (decision.mood or "").strip()
-        audience = (decision.audience or "").strip()
-        if not mood or not audience:
-            vocab = extract_probe_answers(state.current_query)
-            mood = mood or vocab.preferred_mood
-            audience = audience or vocab.audience
-        # #93/D16: persistent exclusions accumulate IN-GRAPH now — the old
-        # session-side add_turn merge fed them back as next-turn input,
-        # a loop the checkpointer severed. Without this, "no Tom Cruise"
-        # would be forgotten by the next turn.
-        signals = UserSessionPreferences(
-            preferred_mood=mood,
-            audience=audience,
-            excluded_genres=(
-                list(decision.filters.excluded_genres) if decision.filters else []
-            ),
-            excluded_actors=(
-                list(decision.filters.excluded_actors) if decision.filters else []
-            ),
-        )
-        # #56-F1: era words in a ROUTED query ("show me old classic") must not
-        # be lost while the funnel probes other axes. Gated on requires_rag so
-        # non-film turns ("how old are you") never pollute preferences.
-        if decision.requires_rag:
-            era = extract_era(
-                state.current_query, config.era_old_year_max, config.era_recent_year_min
-            )
-            if has_year_constraint(era):
-                signals.exact_year = era.exact_year
-                signals.year_min = era.year_min
-                signals.year_max = era.year_max
-        # #33: an explicit genre pivot ("other suggestion ... action movies"
-        # against a funny/Comedy session) retires the stale mood + derived
-        # genres via the merge reducer; exclusions and constraints survive.
-        signals.genre_pivot = is_narrowing_pivot(
-            state.current_query,
-            list(decision.filters.genres) if decision.filters else [],
-            state.session_preferences,
-        )
-        tracer.record_local(
-            "route",
-            {
-                "attempt": attempts,
-                "intent": decision.intent.value,
-                "confidence": decision.confidence,
-                "requires_rag": decision.requires_rag,
-                "is_fallback": decision.is_fallback,
-                # #12 Gate 1 / #13 Option B routing telemetry
-                "fallback_reason": decision.fallback_reason,
-                "fallback_raw_confidence": decision.fallback_raw_confidence,
-                "requires_rag_mismatch": decision.requires_rag_mismatch,
-                "probe_answers": signals.answered_axes(),
-            },
-        )
-        # #12 Gate 1: confidence distribution in cloud telemetry (fail-open).
-        tracer.push_score(
-            "router_confidence",
-            decision.fallback_raw_confidence
-            if decision.fallback_raw_confidence is not None
-            else decision.confidence,
-            metadata={
-                "intent": decision.intent.value,
-                "attempt": attempts,
-                "is_fallback": decision.is_fallback,
-                "requires_rag_mismatch": decision.requires_rag_mismatch,
-            },
-        )
-        return {
-            "routing_decision": decision,
-            "route_attempts": attempts,
-            "session_preferences": signals,
-            "session_tokens": (
-                route_usage.prompt_tokens + route_usage.completion_tokens
-                if route_usage
-                else 0
-            ),
-            "session_cost_usd": route_cost,
-        }
-
-    def probe_node(state: MayaGraphState) -> dict:
-        """Guided narrowing (#22): one deterministic question, zero LLM cost.
-
-        The answer extraction rides on the user's NEXT message: probe
-        answers are vocabulary-matched from it in the funnel node (#23),
-        so no extra LLM call is needed to understand the reply.
-        """
-        prefs = state.session_preferences
-        decision = state.routing_decision
-        # #29: explicit genre filters ride into prefs so the funnel's eventual
-        # retrieval keeps them ("sci-fi movies" probes for audience WITHOUT
-        # forgetting sci-fi). Explicit genres need no mood confirmation.
-        if decision is not None and decision.filters and decision.filters.genres:
-            prefs = merge_preferences(prefs, UserSessionPreferences(
-                preferred_genres=list(decision.filters.genres),
-                genre_confirmation_done=True,
-            ))
-        response_text = build_probe_response(prefs, state.current_query)
-        tracer.record_local(
-            "probe",
-            {"probe_count": state.probe_count + 1, "query": state.current_query},
-        )
-        return {
-            "final_response": response_text,
-            "messages": [AIMessage(content=response_text)],
-            "probe_count": state.probe_count + 1,  # session-persisted running total
-            "funnel_active": True,  # next message belongs to the funnel (#23)
-            "session_preferences": prefs,  # #29 genre carry
-            "turn_stage": "probe",  # #26-A: UI row stays complete without the router
-            "rolling_summary": _update_summary(state, state.routing_decision),
-        }
-
-    def funnel_node(state: MayaGraphState) -> dict:
-        """Owns the reply to a probe/confirm (#23) — router only on fallthrough.
-
-        Stage machine (#25): pending genre picks are matched deterministically
-        against the offered candidates; confirmations retrieve immediately;
-        otherwise the router acts as a PURE EXTRACTOR (#24 — its intent
-        classification is ignored, so misrouting cannot derail the funnel)
-        with the deterministic vocab as fallback. Anything the funnel can't
-        own falls through to normal routing — OUT_OF_SCOPE pivots suppressed
-        for exactly this turn.
-        """
-        query = state.current_query
-        prefs = state.session_preferences
-        outcome = None  # #25 latent crash: options pending + reply not a pick
-
-        # 1. Genre pick pending? (#25) deterministic multiple-choice matching.
-        if state.offered_genre_options:
-            picks = match_genre_pick(query, state.offered_genre_options)
-            if picks is not None:
-                outcome = next_funnel_step(merge_preferences(prefs, UserSessionPreferences(
-                    preferred_genres=picks, genre_confirmation_done=True,
-                    # #56-F2: picked from OUR candidate list with no explicit
-                    # base genres = union intent ("any of these is fine").
-                    genres_from_candidates=not prefs.preferred_genres,
-                )), state.probe_count, query, config.funnel_retrieve_axes)
-                tracer.record_local("probe", {"stage": "genre_pick", "picked": picks})
-
-        # 2. Explicit confirmation → retrieve now; otherwise extract + progress.
-        if outcome is None:
-            # #123 review P2-3: the extractor's router call is a real LLM
-            # call — metered like every other one.
-            signals = _extract_signals(state, router, meter=_meter_llm)
-            # #42: deterministic era vocabulary ("old", "recent", "80s") as
-            # fallback; LLM-grounded years win at the merge (incoming=signals).
-            era = extract_era(
-                query, config.era_old_year_max, config.era_recent_year_min
-            )
-            if has_year_constraint(era):
-                signals = merge_preferences(era, signals) if signals else era
-                tracer.record_local(
-                    "probe",
-                    {"stage": "era_extracted",
-                     "year_min": signals.year_min, "year_max": signals.year_max,
-                     "exact_year": signals.exact_year},
-                )
-            outcome = handle_probe_answer(
-                query, prefs, state.probe_count, prefs_update=signals,
-                retrieve_axes=config.funnel_retrieve_axes,
-            )
-
-        if outcome.action == "retrieve":
-            merged = outcome.prefs_update or prefs
-            # #27-Q: years stated during the funnel become deterministic filters.
-            year_filters = (
-                MetadataFilterCriteria(
-                    exact_year=merged.exact_year,
-                    year_min=merged.year_min,
-                    year_max=merged.year_max,
-                )
-                if (merged.exact_year or merged.year_min or merged.year_max)
-                else None
-            )
-            synthetic = QueryRoutingDecision(
-                intent=IntentType.SEMANTIC_SEARCH,
-                confidence=1.0,
-                standalone_query=build_funnel_query(merged),
-                requires_rag=True,
-                filters=year_filters,
-                reasoning="funnel confirmed retrieval (#23)",
-            )
-            tracer.record_local(
-                "probe",
-                {"stage": "retrieve", "axes": merged.answered_axes()},
-            )
-            # from_funnel rides along so synthesize_node can append the #26-E
-            # carry-over announcement to this first post-funnel recommendation.
-            return {
-                "funnel_active": False,
-                "routing_decision": synthetic,
-                "session_preferences": merged,
-                "offered_genre_options": [],
-                "from_funnel": True,
-                "turn_stage": "retrieve",
-            }
-        if outcome.action == "fallthrough":
-            tracer.record_local("probe", {"stage": "fallthrough"})
-            # NOTE: funnel stays ACTIVE — a user who ignores one probe may
-            # still say "go ahead" next turn (#23 walkthrough defect); the
-            # funnel is a cheap pre-router filter, so lingering is harmless.
-            return {"from_funnel": True, "turn_stage": "fallthrough",
-                    "offered_genre_options": outcome.offered_genre_options}
-        # probe | confirm | confirm_genres → deterministic response, end turn
-        tracer.record_local(
-            "probe",
-            {
-                "stage": outcome.action,
-                "probe_count": state.probe_count + (1 if outcome.action == "probe" else 0),
-            },
-        )
-        return {
-            "final_response": outcome.response,
-            "messages": [AIMessage(content=outcome.response)],
-            "probe_count": state.probe_count + (1 if outcome.action == "probe" else 0),
-            "session_preferences": outcome.prefs_update,
-            "funnel_active": True,
-            "offered_genre_options": outcome.offered_genre_options,
-            "turn_stage": outcome.action,  # #26-A
-        }
 
     def retrieve_node(state: MayaGraphState) -> dict:
         """Hybrid retrieval (#4): SQL path or RRF fusion, per routing decision.
@@ -755,13 +485,6 @@ def build_maya_graph(
              ),
              "cwa_violations": violations},
         )
-        # #26-E: the first recommendation after funnel narrowing announces the
-        # filters that REMAIN ACTIVE, with the deterministic escape hatch.
-        if state.from_funnel and movies:
-            notice = build_filter_carryover_notice(state.session_preferences)
-            if notice:
-                response_text += notice
-                tracer.record_local("synthesize", {"carryover_notice": True})
         return {
             "final_response": response_text,
             "synthesis_usage": usage,
@@ -826,57 +549,11 @@ def build_maya_graph(
         tracer.record_local("pivot", {})
         return {"final_response": response_text, "messages": [AIMessage(content=response_text)]}
 
-    def route_after_guard(state: MayaGraphState) -> Literal["refusal", "funnel", "route"]:
+    def route_after_guard(state: MayaGraphState) -> Literal["refusal", "route"]:
         guardrail = state.guardrail_result
         if guardrail and guardrail.verdict is GuardrailVerdict.BLOCKED:
             return "refusal"
-        if state.funnel_active:
-            return "funnel"
         return "route"
-
-    def route_after_funnel(state: MayaGraphState) -> Literal["route", "retrieve", "trim"]:
-        """#23/#25: probe & confirm responses END the turn — never re-route.
-
-        Walkthrough-defect fix: without the END branch the deterministic
-        probe/confirm/genre-confirmation response fell through to ``route``,
-        letting a second routing pass overwrite it (the 'edge of the seat'
-        GREETING overwrite). Fallthrough still routes on. Deterministic turns
-        route to ``trim`` (#93): every terminal path passes the window trim,
-        funnel turns included.
-        """
-        if state.routing_decision is not None:  # funnel confirmed retrieval
-            return "retrieve"
-        if state.final_response and state.funnel_active:  # probe/confirm ready
-            return "trim"
-        return "route"  # fallthrough — normal routing takes over
-
-    def route_after_router(state: MayaGraphState) -> Literal["route", "retrieve", "synthesize", "pivot", "probe"]:
-        """Bounded re-route cycle (#12) + guided narrowing gate (#22).
-
-        The re-route trigger is deterministic — ``is_fallback`` is set by
-        the router's own code (confidence < threshold or API error), never
-        by the model (ADR 0005). Probing is a code policy, not a prompt
-        suggestion: broad filterless requests ask one narrowing question
-        (bounded by MAX_PROBE_TURNS) instead of guessing a movie dump.
-        """
-        decision = state.routing_decision
-        if decision.is_fallback and state.route_attempts < config.route_max_attempts:
-            return "route"
-        if decision.intent is IntentType.OUT_OF_SCOPE:
-            # #23: a message that just fell through the funnel may be an
-            # answer to our own question — converse, never pivot.
-            if state.from_funnel:
-                return "synthesize"
-            return "pivot"
-        if not decision.requires_rag:
-            return "synthesize"
-        # #26-E/#29: a fresh-start turn just abandoned the funnel — probing
-        # would immediately re-arm it. Answer the clean-slate turn directly.
-        if is_fresh_start(state.current_query):
-            return "retrieve"
-        if should_probe(decision, state.session_preferences, state.probe_count):
-            return "probe"
-        return "retrieve"
 
     # --- #106: the v2 stack — funnel collapsed into the route node ----------
 
@@ -956,38 +633,24 @@ def build_maya_graph(
     graph.add_node("begin_turn", begin_turn_node)
     graph.add_node("trim", trim_node)
     graph.add_node("guard_input", guard_input_node)
-    # #106 stack selector: v2 swaps the route node + its conditional edge;
-    # probe/funnel nodes stay registered but are unreachable on v2 turns
-    # (route_after_router_v2 never targets them).
-    graph.add_node("route", route_node_v2 if stack_v2 else route_node)
+    graph.add_node("route", route_node_v2)
     graph.add_node("retrieve", retrieve_node)
     graph.add_node("synthesize", synthesize_node)
-    # #153: the transparency node rides ONLY the v2 path (registered but
-    # unreachable on v1, mirroring how probe/funnel rest on v2 turns).
+    # #153: the transparency node — deterministic, never a model call (ADR 0005).
     graph.add_node("carryover_notice", carryover_notice_node)
     graph.add_node("refusal", refusal_node)
     graph.add_node("pivot", pivot_node)
-    graph.add_node("probe", probe_node)
-    graph.add_node("funnel", funnel_node)
 
     graph.add_edge(START, "begin_turn")
     graph.add_edge("begin_turn", "guard_input")
     graph.add_conditional_edges("guard_input", route_after_guard)
-    graph.add_conditional_edges("funnel", route_after_funnel)
-    graph.add_conditional_edges(
-        "route", route_after_router_v2 if stack_v2 else route_after_router
-    )
-    # The route→route cycle is implicit: route_after_router may return "route".
+    graph.add_conditional_edges("route", route_after_router_v2)
     graph.add_edge("retrieve", "synthesize")
-    if stack_v2:
-        graph.add_edge("synthesize", "carryover_notice")
-        graph.add_edge("carryover_notice", "trim")
-    else:
-        graph.add_edge("synthesize", "trim")
+    graph.add_edge("synthesize", "carryover_notice")
+    graph.add_edge("carryover_notice", "trim")
     graph.add_edge("trim", END)
     graph.add_edge("refusal", "trim")
     graph.add_edge("pivot", "trim")
-    graph.add_edge("probe", "trim")
 
     return graph.compile(checkpointer=checkpointer)
 
@@ -1033,17 +696,15 @@ def trim_message_window(state: MayaGraphState, window: int) -> dict:
 def begin_turn_node(state: MayaGraphState) -> dict:
     """#93/D16: resets per-turn scratch before any pipeline node runs.
 
-    What must NOT be reset lives outside this list: probe_count,
-    funnel_active, offered_genre_options (they carry funnel state ACROSS
-    turns by design), plus every reducer-backed field (messages,
-    shown_movie_ids, session_preferences, session_tokens).
+    What must NOT be reset lives outside this list: probe_count (the v2 ask
+    budget carries ACROSS turns by design), plus every reducer-backed field
+    (messages, shown_movie_ids, session_preferences, session_tokens).
     """
     return {
         "current_query": "",
         "guardrail_result": None,
         "routing_decision": None,
         "route_attempts": 0,
-        "from_funnel": False,
         "turn_stage": "",
         "retrieved_movies": [],
         "synthesis_usage": None,
@@ -1073,43 +734,6 @@ def _metered_usage_of(raw: object) -> "LLMUsage | None":
         except (TypeError, ValueError, AttributeError):
             return None
     return None
-
-
-def _extract_signals(
-    state: "MayaGraphState",
-    router,
-    meter=None,
-    node: str = "funnel_extract",
-) -> "UserSessionPreferences | None":
-    """Router-as-extractor (#24): intent IGNORED, only mood/audience consumed.
-
-    The funnel decides actions deterministically; the LLM only reads meaning.
-    Router failure → None (handle_probe_answer falls back to the vocab).
-    ``meter`` (the graph's ``_meter_llm`` closure) records the call's cost —
-    review P2-3: extraction was the one unmetered LLM call on v1 funnels.
-    """
-    try:
-        decision = router.route(state.current_query, _to_conversation_state(state))
-    except Exception:  # noqa: BLE001 — extraction must never break the funnel
-        return None
-    if meter is not None:
-        meter(_metered_usage_of(getattr(router, "last_usage", None)), node)
-    filters = decision.filters
-    # #42 gate fix: LLM-grounded year filters survive even without a
-    # mood/audience — "before 1995" mid-funnel is a refinement too.
-    has_years = filters is not None and (
-        filters.exact_year or filters.year_min or filters.year_max
-    )
-    if not (decision.mood or decision.audience or has_years):
-        return None
-    return UserSessionPreferences(
-        preferred_mood=decision.mood.strip(),
-        audience=decision.audience.strip(),
-        # #27-Q: years stated during funnel turns must not be discarded.
-        exact_year=filters.exact_year if filters else None,
-        year_min=filters.year_min if filters else None,
-        year_max=filters.year_max if filters else None,
-    )
 
 
 def _empty_retrieval_text(query: str) -> str:
@@ -1152,18 +776,6 @@ def _no_retrieval_steer(query: str) -> str:
         "For example: \"edge-of-your-seat sci-fi from the 2010s\"."
         + (f' (I heard: "{echo}")' if echo else "")
     )
-
-
-def _to_conversation_state(state: MayaGraphState) -> ConversationState:
-    """Projection of the graph state onto the router's ConversationState input."""
-    conversation = ConversationState(
-        session_tokens=state.session_tokens,
-        session_cost_usd=state.session_cost_usd,
-        focused_entity=state.focused_entity,
-        focused_person=state.focused_person,
-    )
-    conversation.session_preferences = state.session_preferences or conversation.session_preferences
-    return conversation
 
 
 def _update_summary(state: MayaGraphState, decision) -> str:

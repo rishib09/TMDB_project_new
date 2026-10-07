@@ -11,7 +11,7 @@ import pytest
 
 from src.domain.config import ExperimentConfig
 from src.domain.movie import MovieRecord
-from src.domain.routing import IntentType, MetadataFilterCriteria, QueryRoutingDecision
+from src.domain.routing import IntentType, MetadataFilterCriteria
 from src.evals.conversations import (
     ConversationSet,
     ConversationTurn,
@@ -22,17 +22,30 @@ from src.evals.conversations import (
 from src.evals.runner import BenchmarkRunner
 from src.graph.orchestrator import build_maya_graph
 from src.graph.state import SynthesisUsage
+from src.maya.v2 import MayaV2Router, Understanding
 from src.observability.tracer import DualModeObservabilityManager
 
 pytestmark = pytest.mark.unit
 
 
-class ScriptedRouter:
-    def __init__(self, decisions):
-        self.decisions = list(decisions)
+class ScriptedV2(MayaV2Router):
+    """Real constructor (no network); understand() pops scripted results."""
 
-    def route(self, query, state, feedback=None):
-        return self.decisions.pop(0)
+    def __init__(self, results):
+        super().__init__(ExperimentConfig(routing_stack="v2"), api_key="test-key")
+        self.results = list(results)
+
+    def understand(self, query, prefs, shown_titles, last_assistant, probe_count):
+        result = self.results.pop(0)
+        if len(result) == 2:
+            return result[0], result[1], None
+        return result
+
+
+def _v2u(**kw) -> Understanding:
+    defaults = dict(intent=IntentType.SEMANTIC_SEARCH, standalone_query="q", confidence=0.9)
+    defaults.update(kw)
+    return Understanding(**defaults)
 
 
 class PoolEngine:
@@ -81,18 +94,14 @@ def _golden() -> ConversationSet:
 
 
 def _runner(tmp_path=None) -> BenchmarkRunner:
-    router = ScriptedRouter([
-        QueryRoutingDecision(intent=IntentType.SEMANTIC_SEARCH, confidence=0.95,
-                             standalone_query="recent", requires_rag=True,
-                             filters=MetadataFilterCriteria(year_min=2015)),
-        QueryRoutingDecision(intent=IntentType.SEMANTIC_SEARCH, confidence=0.95,
-                             standalone_query="older", requires_rag=True,
-                             filters=MetadataFilterCriteria(year_min=1990)),
-        QueryRoutingDecision(intent=IntentType.OUT_OF_SCOPE, confidence=0.99,
-                             standalone_query="a joke", requires_rag=False),
-        QueryRoutingDecision(intent=IntentType.SEMANTIC_SEARCH, confidence=0.95,
-                             standalone_query="even older", requires_rag=True,
-                             filters=MetadataFilterCriteria(year_min=1980)),
+    router = ScriptedV2([
+        (_v2u(filters=MetadataFilterCriteria(year_min=2015),
+              standalone_query="recent", ready_to_retrieve=True), []),
+        (_v2u(filters=MetadataFilterCriteria(year_min=1990),
+              standalone_query="older", ready_to_retrieve=True), []),
+        (_v2u(intent=IntentType.OUT_OF_SCOPE, standalone_query="a joke"), []),
+        (_v2u(filters=MetadataFilterCriteria(year_min=1980),
+              standalone_query="even older", ready_to_retrieve=True), []),
     ])
     from langgraph.checkpoint.memory import InMemorySaver
     tracer = DualModeObservabilityManager(session_id="driver-test")  # ONE tracer: graph + runner
@@ -107,7 +116,7 @@ def test_driver_scores_retrieve_ask_and_pivot(tmp_path):
     summary = _runner(tmp_path).run_conversations(_golden(), "conv-test")
 
     assert summary.mode == "conversation"
-    assert summary.routing_stack == "v1"
+    assert summary.routing_stack == "v2"
     assert summary.n_conversations == 1 and summary.n_turns == 4
     assert summary.dataset_version == "test-v1"
     assert summary.intent_accuracy == 1.0  # every turn produced a reading
@@ -162,18 +171,14 @@ def test_turn_error_is_isolated_and_run_continues():
             return super().synthesize(query, decision, movies, history)
 
     from langgraph.checkpoint.memory import InMemorySaver
-    router = ScriptedRouter([
-        QueryRoutingDecision(intent=IntentType.SEMANTIC_SEARCH, confidence=0.95,
-                             standalone_query="recent", requires_rag=True,
-                             filters=MetadataFilterCriteria(year_min=2015)),
-        QueryRoutingDecision(intent=IntentType.SEMANTIC_SEARCH, confidence=0.95,
-                             standalone_query="older", requires_rag=True,
-                             filters=MetadataFilterCriteria(year_min=1990)),
-        QueryRoutingDecision(intent=IntentType.OUT_OF_SCOPE, confidence=0.99,
-                             standalone_query="a joke", requires_rag=False),
-        QueryRoutingDecision(intent=IntentType.SEMANTIC_SEARCH, confidence=0.95,
-                             standalone_query="even older", requires_rag=True,
-                             filters=MetadataFilterCriteria(year_min=1980)),
+    router = ScriptedV2([
+        (_v2u(filters=MetadataFilterCriteria(year_min=2015),
+              standalone_query="recent", ready_to_retrieve=True), []),
+        (_v2u(filters=MetadataFilterCriteria(year_min=1990),
+              standalone_query="older", ready_to_retrieve=True), []),
+        (_v2u(intent=IntentType.OUT_OF_SCOPE, standalone_query="a joke"), []),
+        (_v2u(filters=MetadataFilterCriteria(year_min=1980),
+              standalone_query="even older", ready_to_retrieve=True), []),
     ])
     tracer = DualModeObservabilityManager(session_id="err-test")
     graph = build_maya_graph(
@@ -189,51 +194,6 @@ def test_turn_error_is_isolated_and_run_continues():
     assert turns[1].path_correct is False
     assert "synthesis API error" in turns[1].constraint_detail["error"]
     assert turns[3].observed_path == "retrieve"  # and the run continued
-
-
-def test_fallback_decision_scores_intent_incorrect():
-    """Q19: a fallback's coincidentally-correct label is still a miss.
-
-    The fallback trips the bounded re-route cycle (#12), so the router is
-    queried again for the same turn — the scripted fallback repeats until
-    the attempt budget runs out and the turn ends on the fallback decision.
-    """
-    older = QueryRoutingDecision(intent=IntentType.SEMANTIC_SEARCH, confidence=0.95,
-                                 standalone_query="older", requires_rag=True,
-                                 filters=MetadataFilterCriteria(year_min=1990))
-
-    class FallbackRouter(ScriptedRouter):
-        def route(self, query, state, feedback=None):
-            if query == "older movies":  # always a fallback — re-routes included
-                return older.model_copy(update={
-                    "is_fallback": True, "confidence": 0.1,
-                    "fallback_reason": "api_error",
-                })
-            return super().route(query, state, feedback)
-
-    from langgraph.checkpoint.memory import InMemorySaver
-    router = FallbackRouter([
-        QueryRoutingDecision(intent=IntentType.SEMANTIC_SEARCH, confidence=0.95,
-                             standalone_query="recent", requires_rag=True,
-                             filters=MetadataFilterCriteria(year_min=2015)),
-        QueryRoutingDecision(intent=IntentType.OUT_OF_SCOPE, confidence=0.99,
-                             standalone_query="a joke", requires_rag=False),
-        QueryRoutingDecision(intent=IntentType.SEMANTIC_SEARCH, confidence=0.95,
-                             standalone_query="even older", requires_rag=True,
-                             filters=MetadataFilterCriteria(year_min=1980)),
-    ])
-    tracer = DualModeObservabilityManager(session_id="fb-test")
-    graph = build_maya_graph(
-        ExperimentConfig(), router, PoolEngine([1, 2]), StubSynthesizer(),
-        tracer, checkpointer=InMemorySaver(),
-    )
-    runner = BenchmarkRunner(ExperimentConfig(), engine=None, graph=graph, tracer=tracer)
-    summary = runner.run_conversations(_golden(), "fb-test")
-
-    t2 = summary.per_conversation[0].per_turn[1]
-    assert t2.observed_intent == "SEMANTIC_SEARCH"  # label matches…
-    assert t2.is_fallback is True
-    assert t2.intent_correct is False                # …but still a miss (Q19)
 
 
 def test_message_window_is_a_config_tunable():
