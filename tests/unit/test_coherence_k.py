@@ -1,5 +1,7 @@
-"""Unit tests for #26 amendment (K/L/M/O): identity-joined turn rows,
-fresh-start vocabulary, mood-change genre retirement, affirmations, CWA gate."""
+"""Unit tests for #26 amendment (K/L/M/G): identity-joined turn rows,
+fresh-start vocabulary, mood-change genre retirement, CWA gate (v2 stack,
+#156 — the v1 affirmation/funnel/canonicalization coverage died with v1;
+moods are a closed vocab on v2 and the ask budget is the disposer's)."""
 
 import pytest
 from langchain_core.messages import HumanMessage
@@ -11,18 +13,19 @@ from src.domain.memory import (
     UserSessionPreferences,
     merge_preferences,
 )
-from src.domain.routing import IntentType, QueryRoutingDecision
+from src.domain.routing import IntentType, MetadataFilterCriteria
 from src.graph.orchestrator import _no_retrieval_steer, build_maya_graph
 from src.graph.state import SynthesisUsage
 from src.maya.guardrails import SessionCostLimiter
-from src.maya.probing import _is_confirmation, canonical_mood, is_fresh_start
+from src.maya.probing import is_fresh_start
+from src.maya.v2 import Understanding
 from src.observability.tracer import DualModeObservabilityManager
 from src.ui.chat_tab import resolve_turn_row
 from src.ui.session import MayaSession
 from tests.unit.test_orchestrator import (
     FakeEngine,
-    FakeRouter,
     FakeSynthesizer,
+    ScriptedV2,
     _movie,
 )
 
@@ -165,25 +168,7 @@ def test_first_mood_never_triggers_retirement():
     assert merged.preferred_genres == ["Comedy"]  # nothing to retire
 
 
-# --- O: affirmations retrieve --------------------------------------------------
-
-@pytest.mark.parametrize("phrase", ["yes", "yeah", "sure", "ok", "okay", "YES", "Yes, please"])
-def test_bare_affirmations_are_confirmations(phrase):
-    assert _is_confirmation(phrase)
-
-
-@pytest.mark.parametrize("phrase", [
-    "yes tell me more about the joker",  # affirmation + request → extraction
-    "yes and no",
-    "oklahoma",
-])
-def test_affirmation_plus_content_is_not_a_confirmation(phrase):
-    assert not _is_confirmation(phrase)
-
-
 # --- G: CWA gate replaces flagged no-retrieval responses -----------------------
-
-
 
 class _LyingSynthesizer:
     """Synthesizer that names titles on a no-retrieval turn (the #26-G sin)."""
@@ -206,26 +191,10 @@ class _LyingSynthesizer:
         return [V(t) for t in self.flagged_titles if t in text]
 
 
-def _dec(intent=IntentType.GREETING, rag=False):
-    from src.domain.routing import MetadataFilterCriteria
-
-    decision = QueryRoutingDecision(
-        intent=intent, confidence=0.9, standalone_query="hi",
-        requires_rag=rag, reasoning="t",
-    )
-    if rag:  # specific filter → should_probe never fires → straight retrieval
-        # #29: a genre alone probes now; a year is still a specific ask.
-        decision = decision.model_copy(update={
-            "filters": MetadataFilterCriteria(genres=["Drama"], exact_year=1994),
-        })
-    return decision
-
-
 def test_cwa_gate_replaces_hallucinated_no_retrieval_response():
-    config = ExperimentConfig()
     graph = build_maya_graph(
-        config,
-        FakeRouter([_dec(intent=IntentType.GREETING, rag=False)]),
+        ExperimentConfig(),
+        ScriptedV2([(_u_greeting(), [])]),
         FakeEngine(),
         _LyingSynthesizer(),
         DualModeObservabilityManager(session_id="g"),
@@ -238,10 +207,9 @@ def test_cwa_gate_replaces_hallucinated_no_retrieval_response():
 
 
 def test_cwa_gate_never_fires_on_clean_no_retrieval_turns():
-    config = ExperimentConfig()
     graph = build_maya_graph(
-        config,
-        FakeRouter([_dec(intent=IntentType.GREETING, rag=False)]),
+        ExperimentConfig(),
+        ScriptedV2([(_u_greeting(), [])]),
         FakeEngine(),
         FakeSynthesizer(response="Hi there! What are you in the mood for?"),
         DualModeObservabilityManager(session_id="g2"),
@@ -254,58 +222,33 @@ def test_cwa_gate_never_fires_on_clean_no_retrieval_turns():
 
 def test_cwa_gate_never_fires_on_retrieval_turns():
     """Grounded titles pass through; the verifier stays report-only there."""
-    config = ExperimentConfig()
     graph = build_maya_graph(
-        config,
-        FakeRouter([_dec(intent=IntentType.SEMANTIC_SEARCH, rag=True)]),
+        ExperimentConfig(),
+        ScriptedV2([(_u_retrieval(), [])]),
         FakeEngine([_movie(title="The Shawshank Redemption")]),
         _LyingSynthesizer(),
         DualModeObservabilityManager(session_id="g3"),
         limiter=SessionCostLimiter(),
     )
-    # >5 words: carries its own signal, bypasses the #29 genre-probe gate
     out = graph.invoke({
         "messages": [HumanMessage(content="the best prison drama movie ever made")]
     })
     assert "Shawshank" in out["final_response"]  # grounded + retrieved → shown
 
 
-# --- latent #25 funnel crash: options pending + non-pick reply ---------------
-
-def test_funnel_survives_non_pick_reply_while_options_pending():
-    """'scarry and thriller like haunted' matched no pick once (typo) — the
-    funnel crashed with UnboundLocalError instead of falling through."""
-    config = ExperimentConfig()
-    graph = build_maya_graph(
-        config,
-        FakeRouter([_dec(), _dec()]),  # extractor + fallthrough route
-        FakeEngine(),
-        FakeSynthesizer(),
-        DualModeObservabilityManager(session_id="np"),
-        limiter=SessionCostLimiter(),
+def _u_greeting() -> Understanding:
+    return Understanding(
+        intent=IntentType.GREETING, standalone_query="hi", confidence=0.9,
     )
-    out = graph.invoke({
-        "messages": [HumanMessage(content="honestly no idea, just pick for me")],
-        "session_preferences": UserSessionPreferences(preferred_mood="scary"),
-        "funnel_active": True,
-        "offered_genre_options": ["Horror", "Thriller"],
-    })
-    # no crash — a response reached the user via fallthrough → route → synth
-    assert out["final_response"]
 
 
-# --- mood canonicalization (model proposes, code disposes) --------------------
-
-@pytest.mark.parametrize("raw,expected", [
-    ("edge of the seat", "edge-of-your-seat"),
-    ("Edge of Your Seat", "edge-of-your-seat"),
-    ("edge-of-your-seat", "edge-of-your-seat"),
-    ("scary", "scary"),
-    ("mind-bending", "mind-bending"),  # unknown → open vocabulary passthrough
-    ("", ""),
-])
-def test_canonical_mood_normalizes_llm_extractions(raw, expected):
-    assert canonical_mood(raw) == expected
+def _u_retrieval() -> Understanding:
+    # explicit filters → turn_decision retrieves (no ask ladder involved)
+    return Understanding(
+        intent=IntentType.SEMANTIC_SEARCH, standalone_query="prison drama",
+        confidence=0.9, ready_to_retrieve=True,
+        filters=MetadataFilterCriteria(genres=["Drama"], exact_year=1994),
+    )
 
 
 def test_no_retrieval_steer_is_inject_safe():

@@ -26,9 +26,7 @@ from src.observability.tracer import DualModeObservabilityManager
 from src.ui.session import MayaSession
 from tests.unit.test_orchestrator import (
     FakeEngine,
-    FakeRouter,
     FakeSynthesizer,
-    _decision,
     _movie,
 )
 
@@ -214,31 +212,16 @@ def test_notice_skips_zero_retrieval_turns():
     assert out.get("carryover_notice_shown", False) is False  # never fired
 
 
-def test_v1_graph_never_fires_the_notice():
-    """The node is registered but unreachable on v1 — even when the shared
-    retrieve node injects the session genres exactly the same way."""
-    tracer = DualModeObservabilityManager(session_id="unit-153-v1")
-    graph = build_maya_graph(
-        ExperimentConfig(), FakeRouter([_decision()]),
-        FakeEngine(movies=[_movie()]), FakeSynthesizer(), tracer,
-    )
-    out = graph.invoke({
-        "messages": [HumanMessage(content="a movie, any movie")],
-        "session_preferences": UserSessionPreferences(preferred_genres=["Action"]),
-    })
-    assert out["filters_applied"]["genres"] == ["Action"]  # injection happened
-    assert "Still filtering by" not in out["final_response"]
-    assert [t["node"] for t in tracer.traces() if t["node"] == "carryover_notice"] == []
-
-
-# --- the "Current filter" chip renders the effective set (#153) --------------
-
 def test_current_filter_chip_uses_effective_set_not_declared():
     """The Nolan/Action repro: the turn declared only director+years, code
     injected Action — the chip must show Action (the old code hid it)."""
-    decision = _decision().model_copy(update={"filters": MetadataFilterCriteria(
-        director="Christopher Nolan", year_min=2017,
-    )})
+    from src.domain.routing import QueryRoutingDecision
+
+    decision = QueryRoutingDecision(
+        intent=IntentType.SEMANTIC_SEARCH, confidence=0.9,
+        standalone_query="nolan", requires_rag=True,
+        filters=MetadataFilterCriteria(director="Christopher Nolan", year_min=2017),
+    )
     applied = {"genres": ["Action"], "genre_match": "any",
                "director": "Christopher Nolan", "year_min": 2017}
     chips = MayaSession._effective_filter_chips(applied, decision)
@@ -248,9 +231,13 @@ def test_current_filter_chip_uses_effective_set_not_declared():
 
 
 def test_current_filter_chip_falls_back_to_decision_without_engine_run():
-    decision = _decision().model_copy(update={"filters": MetadataFilterCriteria(
-        genres=["Horror", "Thriller"], genre_match="all",
-    )})
+    from src.domain.routing import QueryRoutingDecision
+
+    decision = QueryRoutingDecision(
+        intent=IntentType.SEMANTIC_SEARCH, confidence=0.9,
+        standalone_query="horror", requires_rag=True,
+        filters=MetadataFilterCriteria(genres=["Horror", "Thriller"], genre_match="all"),
+    )
     assert MayaSession._effective_filter_chips(None, decision) == (
         MayaSession._filter_chips(decision)
     )

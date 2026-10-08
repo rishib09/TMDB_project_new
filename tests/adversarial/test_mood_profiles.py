@@ -210,11 +210,25 @@ class _CaptureEngine:
 
 
 class _ScriptedRouter:
+    """v2 stub (#156): projects the scripted routing onto an Understanding —
+    the retrieve-node behavior under test is unchanged."""
+
     def __init__(self, decision: QueryRoutingDecision):
         self.decision = decision
 
-    def route(self, query, state, feedback=None):
-        return self.decision
+    def understand(self, query, prefs, shown_titles, last_assistant, probe_count):
+        from src.maya.v2 import Understanding
+
+        return (
+            Understanding(
+                intent=self.decision.intent,
+                standalone_query=self.decision.standalone_query,
+                filters=self.decision.filters,
+                ready_to_retrieve=True,
+            ),
+            [],
+            None,
+        )
 
 
 class _FakeSynth:

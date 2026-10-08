@@ -111,12 +111,22 @@ def test_turn_log_carries_trace_id_and_rag_version(monkeypatch):
     from src.retrieval.hybrid_engine import RetrievalResult
     from src.ui.session import MayaSession
 
+    from src.maya.v2 import MayaV2Router, PreferenceDelta, Understanding
+
     class FakeRouter:
-        def route(self, query, state, feedback=None):
-            return QueryRoutingDecision(
-                intent=IntentType.SEMANTIC_SEARCH, confidence=0.9,
-                standalone_query=query, requires_rag=True,
+        """v2 Understand stub: one retrieve reading (#156 port)."""
+
+        def __init__(self):
+            self._reading = Understanding(
+                intent=IntentType.SEMANTIC_SEARCH,
+                standalone_query="best movie ever",
+                confidence=0.9,
+                ready_to_retrieve=True,
+                preference_delta=PreferenceDelta(set_mood="scary"),
             )
+
+        def understand(self, query, prefs, shown_titles, last_assistant, probe_count):
+            return self._reading, [], None
 
     class FakeEngine:
         def retrieve(self, query, routing, top_k=8, candidate_pool=50, shown_ids=None, boost=None):

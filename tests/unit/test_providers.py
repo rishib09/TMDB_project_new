@@ -167,32 +167,34 @@ def test_sweep_pin_keeps_synthesis_on_config_id(monkeypatch):
     )
 
 
-def test_sweep_pin_keeps_router_on_config_id(monkeypatch):
-    """#89 sweep isolation, router side: a google-family router candidate must
-    not silently become glm under a z.ai key."""
+def test_sweep_pin_keeps_v2_router_on_config_id(monkeypatch):
+    """#89 sweep isolation, Understand side (#156 port): a google-family
+    v2 candidate must not silently become glm under a z.ai key."""
     from src.domain.config import ExperimentConfig
-    from src.maya.router import MayaRouter
+    from src.maya.v2 import MayaV2Router
 
     monkeypatch.setenv("ZAI_API_KEY", "zk1")
     monkeypatch.setenv("OPENROUTER_API_KEY", "or-key")
     cfg = ExperimentConfig().model_copy(update={
-        "router_model": "google/gemini-3.5-flash-lite",
-        "pin_router_config_id": True,
+        "v2_router_model": "gemini-3.5-flash-lite",
+        "pin_v2_router_config_id": True,
     })
-    router = MayaRouter(cfg)
+    router = MayaV2Router(cfg, api_key="or-key")
     assert (router._endpoint.provider, router._endpoint.wire_model) == (
-        "openrouter", "google/gemini-3.5-flash-lite",
+        "openrouter", "gemini-3.5-flash-lite",
     )
 
 
-def test_sweep_unpinned_router_still_swaps(monkeypatch):
+def test_sweep_unpinned_v2_router_still_swaps(monkeypatch):
     """Without the pin the family rule still applies (the glm candidate path)."""
     from src.domain.config import ExperimentConfig
-    from src.maya.router import MayaRouter
+    from src.maya.v2 import MayaV2Router
 
     monkeypatch.setenv("ZAI_API_KEY", "zk1")
     monkeypatch.setenv("OPENROUTER_API_KEY", "or-key")
-    router = MayaRouter(ExperimentConfig())
+    # no api_key arg: an explicit key pins the OpenRouter path — the z.ai
+    # family rule only fires when the router resolves keys from the env.
+    router = MayaV2Router(ExperimentConfig(routing_stack="v2"))
     assert (router._endpoint.provider, router._endpoint.wire_model) == ("zai", "glm-5.3-flash")
 
 

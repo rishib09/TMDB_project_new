@@ -238,22 +238,3 @@ def test_routing_accuracy_metric():
     assert routing_accuracy([_r(True), _r(False)]) == pytest.approx(0.5)
 
 
-def test_runner_routing_mode_scores_against_expected_intent(tmp_path):
-    from src.domain.routing import IntentType
-
-    rows = load_dataset(_dataset(tmp_path))
-    router = FakeIntentRouter({
-        "dream heist": IntentType.SEMANTIC_SEARCH,   # correct
-        "best movie of 1962": IntentType.SEMANTIC_SEARCH,  # wrong (OUT_OF_SCOPE)
-        "time loop": IntentType.SEMANTIC_SEARCH,     # correct
-    })
-    runner = BenchmarkRunner(ExperimentConfig(), engine=None)
-    summary = runner.run_routing(rows, "routing-unit", router)
-
-    assert summary.mode == "routing"
-    assert summary.n_queries == 3
-    assert summary.routing_accuracy == pytest.approx(2 / 3)
-    assert summary.routing_per_intent["SEMANTIC_SEARCH"] == pytest.approx(1.0)
-    assert summary.routing_per_intent["OUT_OF_SCOPE"] == 0.0
-    assert summary.fallback_count == 0
-    assert summary.per_query[0].routed_intent == "SEMANTIC_SEARCH"

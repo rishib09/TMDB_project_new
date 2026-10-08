@@ -1,74 +1,13 @@
 """Adversarial tests for LLM extraction fallback + person resolution (#24)."""
 
 import pytest
-from langchain_core.messages import HumanMessage
 
 from src.domain.config import ExperimentConfig
-from src.domain.memory import UserSessionPreferences
 from src.domain.routing import IntentType, MetadataFilterCriteria, QueryRoutingDecision
-from src.observability.tracer import DualModeObservabilityManager
 from src.retrieval.hybrid_engine import HybridRetrievalEngine
 from src.storage.database import MovieDatabase
 
 pytestmark = pytest.mark.adversarial
-
-
-# --- extractor failure falls back to vocab (#24) -----------------------------
-
-class ExplodingRouter:
-    def route(self, *a, **k):
-        raise RuntimeError("openrouter down")
-
-
-def test_extractor_failure_falls_back_to_vocab():
-    """Router down mid-funnel → vocab still understands 'funny for kids'."""
-    from src.graph.orchestrator import build_maya_graph
-    from src.maya.guardrails import SessionCostLimiter
-    from tests.unit.test_orchestrator import FakeEngine, FakeSynthesizer
-
-    graph = build_maya_graph(
-        ExperimentConfig(), ExplodingRouter(), FakeEngine(movies=[]),
-        FakeSynthesizer(), DualModeObservabilityManager(session_id="t"),
-        SessionCostLimiter(),
-    )
-    out = graph.invoke({
-        "messages": [HumanMessage(content="something funny for the kids")],
-        "session_preferences": UserSessionPreferences(),
-        "probe_count": 1,
-        "funnel_active": True,
-    })
-    prefs = out["session_preferences"]
-    assert prefs.preferred_mood == "funny"
-    assert prefs.audience == "kids"
-
-
-def test_extractor_failure_fallthrough_never_crashes():
-    """Router degraded (heuristic fallback, per MayaRouter contract) + no vocab
-    hit → clean fallthrough to normal routing."""
-    from src.graph.orchestrator import build_maya_graph
-    from src.maya.guardrails import SessionCostLimiter
-    from tests.unit.test_orchestrator import FakeEngine, FakeSynthesizer
-
-    class DegradedRouter:
-        """Mirrors MayaRouter's no-raise contract: heuristic fallback decision."""
-
-        def route(self, *a, **k):
-            return QueryRoutingDecision(
-                intent=IntentType.SEMANTIC_SEARCH, confidence=0.3,
-                standalone_query="what about the 1990s", requires_rag=True,
-                is_fallback=True,
-            )
-
-    graph = build_maya_graph(
-        ExperimentConfig(), DegradedRouter(), FakeEngine(movies=[]),
-        FakeSynthesizer(), DualModeObservabilityManager(session_id="t"),
-        SessionCostLimiter(),
-    )
-    out = graph.invoke({
-        "messages": [HumanMessage(content="what about the 1990s")],
-        "funnel_active": True,
-    })
-    assert "final_response" in out  # routed normally, no crash
 
 
 # --- person resolution (#24): DB ground truth, never model guesswork ---------
@@ -171,27 +110,3 @@ def test_genre_match_any_is_the_legacy_default(db):
     engine = HybridRetrievalEngine(db=db, vector_store=None, rag_version="v1_1")
     results = engine.retrieve("x", routing, top_k=8)  # Drama-only movies still match
     assert len(results) == 3  # all fixtures carry Drama
-
-
-def test_confirmation_still_retrieves_without_extractor_call():
-    """'go ahead' after confirm → confirmation check fires BEFORE the router."""
-    from src.graph.orchestrator import build_maya_graph
-    from src.maya.guardrails import SessionCostLimiter
-    from tests.unit.test_orchestrator import FakeEngine, FakeSynthesizer
-
-    graph = build_maya_graph(
-        ExperimentConfig(), ExplodingRouter(), FakeEngine(movies=[]),
-        FakeSynthesizer(), DualModeObservabilityManager(session_id="t"),
-        SessionCostLimiter(),
-    )
-    out = graph.invoke({
-        "messages": [HumanMessage(content="go ahead")],
-        "session_preferences": UserSessionPreferences(
-            preferred_mood="funny", audience="kids", preferred_genres=["Comedy"],
-            genre_confirmation_done=True,
-        ),
-        "funnel_active": True,
-        "probe_count": 2,
-    })
-    assert "couldn't find" in out["final_response"]  # retrieval path taken
-    assert out["funnel_active"] is False

@@ -1,4 +1,4 @@
-"""Maya Conversational Agent, Router, Guardrails, and Grounded Synthesis."""
+"""Maya Conversational Agent, Guardrails, and Grounded Synthesis (v2 stack)."""
 
 from src.maya.guardrails import (
     GuardrailResult,
@@ -7,13 +7,11 @@ from src.maya.guardrails import (
     OffTopicPivot,
     SessionCostLimiter,
 )
-from src.maya.router import MayaRouter
 
 __all__ = [
     "GuardrailResult",
     "GuardrailVerdict",
     "InjectionFilter",
-    "MayaRouter",
     "OffTopicPivot",
     "SessionCostLimiter",
 ]

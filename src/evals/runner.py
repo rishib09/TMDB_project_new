@@ -51,7 +51,6 @@ from src.evals.metrics import (
     context_precision_at_k,
     hit_rate_at_k,
     mrr_at_k,
-    routing_accuracy,
 )
 from src.indexing.embeddings import collection_name, provider_from_profile
 from src.indexing.vector_store import MovieVectorStore
@@ -74,13 +73,6 @@ SWEEPS: dict[str, list] = {
     "hybrid_alpha": [0.0, 0.25, 0.5, 0.75, 1.0],
     "retrieval_top_k": [3, 5, 10],
     "embedding_combo": ADR_0008_COMBOS,
-    "router_model": [
-        "glm-5.3-flash",  # #97 z.ai native
-        "google/gemini-3.5-flash-lite",  # #97 notch-down — the new pristine default
-        "~google/gemini-flash-latest",  # former default (alias → gemini-3.8-flash), kept for A/B
-        "meta-llama/llama-3.3-70b-instruct",
-        "meta-llama/llama-3.2-3b-instruct",
-    ],
 }
 
 
@@ -240,42 +232,6 @@ class BenchmarkRunner:
                 result.cost_usd = cost_lookup()
             results.append(result)
         return self._summarize(results, label, mode="full")
-
-    def run_routing(self, queries: list[dict], label: str, router) -> BenchmarkSummary:
-        """Routing mode (#29): live router call per query vs expected_intent.
-
-        Cheap by design — no retrieval, no synthesis, no judge. Records
-        per-row confidence and fallback so the #12 Gate 1 distribution and
-        the model before/after comparison come from the same run.
-        """
-        from src.domain.memory import ConversationState
-
-        results = []
-        for row in queries:
-            self._budget_check()
-            decision = router.route(row["query"], ConversationState())
-            results.append(
-                QueryEvalResult(
-                    query_id=row["id"], tier=row["tier"], query=row["query"],
-                    expected_path=row["expected_path"],
-                    routed_intent=decision.intent.value,
-                    intent_correct=decision.intent.value == row["expected_intent"],
-                    confidence=decision.confidence,
-                    is_fallback=decision.is_fallback,
-                )
-            )
-        summary = self._summarize(results, label, mode="routing")
-        per_intent: dict[str, list[bool]] = {}
-        for row, result in zip(queries, results, strict=True):
-            per_intent.setdefault(row["expected_intent"], []).append(
-                bool(result.intent_correct)
-            )
-        summary.routing_accuracy = routing_accuracy(results)
-        summary.routing_per_intent = {
-            intent: sum(hits) / len(hits) for intent, hits in sorted(per_intent.items())
-        }
-        summary.fallback_count = sum(1 for r in results if r.is_fallback)
-        return summary
 
     # --- conversation mode (#93, decisions #87 Q5–Q19) ------------------------
 
@@ -694,13 +650,6 @@ def _report(summary: BenchmarkSummary, path: Path) -> None:
             f"intersections={summary.intersection_failures} "
             f"tokens={summary.total_tokens}"
         )
-    elif summary.mode == "routing":
-        print(
-            f"[{label}] routing n={summary.n_queries} "
-            f"accuracy={summary.routing_accuracy:.2f} fallbacks={summary.fallback_count}"
-        )
-        for intent, acc in (summary.routing_per_intent or {}).items():
-            print(f"[{label}]   {intent}: {acc:.2f}")
     else:
         print(
             f"[{label}] {summary.mode} n={summary.n_queries} "
@@ -742,7 +691,6 @@ def _run_one(
         from src.graph.orchestrator import build_maya_graph
         from src.maya.agent import MayaSynthesizer
         from src.maya.guardrails import SessionCostLimiter
-        from src.maya.router import MayaRouter
         from src.maya.v2 import MayaV2Router
         from src.observability.tracer import DualModeObservabilityManager
 
@@ -753,8 +701,7 @@ def _run_one(
             judge=MayaJudge(config),
             graph=build_maya_graph(
                 config,
-                (MayaV2Router(config) if config.routing_stack == "v2"
-                 else MayaRouter(config, genre_vocabulary=db.distinct_genres())),
+                MayaV2Router(config),
                 engine,
                 MayaSynthesizer(config),
                 tracer,
@@ -770,14 +717,6 @@ def _run_one(
             tracer=tracer,
         )
         return runner.run_conversations(conversations, label)
-    if mode == "routing":
-        # Routing mode needs no retrieval stack — router + dataset only (#29).
-        from src.maya.router import MayaRouter
-
-        runner = BenchmarkRunner(
-            config, engine=None, budget_tracker=tracker, dataset_version=dataset_version
-        )
-        return runner.run_routing(queries, label, MayaRouter(config))
 
     target = collection_name(config.column_preset, config.embedding_profile)
     if not store.has_collection(target):
@@ -793,12 +732,12 @@ def _run_one(
     from src.graph.orchestrator import build_maya_graph
     from src.maya.agent import MayaSynthesizer
     from src.maya.guardrails import SessionCostLimiter
-    from src.maya.router import MayaRouter
+    from src.maya.v2 import MayaV2Router
     from src.observability.tracer import DualModeObservabilityManager
 
     runner.graph = build_maya_graph(
         config,
-        MayaV2Router(config) if config.routing_stack == "v2" else MayaRouter(config),
+        MayaV2Router(config),
         engine, MayaSynthesizer(config),
         DualModeObservabilityManager(session_id="benchmark"),
         limiter=SessionCostLimiter(),
@@ -809,7 +748,7 @@ def _run_one(
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Maya benchmark runner (#6, #59, #93)")
-    parser.add_argument("--mode", choices=["retrieval", "full", "routing", "conversation"], default="retrieval")
+    parser.add_argument("--mode", choices=["retrieval", "full", "conversation"], default="retrieval")
     parser.add_argument("--label", default=None, help="display label (default: preset slug)")
     parser.add_argument("--dataset", type=Path, default=DEFAULT_DATASET)
     parser.add_argument("--conversations", type=Path, default=DEFAULT_CONVERSATIONS,
@@ -818,9 +757,6 @@ def main(argv: list[str] | None = None) -> int:
                         help="comma-separated conversation ids (smoke runs, e.g. C01,C02)")
     parser.add_argument("--tier", default=None,
                         help="filter by golden tier (conversation mode)")
-    parser.add_argument("--stack", choices=["v1", "v2"],
-                        default=os.getenv("MAYA_ROUTING_STACK", "v1"),
-                        help="routing stack under test (#106: v2 = LLM Understanding)")
     parser.add_argument("--limit", type=int, default=None, help="first N queries (smoke runs)")
     parser.add_argument("--push-langfuse", action="store_true")
     parser.add_argument(
@@ -828,10 +764,6 @@ def main(argv: list[str] | None = None) -> int:
         help="strip LANGFUSE keys before anything runs: local trace ring only. "
         "A dead/slow Langfuse endpoint must never stall a baseline run "
         "(observed: OTel exporter DNS failure + rate-limit backoffs).",
-    )
-    parser.add_argument(
-        "--router-model", default=None,
-        help="override config.router_model (routing-mode A/B, #29)",
     )
     parser.add_argument(
         "--v2-router-model", default=None,
@@ -871,9 +803,7 @@ def main(argv: list[str] | None = None) -> int:
 
     sweep = "embedding_combo" if args.combos else args.sweep
     if sweep:
-        # Router-model sweeps are live routing runs; everything else is free
-        # retrieval replay (#54 grill D3).
-        mode = "routing" if sweep == "router_model" else "retrieval"
+        mode = "retrieval"
         for value_label, config in sweep_configs(sweep):
             label = f"{sweep}={value_label}"
             summary = _run_one(config, mode, queries, label, dataset_version, db, store)
@@ -888,8 +818,6 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     config = ExperimentConfig()
-    if args.router_model:
-        config = config.model_copy(update={"router_model": args.router_model})
     if args.synthesis_model:
         config = config.model_copy(update={"synthesis_model": args.synthesis_model})
     sweep_pins = {
@@ -905,7 +833,6 @@ def main(argv: list[str] | None = None) -> int:
     if args.v2_router_model:
         config = config.model_copy(update={"v2_router_model": args.v2_router_model})
     if args.mode == "conversation":
-        config = config.model_copy(update={"routing_stack": args.stack})
         conversations = load_conversations(args.conversations)
         if args.ids:
             wanted = {c.strip().upper() for c in args.ids.split(",")}
@@ -923,7 +850,6 @@ def main(argv: list[str] | None = None) -> int:
         conversations = None
     label = args.label or (
         f"conv-{config.routing_stack}" if args.mode == "conversation"
-        else f"routing_{config.router_model.split('/')[-1]}" if args.mode == "routing"
         else preset_slug(config)
     )
     summary = _run_one(config, args.mode, queries, label, dataset_version, db, store,

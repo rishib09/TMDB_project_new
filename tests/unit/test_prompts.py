@@ -64,20 +64,6 @@ def test_prompt_token_budget_bounded():
     assert len(build_system_prompt(has_retrieval=True, is_superlative=True)) < 6000
 
 
-# --- role separation ---------------------------------------------------------
-
-def test_router_prompt_stays_personality_free():
-    """ADR 0005 / #3 brief: classification prompt must carry no PERSONA text.
-
-    The name "Maya" as identity context is fine; voice/quirk language is not.
-    """
-    from src.maya.router import ROUTER_SYSTEM_PROMPT
-
-    prompt_lower = ROUTER_SYSTEM_PROMPT.lower()
-    for voice_marker in ("witty", "sassy", "quip", "upbeat", "playful", "joke"):
-        assert voice_marker not in prompt_lower
-
-
 def test_probing_ethos_present_but_bounded():
     """#22 dependency: the ethos ships with #10, interrogation is forbidden."""
     prompt = build_system_prompt(has_retrieval=True)

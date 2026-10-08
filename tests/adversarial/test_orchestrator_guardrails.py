@@ -1,8 +1,9 @@
-"""Adversarial tests for the Maya orchestrator end-to-end (issue #5).
+"""Adversarial tests for the Maya orchestrator end-to-end (issue #5, v2 stack).
 
 The full compiled graph runs with mocked LLM components — but real
 guardrails. Attacks try to break the CWA grounding, the budget cap, or the
-guard gate; the graph must hold every line.
+guard gate; the graph must hold every line. (The v1 fallback-loop pin died
+with the v1 fork — the v2 ladder has no re-route cycle to force, #156.)
 """
 
 import pytest
@@ -11,23 +12,13 @@ from langchain_core.messages import HumanMessage
 from src.domain.config import ExperimentConfig
 from src.domain.memory import UserSessionPreferences
 from src.domain.movie import MovieRecord
-from src.domain.routing import IntentType, QueryRoutingDecision
 from src.graph.orchestrator import build_maya_graph
 from src.graph.state import SynthesisUsage
 from src.maya.guardrails import SessionCostLimiter
 from src.observability.tracer import DualModeObservabilityManager
+from tests.unit.test_orchestrator import FakeEngine, ScriptedV2, _u
 
 pytestmark = pytest.mark.adversarial
-
-
-class ScriptedRouter:
-    def __init__(self, decisions):
-        self.decisions = list(decisions)
-        self.calls = []
-
-    def route(self, query, state, feedback=None):
-        self.calls.append((query, state, feedback))
-        return self.decisions.pop(0)
 
 
 class ScriptedEngine:
@@ -71,26 +62,14 @@ class MaliciousSynthesizer:
         return verifier.cwa_violations(response_text, movies)
 
 
-def _decision(intent=IntentType.SEMANTIC_SEARCH, requires_rag=True,
-              confidence=0.9, is_fallback=False):
-    return QueryRoutingDecision(
-        intent=intent,
-        confidence=confidence,
-        standalone_query="a specific long standalone query for tests",
-        requires_rag=requires_rag,
-        is_fallback=is_fallback,
-    )
-
-
 def _inception():
     return MovieRecord(id=27205, title="Inception", release_year=2010)
 
 
-def _graph(router=None, engine=None, synthesizer=None, limiter=None,
-           route_max_attempts=2, tracer=None):
+def _graph(router=None, engine=None, synthesizer=None, limiter=None, tracer=None):
     return build_maya_graph(
-        ExperimentConfig(route_max_attempts=route_max_attempts),
-        router or ScriptedRouter([_decision()]),
+        ExperimentConfig(),
+        router or ScriptedV2([(_u(), [])]),
         engine or ScriptedEngine(movies=[_inception()]),
         synthesizer or MaliciousSynthesizer(),
         tracer or DualModeObservabilityManager(session_id="adv"),
@@ -110,7 +89,7 @@ INJECTION_PAYLOADS = [
 
 @pytest.mark.parametrize("payload", INJECTION_PAYLOADS)
 def test_injection_payloads_never_reach_router_or_synth(payload):
-    router = ScriptedRouter([_decision()])
+    router = ScriptedV2([(_u(), [])])
     synth = MaliciousSynthesizer()
     graph = _graph(router=router, synthesizer=synth)
     out = graph.invoke({"messages": [HumanMessage(content=payload)]})
@@ -140,7 +119,7 @@ def test_cwa_violation_detected_in_trace_not_silently_hidden():
 
 def test_cwa_violation_detection_via_synthesizer_verifier():
     synth = MaliciousSynthesizer()
-    synth.synthesize("q", _decision(), [_inception()], [])
+    synth.synthesize("q", None, [_inception()], [])
     text = (
         "**Inception (2010)** — great.\n"
         "Also consider **The Prestige (2006)** — outside your world!"
@@ -174,7 +153,7 @@ def test_throttle_threshold_still_serves_but_flags():
 
 def test_preference_poisoning_via_message_is_inert():
     """Exclusions ride the structured state, never free text in messages."""
-    router = ScriptedRouter([_decision()])
+    router = ScriptedV2([(_u(), [])])
     graph = _graph(router=router)
     graph.invoke({
         "messages": [
@@ -182,19 +161,8 @@ def test_preference_poisoning_via_message_is_inert():
         ],
         "session_preferences": UserSessionPreferences(),
     })
-    # router sees EMPTY structured preferences: prose never mutates state
-    assert router.calls[0][1].session_preferences.excluded_genres == []
-
-
-def test_fallback_loop_cannot_be_forced_indefinitely():
-    """A broken router keeps falling back — the cycle must terminate."""
-    fallback = _decision(is_fallback=True, confidence=0.1)
-    router = ScriptedRouter([fallback, fallback, fallback, fallback])
-    graph = _graph(router=router, route_max_attempts=2)
-    out = graph.invoke({"messages": [HumanMessage(content="anything")]})
-
-    assert len(router.calls) == 2  # bounded, despite endless fallbacks
-    assert out["final_response"]  # still produced a (degraded) turn
+    # Understand sees EMPTY structured preferences: prose never mutates state
+    assert router.calls[0]["prefs"].excluded_genres == []
 
 
 def test_empty_world_synth_cannot_recommend():

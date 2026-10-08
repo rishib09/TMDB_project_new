@@ -271,11 +271,23 @@ class _RecordingEngine:
 
 
 class _StubRouter:
+    """v2 stub (#156): projects the scripted routing onto an Understanding —
+    the retrieve-node contract under test is unchanged."""
+
     def __init__(self, decision):
         self.decision = decision
 
-    def route(self, query, state, feedback=None):
-        return self.decision
+    def understand(self, query, prefs, shown_titles, last_assistant, probe_count):
+        return (
+            Understanding(
+                intent=self.decision.intent,
+                standalone_query=self.decision.standalone_query,
+                filters=self.decision.filters,
+                ready_to_retrieve=True,
+            ),
+            [],
+            None,
+        )
 
 
 class _StubSynth:
@@ -358,9 +370,11 @@ def test_v2_era_snapshot_survives_to_a_bare_retrieval_turn():
 
 @pytest.mark.adversarial
 def test_decision_year_beats_preference_year_no_impossible_range():
-    """Conflict guard: decision year_max=2000 vs prefs year_min=2015 must
-    resolve in favor of the DECISION (the newer statement) — the engine must
-    never see an impossible range, and the fold must be on the record."""
+    """Conflict guard, v2 shape (#156): an Understanding carrying year_max=2000
+    must OVERRIDE the standing year_min=2015 snapshot — the disposer's
+    preferences snapshot normalizes years to the newest statement BEFORE
+    retrieve, so the engine can never see an impossible range (the v1 fold
+    trace is gone with it: on this fork there is nothing left to fold)."""
     engine = _RecordingEngine()
     prefs = UserSessionPreferences(preferred_mood="feel-good", audience="just me", year_min=2015)
     decision = _routing(filters=MetadataFilterCriteria(year_max=2000))
@@ -369,7 +383,7 @@ def test_decision_year_beats_preference_year_no_impossible_range():
     graph = build_maya_graph(
         ExperimentConfig(), _StubRouter(decision), engine, _StubSynth(), tracer
     )
-    graph.invoke(
+    out = graph.invoke(
         {
             "messages": [HumanMessage(content="q")],
             "session_preferences": prefs,
@@ -378,9 +392,6 @@ def test_decision_year_beats_preference_year_no_impossible_range():
     seen = engine.calls[0][1].filters
     assert seen.year_max == 2000
     assert seen.year_min is None, "pref floor must drop against a decision ceiling"
-    applied = [
-        t
-        for t in tracer._local_traces
-        if t["node"] == "retrieve" and t["payload"].get("prefs_years_applied")
-    ]
-    assert applied, "the fold (and its drop) must be on the record"
+    # the snapshot itself was normalized to the newest statement (no zombie floor)
+    assert out["session_preferences"].year_min is None
+    assert out["session_preferences"].year_max == 2000

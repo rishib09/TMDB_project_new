@@ -1,48 +1,26 @@
-"""Deterministic probing policy for guided narrowing (issue #22).
+"""Shared deterministic vocabulary (v2 stack).
 
-Model proposes, code disposes (ADR 0005): whether Maya probes is decided
-here in code, never by prompt vibes. Probe turns are fully deterministic —
-zero LLM cost — and bounded by MAX_PROBE_TURNS so the conversation always
-moves forward. Answer extraction is exact-vocabulary keyword matching:
-no fuzzy matching, so a hostile or garbled query can never invent fields.
+Trimmed to the four symbols the v2 stack consumes (#156 hard split):
+``is_fresh_start`` (guard node choke point), ``extract_probe_answers`` +
+``MAX_PROBE_TURNS`` (the v2 disposer's fallback vocabulary and ask budget),
+and ``preference_chips`` (UI narrowing chips). The v1 funnel state machine
+this module used to host died with the v1 stack; the vocabulary itself is
+stack-neutral and exact — no fuzzy matching, so a hostile or garbled query
+can never invent fields.
 """
 
 import re
 from typing import ClassVar
 
-from pydantic import BaseModel, Field
+from src.domain.memory import UserSessionPreferences
 
-from src.domain.memory import UserSessionPreferences, merge_preferences
-from src.domain.routing import QueryRoutingDecision
-
-#: Queries longer than this are treated as specific enough to answer directly.
-BROAD_QUERY_WORD_LIMIT: ClassVar[int] = 5
-#: Hard cap on probe turns per session — never an interrogation.
+#: Hard cap on probe/ask turns per session — never an interrogation (#22,
+#: consumed by the v2 disposer's probe-budget invariant).
 MAX_PROBE_TURNS: ClassVar[int] = 2
-#: Probing only makes sense while at least this many axes are unanswered.
-MIN_UNANSWERED_AXES: ClassVar[int] = 2
-#: Once this many axes are answered, retrieve immediately (#53). Default for
-#: the ExperimentConfig.funnel_retrieve_axes tunable (ADR 0004).
-DEFAULT_RETRIEVE_AXES: ClassVar[int] = 2
-#: Phrases that end the funnel and trigger retrieval immediately (#23).
-RETRIEVE_CONFIRMATIONS: ClassVar[tuple[str, ...]] = (
-    "go ahead",
-    "show me",
-    "pull the films",
-    "pull them up",
-    "just show",
-    "no more questions",
-    "that's all",
-    "thats all",
-    "good enough",
-)
 
 #: Phrases that wipe accumulated preferences for a clean start (#26-E/L).
-#: Deterministic and matched by substring on the lowered query — the
-#: carry-over announcement explicitly offers this escape hatch, so the
-#: vocabulary MUST cover its own suggestion. #26-L walkthrough: "remove all
-#: the filters and start with a fresh search" and "lets start with
-#: something different" both missed the narrower vocabulary.
+#: Deterministic and matched by substring on the lowered query — checked in
+#: the guard node, the single choke point every turn passes.
 FRESH_START_PHRASES: ClassVar[tuple[str, ...]] = (
     "something completely different",
     "something different",
@@ -63,75 +41,26 @@ FRESH_START_PHRASES: ClassVar[tuple[str, ...]] = (
     "no filters",
 )
 
-#: Narrowing-pivot vocabulary (#33): softer than FRESH_START (which wipes
-#: everything) — combined with a stated genre it retires only the stale
-#: mood + derived-genre narrowing; exclusions and constraints survive.
-NARROWING_PIVOT_PHRASES: ClassVar[tuple[str, ...]] = (
-    "other suggestion",
-    "other suggestions",
-    "other recommendation",
-    "other recommendations",
-    "something else",
-)
 
-#: Bare affirmations (#26-O): after a confirm/genre stage, a bare "yes" must
-#: RETRIEVE — it fell through to the router and became an ungrounded answer.
-AFFIRMATIONS: ClassVar[tuple[str, ...]] = (
-    "yes", "yeah", "yep", "yup", "sure", "ok", "okay", "please do",
-    "sounds good", "do it", "go on",
-)
+def is_fresh_start(query: str) -> bool:
+    """True when the user asks to drop accumulated preferences (#26-E).
 
-#: Echo sanitization — identical contract to the #21 empty-retrieval response.
-_SMUGGLED_MARKUP_RE = re.compile(r"</?\s*\w+\s*/?>|```.*?```", re.DOTALL)
-_ECHO_CAP: ClassVar[int] = 120
-
-
-def strip_markup(text: str) -> str:
-    """Removes smuggled HTML/code fences — extraction-boundary sanitizer.
-
-    LLM-extracted fields (mood/audience per #24) flow into retrieval queries
-    and deterministic responses; this is the single choke point that keeps
-    them markup-free, shared by the router and the notice builders.
+    Deterministic escape hatch offered by the carry-over announcement —
+    checked in the guard node, the single choke point every turn passes.
     """
-    return _SMUGGLED_MARKUP_RE.sub(" ", text or "")
+    lowered = query.lower()
+    if any(phrase in lowered for phrase in FRESH_START_PHRASES):
+        return True
+    # #26-L: "remove all the filters"-style verb+object patterns the fixed
+    # list can't cover ("clear those filters", "reset my filters", ...).
+    return bool(re.search(
+        r"\b(remove|clear|reset|drop|wipe)\b[^.!?]{0,24}\bfilters?\b", lowered
+    ))
 
 
-class ProbeQuestion(BaseModel):
-    """One narrowing question, phrased in Maya's voice."""
-
-    axis: str  # mood | audience | donts | genres | directors
-    question: str
-
-
-PROBE_FUNNEL: ClassVar[list[ProbeQuestion]] = [
-    ProbeQuestion(
-        axis="mood",
-        question="First things first — what mood are we in? Feel-good, "
-        "edge-of-your-seat, laugh-out-loud, something that'll make you cry?",
-    ),
-    ProbeQuestion(
-        axis="audience",
-        question="Who's watching — just you, a date night, or the whole "
-        "family with kids in tow?",
-    ),
-    ProbeQuestion(
-        axis="donts",
-        question="Any hard passes? Tell me what to keep off the shelf — "
-        "horror, heavy drama, anything with clowns...",
-    ),
-    ProbeQuestion(
-        axis="genres",
-        question="Any genres you're craving — or curious to try?",
-    ),
-    ProbeQuestion(
-        axis="directors",
-        question="Got a favorite director? I'll happily dig through their whole shelf.",
-    ),
-]
-
-#: Exact-vocabulary extraction for the scalar probe axes (#22). Deliberately
-#: small and literal — the router already extracts genres/directors/don'ts
-#: via MetadataFilterCriteria; this covers what the router schema does not.
+#: Exact-vocabulary extraction for the scalar axes (#22). Deliberately
+#: small and literal — the v2 Understand model extracts genres/directors/
+#: don'ts via MetadataFilterCriteria; this covers what the schema does not.
 _MOOD_VOCAB: ClassVar[dict[str, str]] = {
     "edge of the seat": "edge-of-your-seat",
     "edge of your seat": "edge-of-your-seat",
@@ -182,101 +111,13 @@ _AUDIENCE_VOCAB: ClassVar[dict[str, str]] = {
     "on my own": "solo",
 }
 
-
-def should_probe(
-    decision: QueryRoutingDecision,
-    prefs: UserSessionPreferences,
-    probe_count: int,
-) -> bool:
-    """True only for broad, filterless, non-superlative RAG requests.
-
-    Deterministic guards, in order:
-    - superlative or specifically-filtered queries answer directly; a genre
-      alone does NOT count as specific (#29: a strong extractor tags "sci-fi
-      movies" with a genre filter, but the query is still a broad browse —
-      the funnel probes for a second narrowing axis)
-    - the probe cap is absolute (never an interrogation)
-    - probing stops once enough narrowing signal exists
-    - long queries carry their own signal — don't stall them
-    """
-    if not decision.requires_rag:
-        return False
-    if decision.is_superlative:
-        return False
-    filters = decision.filters
-    if filters and (
-        filters.director
-        or filters.person  # #29: a named person is a specific ask, never probe
-        or filters.cast_member
-        or filters.excluded_genres
-        or filters.exact_year
-        or filters.year_min
-        or filters.year_max
-    ):
-        return False
-    if probe_count >= MAX_PROBE_TURNS:
-        return False
-    if len(prefs.answered_axes()) >= 2:
-        return False
-    return len((decision.standalone_query or "").split()) <= BROAD_QUERY_WORD_LIMIT
+#: Window checked before a keyword hit for a negation token (#22).
+_NEGATION_PREFIX_RE = re.compile(r"\b(no|not|without|never|nothing)[\s-]+$")
 
 
-def next_probe_question(prefs: UserSessionPreferences) -> ProbeQuestion | None:
-    """First unanswered funnel question, or None when the funnel is exhausted.
-
-    Mood and genres are one axis family (#29: MOOD_GENRE_MAP maps between
-    them) — answering either suppresses the other's question, so the user
-    is never asked the same thing twice in different words.
-    """
-    answered = set(prefs.answered_axes())
-    if "genres" in answered:
-        answered.add("mood")
-    if "mood" in answered:
-        answered.add("genres")
-    return next((q for q in PROBE_FUNNEL if q.axis not in answered), None)
-
-
-def build_probe_response(prefs: UserSessionPreferences, query: str = "") -> str:
-    """Deterministic Maya-voiced probe turn — grounded, inject-safe, no titles."""
-    question = next_probe_question(prefs)
-    if question is None:  # caller should have checked should_probe; stay safe
-        return "I've got enough to work with — what are you in the mood for?"
-    echo = _SMUGGLED_MARKUP_RE.sub(" ", query)
-    echo = re.sub(r"\s{2,}", " ", echo).strip()
-    if len(echo) > _ECHO_CAP:
-        echo = echo[:_ECHO_CAP].rstrip() + "…"
-    opener = f'Ooh, "{echo}" — I can work with that! ' if echo else ""
-    trail_items = [
-        f"a {prefs.preferred_mood} mood" if prefs.preferred_mood else "",
-        f"for {prefs.audience}" if prefs.audience else "",
-        *(f"no {d}" for d in prefs.noted_donts),
-        *(prefs.preferred_genres or []),
-        *(f"{d}'s films" for d in prefs.preferred_directors),
-    ]
-    trail = (
-        "So far I've noted: " + ", ".join(t for t in trail_items if t) + ". "
-        if any(trail_items)
-        else ""
-    )
-    return f"{opener}But before I start pulling films, let me narrow it down. {trail}{question.question}"
-
-
-def canonical_mood(mood: str) -> str:
-    """Normalizes an LLM-extracted mood to the vocabulary's canonical form.
-
-    Model proposes, code disposes: "edge of the seat", "Edge of Your Seat"
-    and "edge-of-your-seat" all map to "edge-of-your-seat" — the MOOD_GENRE_MAP
-    and funnel state machine key on canonical values. Unknown moods pass
-    through (open vocabulary, flavor-only per #25).
-    """
-    cleaned = strip_markup(mood or "").strip().lower()
-    if not cleaned:
-        return ""
-    if cleaned in _MOOD_VOCAB:  # already a keyword
-        return _MOOD_VOCAB[cleaned]
-    if cleaned in set(_MOOD_VOCAB.values()):  # already canonical
-        return cleaned
-    return mood.strip()  # unknown — keep the LLM's wording as flavor
+def _is_negated(text: str, keyword_start: int) -> bool:
+    prefix = text[max(0, keyword_start - 16):keyword_start]
+    return bool(_NEGATION_PREFIX_RE.search(prefix))
 
 
 def extract_probe_answers(query: str) -> UserSessionPreferences:
@@ -304,152 +145,6 @@ def extract_probe_answers(query: str) -> UserSessionPreferences:
     return UserSessionPreferences(preferred_mood=mood, audience=audience)
 
 
-#: Window checked before a keyword hit for a negation token (#22).
-_NEGATION_PREFIX_RE = re.compile(r"\b(no|not|without|never|nothing)[\s-]+$")
-
-
-def _is_negated(text: str, keyword_start: int) -> bool:
-    prefix = text[max(0, keyword_start - 16):keyword_start]
-    return bool(_NEGATION_PREFIX_RE.search(prefix))
-
-
-# --- era extraction (#42): vague era words are code-owned constraints --------
-
-#: Vague-past vocabulary → year_max from config (what "old" means is a
-#: tunable, never model vibes — ADR 0004/0005).
-_ERA_OLD_RE = re.compile(r"\b(old|older|oldies?|classics?|vintage)\b")
-#: Vague-recent vocabulary → year_min from config. Bare "new" is deliberately
-#: absent ("something new" means *different*, not recent-year).
-_ERA_RECENT_RE = re.compile(r"\b(recent|latest|modern|newer)\b")
-#: Decade tokens with a concrete anchor: "1980s", "80s", "2000s", "2010s".
-_ERA_DECADE_RE = re.compile(r"\b(?:(19[7-9]0|20[0-2]0)s|([7-9]0)s)\b")
-#: Era negation allows intervening words ("not too old", "nothing old please")
-#: — wider than the adjacent-token mood window, still clause-bounded.
-_ERA_NEGATION_RE = re.compile(r"\b(no|not|without|never|nothing)\b[^.,;!?]{0,16}$")
-
-
-def _is_negated_near(text: str, keyword_start: int) -> bool:
-    prefix = text[max(0, keyword_start - 24):keyword_start]
-    return bool(_ERA_NEGATION_RE.search(prefix))
-
-
-def extract_era(
-    query: str, old_year_max: int, recent_year_min: int
-) -> UserSessionPreferences:
-    """Deterministic era extraction: old/classic → year_max, recent → year_min,
-    decade tokens → exact ranges. Vague words need a code-owned threshold —
-    the thresholds come from ExperimentConfig (#42). Concrete years/decades
-    the LLM extractor already grounds take precedence at the merge site.
-    """
-    lowered = query.lower()
-    decade = _ERA_DECADE_RE.search(lowered)
-    if decade and not _is_negated_near(lowered, decade.start()):
-        start = int(decade.group(1) or f"19{decade.group(2)}")
-        return UserSessionPreferences(year_min=start, year_max=start + 9)
-    old = _ERA_OLD_RE.search(lowered)
-    if old and not _is_negated_near(lowered, old.start()):
-        return UserSessionPreferences(year_max=old_year_max)
-    recent = _ERA_RECENT_RE.search(lowered)
-    if recent and not _is_negated_near(lowered, recent.start()):
-        return UserSessionPreferences(year_min=recent_year_min)
-    return UserSessionPreferences()
-
-
-def has_year_constraint(prefs: UserSessionPreferences | None) -> bool:
-    """True when the update carries any year constraint (#42 funnel ownership)."""
-    return prefs is not None and (
-        prefs.exact_year is not None
-        or prefs.year_min is not None
-        or prefs.year_max is not None
-    )
-
-
-# --- funnel state machine (#23): the turn after a probe is OURS -----------
-#
-# Walkthrough defect (#23): probe answers like "edge of the seat" confused
-# the router (GREETING) and topical follow-ups pivoted OUT_OF_SCOPE. Fix:
-# when a probe was just asked, the funnel handles the reply deterministically
-# and the router only sees queries the funnel can't own.
-
-
-class FunnelOutcome(BaseModel):
-    """What the funnel decides to do with a post-probe user message."""
-
-    action: str  # probe | confirm | confirm_genres | retrieve | fallthrough
-    response: str | None = None  # deterministic response for probe/confirm
-    prefs_update: UserSessionPreferences | None = None  # MERGED prefs (idempotent under the reducer)
-    offered_genre_options: list[str] = Field(default_factory=list)  # #25 confirm_genres
-
-
-def _is_confirmation(query: str) -> bool:
-    lowered = query.lower().strip()
-    if any(phrase in lowered for phrase in RETRIEVE_CONFIRMATIONS):
-        return True
-    # #26-O: bare affirmations count ONLY as whole utterances — "yes" after
-    # "shall I pull the films now?" retrieves; "yes tell me more about the
-    # joker" (an affirmation + a request) must fall through to extraction.
-    return lowered in AFFIRMATIONS or lowered in (
-        f"{a}, please" for a in AFFIRMATIONS
-    )
-
-
-def is_fresh_start(query: str) -> bool:
-    """True when the user asks to drop accumulated preferences (#26-E).
-
-    Deterministic escape hatch offered by the carry-over announcement —
-    checked in the guard node, the single choke point every turn passes.
-    """
-    lowered = query.lower()
-    if any(phrase in lowered for phrase in FRESH_START_PHRASES):
-        return True
-    # #26-L: "remove all the filters"-style verb+object patterns the fixed
-    # list can't cover ("clear those filters", "reset my filters", ...).
-    return bool(re.search(
-        r"\b(remove|clear|reset|drop|wipe)\b[^.!?]{0,24}\bfilters?\b", lowered
-    ))
-
-
-def is_narrowing_pivot(
-    query: str,
-    explicit_genres: list[str],
-    prefs: UserSessionPreferences,
-) -> bool:
-    """True when this turn pivots away from the accumulated narrowing (#33).
-
-    Fires only when the router extracted an explicit genre this turn, AND
-    either (a) it is disjoint from the current narrowing genres (stated-genre
-    conflict: 'action' against a funny/Comedy session), or (b) the utterance
-    carries pivot vocabulary while narrowing exists. Overlapping genres are a
-    refinement, never a pivot.
-    """
-    stated = {g.lower() for g in explicit_genres}
-    if not stated:
-        return False
-    current = {g.lower() for g in prefs.preferred_genres}
-    if current and not (stated & current):
-        return True
-    lowered = query.lower()
-    if any(phrase in lowered for phrase in NARROWING_PIVOT_PHRASES):
-        return bool(prefs.preferred_mood or current)
-    return False
-
-
-def build_filter_carryover_notice(prefs: UserSessionPreferences) -> str:
-    """Post-funnel transparency line (#26-E): announce carried filters.
-
-    Appended to the first recommendation after funnel narrowing so the
-    user knows the filters REMAIN ACTIVE — with the deterministic escape
-    hatch vocabulary as the way out.
-    """
-    chips = preference_chips(prefs)
-    if not chips:
-        return ""  # no prefs carried → nothing to announce
-    return (
-        "\n\n---\nStill filtering by " + " · ".join(chips) + " — want to "
-        'continue with these, or watch something completely different?'
-    )
-
-
 def preference_chips(prefs: UserSessionPreferences) -> list[str]:
     """Human-readable chips for the active preferences (shared by UI + notice)."""
     chips: list[str] = []
@@ -469,181 +164,3 @@ def preference_chips(prefs: UserSessionPreferences) -> list[str]:
         hi = prefs.year_max or "…"
         chips.append(f"years: {lo}-{hi}")
     return chips
-
-
-def build_funnel_query(prefs: UserSessionPreferences) -> str:
-    """Natural-language retrieval query synthesized from funnel answers.
-
-    Embeddings handle this fluently; genres/directors keep flowing through
-    the router's SQL filters when the user states them explicitly.
-    """
-    parts = []
-    if prefs.preferred_mood:
-        parts.append(prefs.preferred_mood)
-    parts.append("movies")
-    if prefs.preferred_genres:
-        parts.append(" ".join(prefs.preferred_genres))
-    if prefs.audience:
-        parts.append(f"for {prefs.audience}")
-    if prefs.preferred_directors:
-        parts.append(f"directed by {' and '.join(prefs.preferred_directors)}")
-    return " ".join(parts).strip() or "good movies"
-
-
-def funnel_axes(prefs: UserSessionPreferences) -> list[str]:
-    """Axes the USER directly expressed, for the confirm threshold (#25).
-
-    A mood and its mapped genre are ONE signal, not two: "something funny"
-    yielding Comedy must not jump straight to confirmation. Genres count as
-    their own axis only when confirmed OUTSIDE the mood map (user picked
-    them from a candidate list for an unmapped/absent mood).
-    """
-    axes = [a for a in prefs.answered_axes() if a != "genres"]
-    mood_covered = (
-        prefs.preferred_mood
-        and prefs.preferred_mood.casefold() in MOOD_GENRE_MAP
-    )
-    if prefs.preferred_genres and prefs.genre_confirmation_done and not mood_covered:
-        axes.append("genres")
-    return axes
-
-
-def handle_probe_answer(
-    query: str, prefs: UserSessionPreferences, probe_count: int,
-    prefs_update: UserSessionPreferences | None = None,
-    retrieve_axes: int = DEFAULT_RETRIEVE_AXES,
-) -> FunnelOutcome:
-    """Funnel decision for the message following a probe (#23).
-
-    Order matters: confirmations beat extraction, extraction beats probing,
-    and anything the funnel can't own falls through to normal routing.
-    ``prefs_update`` carries the extractor's findings (LLM per #24, with the
-    deterministic vocab as fallback) — merging and stage progression are
-    pure functions of that input.
-    """
-    if _is_confirmation(query):
-        return FunnelOutcome(action="retrieve", prefs_update=prefs_update)
-    if prefs_update is None:
-        prefs_update = extract_probe_answers(query)
-    # #42: a year constraint is a funnel refinement too — "may be an old
-    # movie" must update the narrowing state, never escape to the router.
-    if prefs_update.answered_axes() or has_year_constraint(prefs_update):
-        merged = merge_preferences(prefs, prefs_update)
-        return next_funnel_step(merged, probe_count, query, retrieve_axes)
-    return FunnelOutcome(action="fallthrough")
-
-
-def next_funnel_step(
-    prefs: UserSessionPreferences, probe_count: int, query: str = "",
-    retrieve_axes: int = DEFAULT_RETRIEVE_AXES,
-) -> FunnelOutcome:
-    """Pure funnel progression from the CURRENT merged preferences (#25).
-
-    Stage order: genre confirmation (mood just learned) → enough-axes
-    retrieval → next probe → retrieval. Single-candidate mood maps auto-accept
-    their genre without wasting a turn ("funny" IS comedy, no need to ask).
-    #53: at ``retrieve_axes`` answered axes the funnel retrieves IMMEDIATELY —
-    the old confirm-before-retrieve turn gated retrieval behind a fixed reply
-    vocabulary ("all of them" fell through to OUT_OF_SCOPE with 0 movies).
-    The #26-E carry-over notice remains the transparency mechanism.
-    """
-    merged = prefs
-    pending = UserSessionPreferences()
-    if prefs.preferred_mood and not prefs.genre_confirmation_done:
-        candidates = MOOD_GENRE_MAP.get(prefs.preferred_mood.casefold(), [])
-        have = {g.casefold() for g in prefs.preferred_genres}
-        remaining = [g for g in candidates if g.casefold() not in have]
-        if len(remaining) == 1:
-            pending = UserSessionPreferences(
-                preferred_genres=remaining, genre_confirmation_done=True,
-                # #56: map-derived genre with no explicit base = union intent
-                genres_from_candidates=not prefs.preferred_genres,
-            )
-            merged = merge_preferences(prefs, pending)
-        elif remaining:
-            return FunnelOutcome(
-                action="confirm_genres",
-                response=build_genre_confirm_response(prefs, remaining),
-                prefs_update=merged,
-                offered_genre_options=remaining,
-            )
-        else:
-            pending = UserSessionPreferences(genre_confirmation_done=True)
-            merged = merge_preferences(prefs, pending)
-
-    if len(funnel_axes(merged)) >= retrieve_axes:
-        return FunnelOutcome(action="retrieve", prefs_update=merged)
-    question = next_probe_question(merged)
-    if question and probe_count < MAX_PROBE_TURNS:
-        return FunnelOutcome(
-            action="probe", response=build_probe_response(merged, query),
-            prefs_update=merged,
-        )
-    return FunnelOutcome(action="retrieve", prefs_update=merged)
-
-
-# --- mood → genre mapping (#25): close the open-vocabulary loop -------------
-
-#: Mood values (from the vocab or LLM extraction) → candidate genres for the
-#: confirmation turn. Curated DATA, not prompts — the LLM proposes the mood,
-#: this map proposes the genres, the USER confirms. Unmapped moods skip the
-#: stage (flavor-only) so the loop can never dead-end.
-MOOD_GENRE_MAP: ClassVar[dict[str, list[str]]] = {
-    "edge-of-your-seat": ["Thriller", "Sci-Fi", "Horror", "Drama"],
-    "thrilling": ["Thriller", "Action", "Crime"],
-    "funny": ["Comedy"],
-    "feel-good": ["Comedy", "Drama", "Family", "Romance"],
-    "scary": ["Horror", "Thriller"],
-    "romantic": ["Romance", "Drama"],
-    "tearjerker": ["Drama", "Romance"],
-    "epic": ["Action", "Adventure", "Fantasy", "History"],
-}
-
-#: Phrases accepting the ENTIRE offered candidate set (#25).
-_CONFIRM_ALL_RE = re.compile(
-    r"\b(all of them|all|everything|any of them|both|either)\b"
-)
-
-
-def build_genre_confirm_response(
-    prefs: UserSessionPreferences, candidates: list[str]
-) -> str:
-    """Deterministic genre-confirmation turn (#25).
-
-    Framing adapts to provenance: with an explicit genre already confirmed
-    the question narrows WITHIN it ("within sci-fi…"); otherwise it's a
-    plain candidate list.
-    """
-    mood = prefs.preferred_mood
-    have = {g.casefold() for g in prefs.preferred_genres}
-    options = ", ".join(candidates)
-    if have:
-        established = ", ".join(g for g in prefs.preferred_genres if g.casefold() in have)
-        return (
-            f'Good taste — "{mood}" runs right through {established}. Within '
-            f"{established}, do you also want the {options} side? Pick any "
-            '(or say "all of them").'
-        )
-    return (
-        f'"{mood}" can mean a few things on my shelves: {options}. '
-        'Which of those are you in the mood for? (or say "all of them")'
-    )
-
-
-def match_genre_pick(query: str, options: list[str]) -> list[str] | None:
-    """Match a user reply against the offered genre candidates (#25).
-
-    Deterministic against the KNOWN candidate list — no LLM needed for a
-    multiple-choice question. Returns the picks, or None when the reply
-    isn't a genre answer (caller falls through to normal handling).
-    Negated mentions ("no horror") never count as picks.
-    """
-    lowered = re.sub(r"\bsci fi\b", "sci-fi", query.lower())
-    if _CONFIRM_ALL_RE.search(lowered):
-        return list(options)
-    picks = []
-    for option in options:
-        match = re.search(rf"\b{re.escape(option.lower())}\b", lowered)
-        if match and not _is_negated(lowered, match.start()):
-            picks.append(option)
-    return picks or None

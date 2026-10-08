@@ -43,28 +43,6 @@ class _EmptyEngine:
         return []
 
 
-class _UsageV1Router:
-    """v1 router reporting its token usage like the real MayaRouter (#123)."""
-
-    def __init__(self):
-        from src.domain.usage import LLMUsage
-
-        self.last_usage = LLMUsage(
-            model="glm-5.3-flash", prompt_tokens=500, completion_tokens=200
-        )
-
-    def route(self, query, state, feedback=None):
-        from src.domain.routing import IntentType, QueryRoutingDecision
-
-        return QueryRoutingDecision(
-            intent=IntentType.CAPABILITIES,
-            confidence=0.9,
-            standalone_query=query,
-            requires_rag=False,
-            reasoning="test",
-        )
-
-
 class _UsageV2Router(MayaV2Router):
     """Real subclass so the stack selector wires route_node_v2; understand()
     returns the post-#123 3-tuple with usage."""
@@ -108,47 +86,31 @@ def test_dollar_scale_session_spend_keeps_two_decimals():
     assert "$0.05 / $0.10" in format_session_spend(0.05, 0.10)
 
 
-def test_v1_route_node_writes_router_cost_to_session():
-    """#123 adversarial: the v1 Router call was unmetered — a routed turn
-    must carry session_cost_usd > 0 (no such key on current code), and the
-    session limiter must reflect the route + synthesize SUM."""
-    from src.domain.config import ExperimentConfig
-    from src.graph.orchestrator import build_maya_graph
-
-    expected = estimate_cost("glm-5.3-flash", 500, 200) + estimate_cost(
-        "fake-model", 10, 5
-    )
-    limiter = SessionCostLimiter()
-    graph = build_maya_graph(
-        ExperimentConfig(),
-        _UsageV1Router(),
-        _EmptyEngine(),
-        _UsageSynth(),
-        _fresh_tracer(),
-        limiter=limiter,
-        budget_tracker=None,
-    )
-    out = graph.invoke({"messages": [HumanMessage(content="what can you do")]})
-    assert out["session_cost_usd"] == pytest.approx(expected)
-    assert out["session_cost_usd"] > 0
-    assert out["session_tokens"] == 700 + 15
-
-
 def test_missing_usage_metadata_records_unmetered_marker():
     """#123 review P2-1: a usage-less LLM call must not vanish from the
     Trace — AGENTS.md: fail-open must be explicit and recorded. The turn
     still costs nothing, but one ``unmetered`` cost row marks it."""
     from src.domain.config import ExperimentConfig
+    from src.domain.routing import IntentType
     from src.graph.orchestrator import build_maya_graph
+    from src.maya.v2 import Understanding
 
-    class _NoUsageRouter(_UsageV1Router):
-        def __init__(self):
-            self.last_usage = None  # real routers set None on api_error
+    class _NoUsageV2Router(_UsageV2Router):
+        def understand(self, query, prefs, shown_titles, last_assistant, probe_count):
+            return (
+                Understanding(
+                    intent=IntentType.CAPABILITIES,
+                    standalone_query=query,
+                    confidence=0.9,
+                ),
+                ["scripted"],
+                None,  # real routers set None on api_error
+            )
 
     synth_cost = estimate_cost("fake-model", 10, 5)
     graph = build_maya_graph(
         ExperimentConfig(),
-        _NoUsageRouter(),
+        _NoUsageV2Router(),
         _EmptyEngine(),
         _UsageSynth(),
         tracer := _fresh_tracer(),
@@ -160,7 +122,7 @@ def test_missing_usage_metadata_records_unmetered_marker():
         t
         for t in tracer.traces()
         if t["node"] == "cost"
-        and t["payload"].get("node") == "route"
+        and t["payload"].get("node") == "route_v2"
         and t["payload"].get("unmetered") == "no_usage_metadata"
     ]
     assert markers and markers[0]["payload"]["cost_usd"] == 0.0
@@ -173,16 +135,26 @@ def test_mock_spec_usage_is_crash_proof_and_marked():
     from unittest.mock import Mock
 
     from src.domain.config import ExperimentConfig
+    from src.domain.routing import IntentType
     from src.domain.usage import LLMUsage
     from src.graph.orchestrator import build_maya_graph
+    from src.maya.v2 import Understanding
 
-    class _MockUsageRouter(_UsageV1Router):
-        def __init__(self):
-            self.last_usage = Mock(spec=LLMUsage)
+    class _MockUsageV2Router(_UsageV2Router):
+        def understand(self, query, prefs, shown_titles, last_assistant, probe_count):
+            return (
+                Understanding(
+                    intent=IntentType.CAPABILITIES,
+                    standalone_query=query,
+                    confidence=0.9,
+                ),
+                ["scripted"],
+                Mock(spec=LLMUsage),
+            )
 
     graph = build_maya_graph(
         ExperimentConfig(),
-        _MockUsageRouter(),
+        _MockUsageV2Router(),
         _EmptyEngine(),
         _UsageSynth(),
         tracer := _fresh_tracer(),
@@ -192,7 +164,7 @@ def test_mock_spec_usage_is_crash_proof_and_marked():
     assert out["session_cost_usd"] > 0  # synthesis still meters
     assert any(
         t["node"] == "cost"
-        and t["payload"].get("node") == "route"
+        and t["payload"].get("node") == "route_v2"
         and t["payload"].get("unmetered") == "no_usage_metadata"
         for t in tracer.traces()
     )
@@ -212,34 +184,6 @@ def test_negative_usage_tokens_clamp_to_zero():
     assert usage.prompt_tokens == 0
     assert usage.completion_tokens == 0
     assert estimate_cost("glm-5.3-flash", usage.prompt_tokens, usage.completion_tokens) == 0.0
-
-
-def test_funnel_extract_router_call_is_metered():
-    """#123 review P2-3: the v1 funnel's router-as-extractor call was
-    unmetered — a mid-funnel turn must carry its ``funnel_extract`` cost
-    row and the spend must include it."""
-    from src.domain.config import ExperimentConfig
-    from src.graph.orchestrator import build_maya_graph
-
-    extract_cost = estimate_cost("glm-5.3-flash", 500, 200)
-    graph = build_maya_graph(
-        ExperimentConfig(),
-        _UsageV1Router(),
-        _EmptyEngine(),
-        _UsageSynth(),
-        tracer := _fresh_tracer(),
-        budget_tracker=None,
-    )
-    out = graph.invoke(
-        {
-            "messages": [HumanMessage(content="something with spaceships")],
-            "funnel_active": True,  # mid-funnel: guard routes straight to funnel
-            "probe_count": 1,
-        }
-    )
-    rows = [t for t in tracer.traces() if t["node"] == "cost" and t["payload"].get("node") == "funnel_extract"]
-    assert rows and rows[0]["payload"]["cost_usd"] == pytest.approx(extract_cost)
-    assert out["session_cost_usd"] >= extract_cost - 1e-9
 
 
 def test_v2_route_node_writes_understand_cost_to_session():

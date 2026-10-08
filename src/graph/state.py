@@ -75,22 +75,16 @@ class MayaGraphState(BaseModel):
     guardrail_result: GuardrailResult | None = None
     routing_decision: QueryRoutingDecision | None = None
     #: Bounded re-route cycle (#12): routing attempts so far this turn.
+    #: Inert on the v2 stack (no re-route cycle) — kept for state shape
+    #: stability; begin_turn still zeroes it each turn.
     route_attempts: int = 0
-    #: Guided narrowing (#22): probe turns used. Persists in the thread via
-    #: the checkpointer since #93/D16 (the UI round-trip is gone).
+    #: Ask budget (#22): ask/probe turns used. Persists in the thread via
+    #: the checkpointer since #93/D16 (the UI round-trip is gone); the v2
+    #: disposer's probe-budget invariant consumes it.
     probe_count: int = 0
-    #: Funnel mode (#23): a probe/confirm was just shown; the next message
-    #: belongs to the funnel, not the router. Carried by the thread (#93/D16).
-    funnel_active: bool = False
-    #: Transient (#23): this turn fell through the funnel — OUT_OF_SCOPE
-    #: pivots are suppressed for exactly this turn (it may be an answer to
-    #: our own question, not an off-topic query).
-    from_funnel: bool = False
-    #: #25: genre candidates offered and awaiting the user's pick.
-    offered_genre_options: list[str] = Field(default_factory=list)
     #: #26-A: which deterministic stage produced this turn's response
-    #: (probe | confirm | confirm_genres | retrieve | fallthrough) — the UI
-    #: turn row stays complete on turns where the router never ran.
+    #: ("ask" | "retrieve" | "") — the UI turn row stays complete on turns
+    #: where the route node answered by itself.
     turn_stage: str = ""
     retrieved_movies: list[MovieRecord] = Field(default_factory=list)
     synthesis_usage: SynthesisUsage | None = None
