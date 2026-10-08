@@ -46,7 +46,6 @@ from src.maya.guardrails import (
 )
 from src.maya.probing import preference_chips
 from src.maya.router import MayaRouter
-from src.maya.v2 import MayaV2Router
 from src.observability.tracer import DualModeObservabilityManager
 from src.retrieval.hybrid_engine import HybridRetrievalEngine
 from src.storage.database import MovieDatabase
@@ -200,20 +199,8 @@ class MayaSession:
 
     def __init__(self) -> None:
         self.config = ExperimentConfig()
-        # #106/D12: local stack flip without touching the Lab — the harness
-        # and the developer set the field; the env var is the local override.
-        env_stack = os.getenv("MAYA_ROUTING_STACK", "").strip().lower()
-        if env_stack in {"v1", "v2"}:
-            self.config = self.config.model_copy(update={"routing_stack": env_stack})
-        # #150: the same affordance for the Understand transport — run the
-        # app twice with different values to compare the two transports;
-        # each turn's trace notes record the transport in force. Values
-        # outside the Literal are ignored (default holds).
-        env_transport = os.getenv("MAYA_V2_UNDERSTAND_TRANSPORT", "").strip().lower()
-        if env_transport in {"prompt_json", "tool_call", "structured_output"}:
-            self.config = self.config.model_copy(
-                update={"v2_understand_transport": env_transport}
-            )
+        # #156: the env overrides died with the other fork — this checkout
+        # runs one stack; nothing here is flippable from the environment.
         self.conversation = ConversationState()
         self.tracer = DualModeObservabilityManager(session_id=f"ui-{datetime.now(UTC):%H%M%S}")
         self.limiter = SessionCostLimiter()
@@ -267,13 +254,7 @@ class MayaSession:
         return build_maya_graph(
             self.config,
             # #26-B: the dataset's own genres are the genre-guard vocabulary.
-            # #106: the stack selector decides which router is injected —
-            # the graph's isinstance check then wires the matching route node.
-            (
-                MayaV2Router(self.config)
-                if self.config.routing_stack == "v2"
-                else MayaRouter(self.config, genre_vocabulary=self.db.distinct_genres())
-            ),
+            MayaRouter(self.config, genre_vocabulary=self.db.distinct_genres()),
             engine,
             MayaSynthesizer(self.config),
             self.tracer,
@@ -426,7 +407,6 @@ class MayaSession:
         tokens = max(out.get("session_tokens", 0) - prev_tokens, 0)
         cost_usd = max(out.get("session_cost_usd", 0.0) - prev_cost, 0.0)
         route_traces = [t for t in new_traces if t["node"] == "route"]
-        route_v2_traces = [t for t in new_traces if t["node"] == "route_v2"]
         node_names = {t["node"] for t in new_traces}
         if decision is None:
             intent = f"FUNNEL_{(stage or 'probe').upper()}"
@@ -439,18 +419,11 @@ class MayaSession:
                 path = "refusal"  # guard-diverted after a projection (#113)
             elif "pivot" in node_names:
                 path = "pivot"  # deterministic off-topic deflection (#8)
-            elif route_v2_traces or stage == "ask":
-                # #113: v2's funnel collapse records route_v2 (now
-                # unconditionally) — the path is the disposer's stage.
-                path = "ask" if stage == "ask" else "retrieve"
             elif stage == "retrieve":
                 path = "funnel"  # v1 funnel-owned retrieval
             elif route_traces:
                 path = MayaSession._path_taken(route_traces)
             else:
-                # #113: a decision-present turn is NEVER a refusal —
-                # refusals are guard-diverted decisionless. Decision with no
-                # other evidence means the v2 route node served retrieval.
                 path = "retrieve"
         prefs = out.get("session_preferences")
         return {
